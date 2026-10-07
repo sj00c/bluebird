@@ -13,6 +13,11 @@ check() { if eval "$2" >/dev/null 2>&1; then echo "PASS  $1"; else echo "FAIL  $
 node_tcp() { dc exec -T portal node -e "
 const s=require('net').connect({host:'$1',port:$2,timeout:3000},()=>{s.destroy();process.exit(0)});
 s.on('error',()=>process.exit(1));s.on('timeout',()=>process.exit(1));"; }
+# 콘솔(node)·backend-api(python) 컨테이너에서 접속 시도
+console_tcp() { dc exec -T console node -e "
+const s=require('net').connect({host:'$1',port:$2,timeout:3000},()=>{s.destroy();process.exit(0)});
+s.on('error',()=>process.exit(1));s.on('timeout',()=>process.exit(1));"; }
+api_tcp() { dc exec -T backend-api python -c "$py_tcp" "$1" "$2"; }
 nginx_tcp() { dc exec -T nginx sh -c "nc -z -w 3 $1 $2"; }
 jobs_py() { dc --profile jobs run --rm --no-deps -T --entrypoint python backend-jobs -c "$1"; }
 py_tcp='import socket,sys
@@ -33,6 +38,16 @@ check "DMZ portal → 인터넷 직접 불가"                  "! node_tcp 1.1.
 check "DMZ portal → 공개용 DB 접속 가능"               "node_tcp publish-db 5432"
 check "업무망 backend-jobs → 인터넷 직접 불가"         "! jobs_tcp 1.1.1.1 443"
 check "업무망 backend-jobs → 공개용 DB 가능(push)"     "jobs_tcp publish-db 5432"
+check "DMZ portal → 업무망 backend-api 접속 불가"      "! node_tcp backend-api 8000"
+check "DMZ portal → 업무망 콘솔 접속 불가"            "! node_tcp console 3000"
+check "DMZ nginx → 업무망 콘솔 접속 불가"             "! nginx_tcp console 3000"
+check "콘솔 → core-db 직접 접속 불가"                 "! console_tcp core-db 5432"
+check "콘솔 → 공개용 DB 접속 불가"                    "! console_tcp publish-db 5432"
+check "콘솔 → backend-api 접속 가능"                  "console_tcp backend-api 8000"
+check "backend-api → 프록시·인터넷 불가"              "! api_tcp proxy 3128 && ! api_tcp 1.1.1.1 443"
+check "backend-api → 공개용 DB 불가(push·pull은 jobs만)" "! api_tcp publish-db 5432"
+check "콘솔 포트는 127.0.0.1에만 열림" \
+  "[[ \$(docker port bluebird-test-console-1 3000/tcp) == 127.0.0.1:* ]]"
 check "프록시 경유 허용 도메인(data.go.kr) 가능"      "proxy_get https://www.data.go.kr/"
 check "프록시 경유 비허용 도메인(example.com) 거부"   "! proxy_get https://example.com/"
 check "프록시 접근 로그에 허용·거부 기록" \
@@ -127,6 +142,25 @@ check "공개 S는 now/conditional만" \
 own_text="$(pub_sql "SELECT rationale FROM publish.diagnosis UNION ALL SELECT coalesce(how_now,'')||' '||array_to_string(what_changed,' ') FROM publish.change UNION ALL SELECT coalesce(resolve_condition,'') FROM publish.timeliness UNION ALL SELECT coalesce(problem,'')||' '||coalesce(solution,'') FROM publish.idea WHERE problem IS NOT NULL OR solution IS NOT NULL")"
 check "공개 글에 금지 표현 없음(wording.FORBIDDEN 전체)" \
   "printf '%s' \"\$own_text\" | ( cd ../../pipeline && uv run --quiet python -c 'import sys; from bluebird import wording; sys.exit(1 if wording.find(sys.stdin.read()) else 0)' )"
+
+echo "== 콘솔·이의 왕복(G11)"
+cport="$(env_get BB_CONSOLE_PORT)"
+check "콘솔 로그인 화면 200(127.0.0.1)" "[[ \$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:$cport/login) == 200 ]]"
+check "backend-api: 토큰 없으면 401" \
+  "[[ \$(dc exec -T backend-api python -c \"import urllib.request as u,urllib.error as e
+try: u.urlopen('http://127.0.0.1:8000/api/me')
+except e.HTTPError as x: print(x.code)\") == 401 ]]"
+check "inbox 비어 있음(pull 후 DMZ에서 삭제)"        "[[ \$(pub_sql 'SELECT count(*) FROM inbox.objection') -eq 0 ]]"
+check "objections pull 실행 기록(ok)" \
+  "[[ \$(core_sql \"SELECT status FROM core.pipeline_run WHERE stage='objections-pull' ORDER BY id DESC LIMIT 1\") == ok ]]"
+check "처리된 이의는 처리자·처리 내용 기록" \
+  "[[ \$(core_sql \"SELECT count(*) FROM core.objection WHERE status<>'open' AND (coalesce(resolved_by,'')='' OR coalesce(resolution,'')='')\") -eq 0 ]]"
+check "공개 중단(withheld) 아이디어는 공개용 DB에 없음" \
+  "[[ -z \"\$(comm -12 <(core_sql 'SELECT id FROM core.idea WHERE withheld_at IS NOT NULL ORDER BY 1') <(echo \"\$pub_ids\") | grep .)\" ]]"
+check "수용된 이의의 아이디어는 그 뒤 재승인 없이는 6단계 아님" \
+  "[[ \$(core_sql \"SELECT count(*) FROM core.objection o JOIN core.revival_candidate r ON r.idea_id=o.idea_id AND r.s6 WHERE o.status='accepted' AND NOT EXISTS (SELECT 1 FROM core.review v WHERE v.target_type='idea' AND v.target_id=o.idea_id AND v.round='final' AND v.decision='approve' AND v.created_at>o.resolved_at)\") -eq 0 ]]"
+check "코더 슬롯: 한 사람이 두 슬롯 차지 0" \
+  "[[ \$(core_sql \"SELECT count(*) FROM core.review a JOIN core.review b ON a.target_id=b.target_id AND a.round='coder_a' AND b.round='coder_b' AND a.reviewer=b.reviewer\") -eq 0 ]]"
 
 echo "== 공개 화면"
 code() { curl -s -o /dev/null -w '%{http_code}' "http://localhost:$port$1"; }

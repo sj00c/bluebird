@@ -25,3 +25,15 @@ h1 { font-size: 22px; margin: 8px 0 12px; }
 h2 { font-size: 15px; margin: 16px 0 8px; }
 .foot { text-align: center; color: #9ca3af; font-size: 12px; padding: 16px; }
 .pending { border: 1px dashed #d1d5db; border-radius: 8px; padding: 14px; color: #6b7280; }
+.step { border: 1px solid #e5e7eb; border-left: 4px solid #0f2557; border-radius: 8px; padding: 12px 14px; margin-bottom: 10px; background: #fff; }
+.step h3 { font-size: 14px; margin-bottom: 8px; color: #0f2557; }
+.step ul { margin: 6px 0 6px 18px; }
+.step p { line-height: 1.6; margin-bottom: 4px; }
+.quote { border-left: 3px solid #c7d2fe; background: #f9fafb; padding: 8px 12px; margin: 6px 0; color: #374151; white-space: pre-wrap; line-height: 1.5; }
+.verdict { display: inline-block; background: #eef2ff; border: 1px solid #c7d2fe; color: #0f2557; border-radius: 6px; padding: 3px 10px; font-weight: 700; margin-right: 8px; }
+.objection-form { display: flex; flex-direction: column; gap: 8px; max-width: 640px; }
+.objection-form select, .objection-form textarea { border: 1px solid #d1d5db; border-radius: 6px; padding: 8px 10px; font-size: 14px; font-family: inherit; }
+.objection-form textarea { min-height: 120px; resize: vertical; }
+.objection-form button { align-self: flex-start; background: #0f2557; color: #fff; border: 0; border-radius: 6px; padding: 8px 16px; cursor: pointer; }
+.notice { border-radius: 8px; padding: 10px 14px; margin-bottom: 8px; background: #ecfdf5; border: 1px solid #a7f3d0; }
+.notice.error { background: #fef2f2; border-color: #fecaca; }

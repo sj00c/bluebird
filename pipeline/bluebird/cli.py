@@ -11,7 +11,7 @@ import sys
 from datetime import date
 from pathlib import Path
 
-from . import announce, cards, db, funnel, ingest, publish, sources_check
+from . import announce, cards, db, funnel, ingest, objections, publish, sources_check
 from .signals import catalog
 
 
@@ -75,6 +75,28 @@ def main(argv: list[str] | None = None) -> int:
     cf.add_argument("--no-import", action="store_true")
     cf.add_argument("--taken-at", type=date.fromisoformat, default=None, help="기본: 오늘(KST)")
 
+    ob = sub.add_parser("objections", help="이의 제기(G11): DMZ inbox pull, 처리")
+    obs = ob.add_subparsers(dest="sub", required=True)
+    x = obs.add_parser("pull", help="inbox → core.objection(검증·상한) 후 DMZ에서 삭제")
+    x.add_argument("--dsn", default=_env("BB_DSN"))
+    x.add_argument("--inbox-dsn", default=_env("BB_INBOX_DSN"))
+    x.add_argument("--limit", type=int, default=objections.PULL_LIMIT)
+    x = obs.add_parser("resolve", help="사람 처리(콘솔과 같은 동작)")
+    x.add_argument("--dsn", default=_env("BB_DSN"))
+    x.add_argument("--id", type=int, required=True)
+    x.add_argument("--decision", choices=("accepted", "rejected"), required=True)
+    x.add_argument("--resolution", required=True)
+    x.add_argument("--withhold", action="store_true")
+    x.add_argument("--by", required=True)
+
+    cd = sub.add_parser("coding", help="κ 표본(2인 독립 코딩)")
+    cds = cd.add_subparsers(dest="sub", required=True)
+    x = cds.add_parser("sample", help="모집단에서 층화 표본 생성(seed 기록)")
+    x.add_argument("--dsn", default=_env("BB_DSN"))
+    x.add_argument("--size", type=int, default=100)
+    x.add_argument("--seed", type=int, required=True)
+    x.add_argument("--sample-id")
+
     _funnel_parsers(sub)
     a = ap.parse_args(argv)
     if a.cmd in FUNNEL_CMDS:
@@ -103,6 +125,17 @@ def main(argv: list[str] | None = None) -> int:
         if bad:
             print(f"must sources failing: {', '.join(bad)}", file=sys.stderr)
             return 2
+    elif a.cmd == "objections":
+        _require(ap, a, "dsn")
+        if a.sub == "pull":
+            _require(ap, a, "inbox_dsn")
+            objections.pull(dsn=a.dsn, inbox_dsn=a.inbox_dsn, limit=a.limit)
+        else:
+            print(objections.resolve(dsn=a.dsn, objection_id=a.id, decision=a.decision, resolution=a.resolution,
+                                     by=a.by, withhold=a.withhold))
+    elif a.cmd == "coding":
+        _require(ap, a, "dsn")
+        objections.make_sample(dsn=a.dsn, size=a.size, seed=a.seed, sample_id=a.sample_id)
     elif a.cmd == "publish":
         _require(ap, a, "dsn", "publish_dsn")
         publish.push(core_dsn=a.dsn, publish_dsn=a.publish_dsn)

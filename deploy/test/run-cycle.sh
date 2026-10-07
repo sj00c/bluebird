@@ -6,7 +6,7 @@ cd "$(dirname "$0")"
 dc() { docker compose --env-file .env "$@"; }
 job() { dc --profile jobs run --rm backend-jobs "$@"; }
 
-dc build -q backend-jobs portal
+dc build -q backend-jobs portal console
 dc up -d --wait core-db publish-db proxy
 job migrate --target core
 job migrate --target publish
@@ -17,7 +17,10 @@ job cards
 job sources check || echo "[cycle] sources check: must source failing (see table)"
 # 스냅샷 #0은 한 번만 적재된다(같은 sha256이면 건너뜀).
 job signals catalog-import --file /seed/catalog_snapshot0_2026-10-06.csv --taken-at 2026-10-06
+# 국민 이의: DMZ inbox → 업무망 core(검증·상한), 가져온 행은 DMZ에서 삭제. 처리 결과는 이번 publish에 반영.
+job objections pull
 job publish
 
 dc up -d --wait portal nginx
-echo "[cycle] done. http://localhost:$(grep BB_HTTP_PORT .env | cut -d= -f2)/pool"
+dc up -d --wait --force-recreate backend-api console
+echo "[cycle] done. http://localhost:$(grep BB_HTTP_PORT .env | cut -d= -f2)/pool  console: http://127.0.0.1:$(grep BB_CONSOLE_PORT .env | cut -d= -f2)"

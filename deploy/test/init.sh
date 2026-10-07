@@ -17,6 +17,21 @@ if [[ ! -f "$rt/secrets/anon_secret" ]]; then
 fi
 chmod 600 "$rt/secrets/anon_secret"
 
+# 콘솔 접근 토큰(시험용): 사람별 토큰 원문은 .runtime/secrets/console_tokens(관리자에게 전달),
+# backend-api에는 sha256만 담은 console_users.json을 준다.
+if [[ ! -f "$rt/secrets/console_users.json" ]]; then
+  : > "$rt/secrets/console_tokens"; chmod 600 "$rt/secrets/console_tokens"
+  json="{"
+  for spec in "reviewer1:reviewer" "coder_a1:coder" "coder_b1:coder" "expert1:expert" "auditor1:auditor"; do
+    who="${spec%%:*}"; role="${spec#*:}"; tok="$(openssl rand -hex 24)"
+    echo "$who $tok" >> "$rt/secrets/console_tokens"
+    h="$(printf '%s' "$tok" | shasum -a 256 | cut -d' ' -f1)"
+    json+="\"$h\":{\"user\":\"$who\",\"roles\":[\"$role\"]},"
+  done
+  echo "${json%,}}" > "$rt/secrets/console_users.json"
+  echo "[init] console tokens created (.runtime/secrets/console_tokens)"
+fi
+
 # .env: 없는 값만 추가한다(기존 비밀번호 유지).
 touch "$here/.env"; chmod 600 "$here/.env"
 add_env() { grep -q "^$1=" "$here/.env" || echo "$1=$2" >> "$here/.env"; }
@@ -25,6 +40,7 @@ for v in CORE_DB_PASSWORD PUBLISH_DB_PASSWORD MIGRATOR_DB_PASSWORD PUBLISHER_DB_
   add_env "$v" "$(openssl rand -hex 16)"
 done
 add_env BB_HTTP_PORT 8080
+add_env BB_CONSOLE_PORT 8090
 
 # seed 파일
 seed() { [[ -f "$1" ]] && cp "$1" "$rt/seed/$2" && echo "[init] seed: $2"; return 0; }
@@ -50,5 +66,5 @@ fi
 
 # 컨테이너는 uid 10001로 실행된다. 시험 환경 한정으로 읽기 권한을 맞춘다.
 chmod -R a+rX "$rt/seed"
-chmod 755 "$rt/secrets"; chmod 644 "$rt/secrets/anon_secret"
+chmod 755 "$rt/secrets"; chmod 644 "$rt/secrets/anon_secret" "$rt/secrets/console_users.json"
 echo "[init] done: $rt"
