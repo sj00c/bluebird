@@ -152,6 +152,29 @@ def _row_key(*parts: object) -> str:
     return hashlib.sha256("\x1f".join(str(p) for p in parts).encode()).hexdigest()[:16]
 
 
+class _StableKeys:
+    """행 번호가 아니라 내용으로 원천키를 만든다(파일이 갱신·재정렬돼도 같은 행은 같은 ID).
+    완전히 같은 내용이 여러 번 나오면 등장 순번만 붙인다."""
+
+    def __init__(self):
+        self._seen: dict[str, int] = {}
+
+    def __call__(self, *parts: object) -> str:
+        base = _row_key(*parts)
+        k = self._seen.get(base, 0)
+        self._seen[base] = k + 1
+        return base if k == 0 else f"{base}#{k}"
+
+
+# 원본 파일에 내용 대신 들어 있는 안내 문구. 본문·활용 데이터로 취급하지 않는다.
+_PLACEHOLDERS = frozenset({"수정 내용 반영 예정", "-", "없음", "해당없음"})
+
+
+def _text(s: str | None) -> str | None:
+    s = (s or "").strip()
+    return None if not s or _norm(s) in _PLACEHOLDERS else s
+
+
 def _record(spec: SourceSpec, secret: bytes, key: str, **kw) -> dict:
     year = kw.get("year")
     rec = {
@@ -173,19 +196,22 @@ def startup_final_xlsx(spec: SourceSpec, secret: bytes) -> Iterator[dict]:
     expect = ["No.", "수상연도", "회차", "수상내역", "참가팀(팀명)", "아이템명", "서비스 내용", "활용 공공데이터(기관)", "비고"]
     if header[: len(expect)] != expect:
         raise ValueError(f"{spec.path.name}: unexpected header {header}")
+    key = _StableKeys()
     for raw in rows:
         r = dict(zip(expect, (str(v).strip() if v is not None else "" for v in raw)))
         if not r["아이템명"]:
             continue
         team = r["참가팀(팀명)"]
         year = _year(r["수상연도"])
+        body = _text(mask_team(r["서비스 내용"], team))
+        used = _text(r["활용 공공데이터(기관)"]) or ""
         yield _record(
-            spec, secret, f"{year}-{r['No.']}",
+            spec, secret, key(year, _norm(r["수상내역"]), _norm(r["아이템명"])),
             contest_name="범정부 공공데이터 활용 창업경진대회(본선)", host_org="행정안전부", year=year,
             award=_norm(r["수상내역"]) or None,
             title=_norm(mask_team(r["아이템명"], team))[:300],
-            body=mask_team(r["서비스 내용"], team).strip() or None,
-            used_data=[_norm(x) for x in re.split(r"[,\n]", r["활용 공공데이터(기관)"]) if _norm(x)],
+            body=body,
+            used_data=[_norm(x) for x in re.split(r"[,\n]", used) if _norm(x)],
             category=_norm(r["비고"]) or None,
             team_kind=team_kind(team),
         )
@@ -196,7 +222,8 @@ def science_museum_csv(spec: SourceSpec, secret: bytes) -> Iterator[dict]:
 
     지도교사·수상자(성명)·소속명(학교)은 읽지 않는다. 제목에 수상자 이름이 들어 있으면 마스킹한다.
     """
-    for i, r in enumerate(_read_csv(spec.path)):
+    key = _StableKeys()
+    for r in _read_csv(spec.path):
         contest = _norm(r["대회명"])
         title = _norm(r["제목"])
         if not title:
@@ -211,7 +238,7 @@ def science_museum_csv(spec: SourceSpec, secret: bytes) -> Iterator[dict]:
                 else 1978 + n if n and "발명품" in contest else None)
         award = _norm(r.get("수상명"))
         yield _record(
-            spec, secret, _row_key(contest, title, award, i),
+            spec, secret, key(contest, title, award),
             contest_name=contest, host_org="국립중앙과학관", year=year,
             award=award if award and award != "등급외" else None, title=title[:300],
             category=_norm(r.get("주제")) or None, team_kind="masked",
@@ -220,14 +247,15 @@ def science_museum_csv(spec: SourceSpec, secret: bytes) -> Iterator[dict]:
 
 def mafra_contest_csv(spec: SourceSpec, secret: bytes) -> Iterator[dict]:
     """농식품 공공·빅데이터 활용 창업경진대회(경진대회명, 분야_포상, 작품명, 활용 공공데이터명, 데이터 등록일)."""
-    for i, r in enumerate(_read_csv(spec.path)):
+    key = _StableKeys()
+    for r in _read_csv(spec.path):
         title = _norm(r["작품명"])
         if not title:
             continue
         contest = _norm(r["경진대회명"])
         part, _, award = _norm(r["분야_포상"]).partition("/")
         yield _record(
-            spec, secret, _row_key(contest, title, i),
+            spec, secret, key(contest, _norm(r["분야_포상"]), title),
             contest_name=f"농식품 공공·빅데이터 활용 {contest}", host_org="농림축산식품부",
             year=_year(contest), award=_norm(award) or None, title=title[:300],
             used_data=[_norm(x) for x in r["활용 공공데이터명"].split(",") if _norm(x)],

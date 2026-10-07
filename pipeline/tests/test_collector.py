@@ -28,6 +28,12 @@ def test_mask_team_replaces_raw_and_cleaned_forms():
     assert mask_team("A 서비스", "A") == "A 서비스"
 
 
+def test_mask_team_masks_each_member_of_a_list():
+    team = "꿈팀(김하나, 이두리, 박세찬)"
+    assert mask_team("꿈팀 김하나와 이두리, 박세찬의 지도", team) == f"{MASK} {MASK}와 {MASK}, {MASK}의 지도"
+    assert mask_team("김하나·이두리 제안", "김하나, 이두리") == f"{MASK}·{MASK} 제안"
+
+
 def test_anon_id_is_stable_and_secret_dependent():
     a = anon_id(b"s" * 32, "src", "1", 2019)
     assert a == anon_id(b"s" * 32, "src", "1", 2019)

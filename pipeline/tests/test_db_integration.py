@@ -131,3 +131,47 @@ def test_publish_swap(fresh):
         assert c.execute("SELECT has_table_privilege('bb_portal','publish.idea','SELECT')").fetchone()[0]
         # 승인 안 된 카드 내용(problem)은 나가지 않는다
         assert c.execute("SELECT problem FROM publish.idea").fetchone()[0] is None
+
+
+def test_ingest_retires_vanished_rows_and_cards_follow(fresh, tmp_path):
+    """원본 파일이 갱신돼 사라진 행은 retired_at, 다시 나타나면 복귀. 절반 넘게 사라지면 멈춘다."""
+    import csv
+
+    from bluebird import cards, ingest
+
+    (tmp_path / "secret").write_bytes(b"s" * 32)
+    (tmp_path / "sources.toml").write_text(
+        '[[source]]\nid="d"\nadapter="design_idea_csv"\nfile="d.csv"\nname="n"\nlicense="l"\nlayer=2\n'
+        'public_ok=true\nexport_grade="O"\npolicy_approved_by="t"\npolicy_approved_at="2026-10-06"\n',
+        encoding="utf-8")
+
+    def write(rows):
+        with (tmp_path / "d.csv").open("w", encoding="utf-8", newline="") as f:
+            w = csv.writer(f)
+            w.writerow(["등록번호", "연도", "포상", "수상자", "제목", "내용"])
+            w.writerows([[str(i), "2022", "상", "", f"제목{i}", f"제목{i}의 본문. 정류장 데이터가 없어 불편하다."]
+                         for i in rows])
+
+    def run(**kw):
+        return ingest.ingest(dsn=fresh, config=tmp_path / "sources.toml", seed_dir=tmp_path,
+                             secret_path=tmp_path / "secret", **kw)
+
+    def live():
+        with psycopg.connect(fresh) as c:
+            return c.execute("SELECT count(*) FILTER (WHERE retired_at IS NULL), count(*) FROM core.idea").fetchone()
+
+    write(range(1, 5))
+    run()
+    cards.build(dsn=fresh)
+    write([1, 2, 3, 9])            # 4 사라짐, 9 신규
+    assert run()[0]["retired"] == 1
+    assert live() == (4, 5)
+    write([1, 2, 3, 4, 9])         # 4 복귀
+    run()
+    assert live() == (5, 5)
+    write([1])                     # 4/5 사라짐 → 파일 이상으로 중단
+    with pytest.raises(ingest.IngestError, match="would be retired"):
+        run()
+    assert live() == (5, 5)
+    rep = cards.build(dsn=fresh)
+    assert rep["by_kind"]["local_extract"]["with_missing_data"] == 5  # 키 없음 → full 아님

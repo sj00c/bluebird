@@ -55,9 +55,9 @@ check "portal: meta 템플릿 등록 불가"                  "! pub_as bb_porta
 echo "== 반출 통제·데이터"
 core_sql() { dc exec -T core-db psql -U bluebird -d bluebird_core -tAc "$1"; }
 pub_sql()  { dc exec -T publish-db psql -U bluebird -d bluebird_publish -tAc "$1"; }
-core_n="$(core_sql 'SELECT count(*) FROM core.idea')"
+core_n="$(core_sql 'SELECT count(*) FROM core.idea WHERE retired_at IS NULL')"
 pub_n="$(pub_sql 'SELECT count(*) FROM publish.idea')"
-allowed="$(core_sql 'SELECT count(*) FROM core.idea i JOIN core.source s ON s.id=i.source_id WHERE s.public_ok')"
+allowed="$(core_sql 'SELECT count(*) FROM core.idea i JOIN core.source s ON s.id=i.source_id WHERE s.public_ok AND i.retired_at IS NULL')"
 echo "      core.idea=$core_n publish.idea=$pub_n (public_ok=$allowed)"
 check "공개용 DB = core 공개 허용분"                   "[[ $pub_n -eq $allowed && $pub_n -gt 0 ]]"
 check "비공개 소스(KIPRIS) 미반영" \
@@ -79,11 +79,17 @@ echo "== 원본·카드·소스 점검(G1·G2·G13)"
 check "core.idea 29,828행(6개 파일 소스)"                "[[ $core_n -eq 29828 ]]"
 check "공개용 DB 아이디어 3,394 이상(G2)"              "[[ $pub_n -ge 3394 ]]"
 check "모든 아이디어에 카드 1개(G1 ≥ 10,000)" \
-  "[[ \$(core_sql 'SELECT count(*) FROM core.idea_card') -eq $core_n && $core_n -ge 10000 ]]"
+  "[[ \$(core_sql 'SELECT count(*) FROM core.idea_card k JOIN core.idea i ON i.id=k.idea_id WHERE i.retired_at IS NULL') -eq $core_n && $core_n -ge 10000 ]]"
 check "KIPRIS 카드는 모두 local_extract(반출 보류)" \
   "[[ \$(core_sql \"SELECT count(*) FROM core.idea_card k JOIN core.idea i ON i.id=k.idea_id WHERE i.source_id='kipris_contest_idea_bulk' AND k.card_kind<>'local_extract'\") -eq 0 ]]"
 check "본문 없는 카드는 title_only, missing_data는 본문 근거만" \
   "[[ \$(core_sql \"SELECT count(*) FROM core.idea_card k JOIN core.idea i ON i.id=k.idea_id WHERE (coalesce(btrim(i.body),'')='') <> (k.card_kind='title_only') OR (k.card_kind='title_only' AND jsonb_array_length(k.missing_data)>0)\") -eq 0 ]]"
+check "card_kind=full은 LLM(P1)이 본문을 받은 카드만" \
+  "[[ \$(core_sql \"SELECT count(*) FROM core.idea_card WHERE card_kind='full' AND extractor<>'llm'\") -eq 0 ]]"
+retired_ids="$(core_sql 'SELECT id FROM core.idea WHERE retired_at IS NOT NULL ORDER BY 1')"
+pub_ids="$(pub_sql 'SELECT id FROM publish.idea ORDER BY 1')"
+echo "      retired=$(grep -c . <<<"$retired_ids")"
+check "퇴역 행은 공개용 DB에 없음" "[[ -z \"\$(comm -12 <(echo \"\$retired_ids\") <(echo \"\$pub_ids\") | grep .)\" ]]"
 last_check="(SELECT DISTINCT ON (source_id) source_id, status FROM core.source_check ORDER BY source_id, checked_at DESC, id DESC)"
 check "sources check: 파일 소스 6개 ok" \
   "[[ \$(core_sql \"SELECT count(*) FROM $last_check c JOIN core.source s ON s.id=c.source_id WHERE c.status='ok'\") -eq 6 ]]"

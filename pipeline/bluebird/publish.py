@@ -64,7 +64,7 @@ QUERIES: dict[str, tuple[tuple[str, ...], str]] = {
                   t.status, t.external_search
              FROM core.idea i
              JOIN core.contest c ON c.id = i.contest_id
-             JOIN core.source s ON s.id = i.source_id AND s.public_ok
+             JOIN core.source s ON s.id = i.source_id AND s.public_ok AND i.retired_at IS NULL
              LEFT JOIN core.idea_card k ON k.idea_id = i.id
              LEFT JOIN core.trace_verdict t ON t.idea_id = i.id
              LEFT JOIN core.publication pc ON pc.target_type = 'idea' AND pc.target_id = i.id
@@ -77,7 +77,7 @@ QUERIES: dict[str, tuple[tuple[str, ...], str]] = {
                   ARRAY(SELECT x.evidence_id FROM core.x_evidence x
                          WHERE x.target_type = 'diagnosis' AND x.target_id = d.idea_id ORDER BY 1)
              FROM core.diagnosis d
-             JOIN core.idea i ON i.id = d.idea_id
+             JOIN core.idea i ON i.id = d.idea_id AND i.retired_at IS NULL
              JOIN core.source s ON s.id = i.source_id AND s.public_ok
              JOIN core.publication p ON p.target_type = 'idea' AND p.target_id = d.idea_id
                                     AND p.scope = 'diagnosis' AND p.revoked_at IS NULL
@@ -90,7 +90,7 @@ QUERIES: dict[str, tuple[tuple[str, ...], str]] = {
                          WHERE x.target_type = 'change_match' AND x.target_id = m.id::text ORDER BY 1)
              FROM core.change_match m
              JOIN core.condition_change c ON c.id = m.change_id AND c.kind <> 'announcement'
-             JOIN core.idea i ON i.id = m.idea_id
+             JOIN core.idea i ON i.id = m.idea_id AND i.retired_at IS NULL
              JOIN core.source s ON s.id = i.source_id AND s.public_ok
              JOIN core.publication p ON p.target_type = 'change_match' AND p.target_id = m.id::text
                                     AND p.scope = 'change' AND p.revoked_at IS NULL
@@ -102,7 +102,7 @@ QUERIES: dict[str, tuple[tuple[str, ...], str]] = {
         """SELECT DISTINCT ON (t.idea_id) t.idea_id, t.as_of, t.tech, t.data, t.regulation, t.policy, t.n_scored,
                   t.s, t.verdict, t.resolve_condition
              FROM core.timeliness t
-             JOIN core.idea i ON i.id = t.idea_id
+             JOIN core.idea i ON i.id = t.idea_id AND i.retired_at IS NULL
              JOIN core.source s ON s.id = i.source_id AND s.public_ok
              JOIN core.publication p ON p.target_type = 'idea' AND p.target_id = t.idea_id
                                     AND p.scope = 'timeliness' AND p.revoked_at IS NULL
@@ -113,7 +113,7 @@ QUERIES: dict[str, tuple[tuple[str, ...], str]] = {
         ("week", "rank", "idea_id", "s"),
         """SELECT w.week, w.rank, w.idea_id, w.s
              FROM core.weekly_top w
-             JOIN core.idea i ON i.id = w.idea_id
+             JOIN core.idea i ON i.id = w.idea_id AND i.retired_at IS NULL
              JOIN core.source s ON s.id = i.source_id AND s.public_ok
             WHERE w.week = (SELECT max(week) FROM core.weekly_top)
             ORDER BY w.rank""",
@@ -136,7 +136,7 @@ QUERIES: dict[str, tuple[tuple[str, ...], str]] = {
                   m.similarity, m.how_now
              FROM core.change_match m
              JOIN core.condition_change c ON c.id = m.change_id AND c.kind = 'announcement'
-             JOIN core.idea i ON i.id = m.idea_id
+             JOIN core.idea i ON i.id = m.idea_id AND i.retired_at IS NULL
              JOIN core.source s ON s.id = i.source_id AND s.public_ok
              JOIN core.publication p ON p.target_type = 'change_match' AND p.target_id = m.id::text
                                     AND p.scope = 'change' AND p.revoked_at IS NULL

@@ -83,3 +83,19 @@ def test_law_drf_test_oc_counts():
 
     r = check_remote(_eg(h, Rec()), REM["law_drf_eflaw"])
     assert (r["status"], r["rows"]) == ("ok", 5100) and "OC=test" in r["note"]
+
+
+@pytest.mark.parametrize("rid,env", [
+    ("kstartup_announcement_15125364", {"DATA_GO_KR_KEY": "WRONGKEY"}),
+    ("naver_search_news", {"NAVER_CLIENT_ID": "WRONGKEY", "NAVER_CLIENT_SECRET": "s"}),
+])
+def test_wrong_key_is_error_not_key_required_and_body_not_kept(monkeypatch, rid, env):
+    for k, v in env.items():
+        monkeypatch.setenv(k, v)
+
+    def h(req):
+        return httpx.Response(401, json={"errorMessage": "Authentication failed for WRONGKEY", "errorCode": "024"})
+
+    r = check_remote(_eg(h, Rec()), REM[rid])
+    assert r["status"] == "error" and r["keyed"]
+    assert "WRONGKEY" not in repr(r["sample"])

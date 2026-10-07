@@ -54,7 +54,7 @@ def upsert_source(conn, spec: SourceSpec, body_present: bool) -> None:
     )
 
 
-def _apply(conn, spec: SourceSpec, rows, run_id: int) -> dict:
+def _apply(conn, spec: SourceSpec, rows, run_id: int, *, force: bool = False) -> dict:
     conn.execute(
         """CREATE TEMP TABLE stage_idea (
              id text, source_id text, contest_id text, contest_name text, host_org text, year smallint,
@@ -92,12 +92,26 @@ def _apply(conn, spec: SourceSpec, rows, run_id: int) -> dict:
            ON CONFLICT (id) DO UPDATE SET contest_id=EXCLUDED.contest_id, year=EXCLUDED.year,
              award=EXCLUDED.award, title=EXCLUDED.title, body=EXCLUDED.body, used_data=EXCLUDED.used_data,
              category=EXCLUDED.category, team_kind=EXCLUDED.team_kind, source_url=EXCLUDED.source_url,
-             extra=EXCLUDED.extra, last_ingest_id=EXCLUDED.last_ingest_id, updated_at=now()
+             extra=EXCLUDED.extra, last_ingest_id=EXCLUDED.last_ingest_id, retired_at=NULL, updated_at=now()
            RETURNING (xmax = 0) AS inserted""",
         {"r": run_id},
     ).fetchall()
     inserted = sum(1 for r in res if r[0])
-    return {"rows": n, "with_body": with_body, "inserted": inserted, "updated": n - inserted}
+    # 이번 파일에 없는 기존 행은 퇴역 처리. 한 번에 절반 넘게 사라지면 파일 이상으로 보고 멈춘다(--force로만 허용).
+    live = conn.execute(
+        "SELECT count(*) FROM core.idea WHERE source_id=%s AND retired_at IS NULL", (spec.id,)
+    ).fetchone()[0]
+    gone = conn.execute(
+        "SELECT count(*) FROM core.idea i WHERE i.source_id=%s AND i.retired_at IS NULL"
+        " AND NOT EXISTS (SELECT 1 FROM stage_idea s WHERE s.id = i.id)", (spec.id,)
+    ).fetchone()[0]
+    if gone and gone * 2 > live - inserted and not force:
+        raise IngestError(f"{spec.id}: {gone}/{live - inserted} ideas would be retired; check the file or use --force")
+    conn.execute(
+        "UPDATE core.idea i SET retired_at=now() WHERE i.source_id=%s AND i.retired_at IS NULL"
+        " AND NOT EXISTS (SELECT 1 FROM stage_idea s WHERE s.id = i.id)", (spec.id,)
+    )
+    return {"rows": n, "with_body": with_body, "inserted": inserted, "updated": n - inserted, "retired": gone}
 
 
 def ingest(*, dsn: str, config: Path, seed_dir: Path, secret_path: Path, only: str | None = None,
@@ -131,7 +145,7 @@ def ingest(*, dsn: str, config: Path, seed_dir: Path, secret_path: Path, only: s
                 conn.commit()
             try:
                 with db.connect(dsn) as conn:
-                    r = _apply(conn, spec, ADAPTERS[spec.adapter](spec, secret), run_id)
+                    r = _apply(conn, spec, ADAPTERS[spec.adapter](spec, secret), run_id, force=force)
                     conn.execute(
                         "UPDATE core.ingest_run SET status='ok', rows=%s, finished_at=now() WHERE id=%s",
                         (r["rows"], run_id),

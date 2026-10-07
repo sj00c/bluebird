@@ -51,8 +51,8 @@ def _needs_key(r: Response) -> bool:
 
 def _json_rows(path: list[str], count_path: list[str] | None = None):
     def parse(r: Response, keyed: bool):
-        if r.status >= 400 or (not keyed and _needs_key(r)):
-            return ("key_required" if _needs_key(r) else "error"), None, r.text[:200]
+        if r.status >= 400 or _needs_key(r):
+            return ("key_required" if _needs_key(r) and not keyed else "error"), None, _err_sample(r, keyed)
         d = r.json()
         node = d
         for k in path:
@@ -66,16 +66,22 @@ def _json_rows(path: list[str], count_path: list[str] | None = None):
     return parse
 
 
+def _err_sample(r: Response, keyed: bool) -> object:
+    """키 없이 부른 응답은 앞부분을 남긴다(키가 없으니 되돌아올 키도 없다).
+    키를 붙인 요청의 오류 응답은 본문을 남기지 않는다 — 공급자가 키 일부를 되돌려 주는 경우가 있다."""
+    return {"http_status": r.status} if keyed else r.text[:200]
+
+
 def _probe_only(r: Response, keyed: bool):
-    if _needs_key(r):
-        return "key_required" if not keyed else "error", None, r.text[:200]
-    return ("ok" if r.status < 400 else "error"), None, r.text[:200]
+    if _needs_key(r) or r.status >= 400:
+        return ("key_required" if _needs_key(r) and not keyed else "error"), None, _err_sample(r, keyed)
+    return "ok", None, None if keyed else r.text[:200]
 
 
 def _kipris(r: Response, keyed: bool):
     if "<successYN>Y" in r.text:
         return "ok", None, r.text[:300]
-    return ("key_required" if not keyed else "error"), None, r.text[:300]
+    return ("key_required" if not keyed else "error"), None, _err_sample(r, keyed)
 
 
 REMOTES: tuple[Remote, ...] = (

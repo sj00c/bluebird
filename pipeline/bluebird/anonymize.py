@@ -16,6 +16,9 @@ _MASKED = re.compile(r"[○Oo*]{2,}|\*")
 _PAREN = re.compile(r"[\(\)（）]")
 _COUNT_SUFFIX = re.compile(r"\s(외|등)(\s*\d+\s*명?)?(?=\s|$)")
 _PERSON_NAME = re.compile(r"^[가-힣]{2,4}$")
+_LIST_SEP = re.compile(r"[,，、·/]")
+_LIST_SPLIT = re.compile(r"[\s,，、·/]+")
+_NOT_NAME = frozenset({"외", "등", "팀", "및"})
 
 
 def anon_id(secret: bytes, source: str, source_key: str, year: int | None) -> str:
@@ -53,8 +56,9 @@ def mask_team(text: str, team: str) -> str:
         return text
     cleaned = clean_team(team)
     variants = {team.strip(), cleaned}
-    if _PAREN.search(team):  # '메디뷰(MediView)' → '메디뷰', 'MediView'도 각각 마스킹
-        variants.update(cleaned.split())
+    if _PAREN.search(team) or _LIST_SEP.search(team):
+        # '메디뷰(MediView)' → '메디뷰', 'MediView' / '팀명(이름1, 이름2)'·'이름1, 이름2' → 이름마다 마스킹
+        variants.update(t for t in _LIST_SPLIT.split(_PAREN.sub(" ", team)) if t not in _NOT_NAME)
     for v in sorted((v for v in variants if len(v) >= 2), key=len, reverse=True):
         text = re.sub(re.escape(v), MASK, text, flags=re.IGNORECASE)
     return text
