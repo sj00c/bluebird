@@ -504,6 +504,20 @@ def test_only_eligible_matches_are_approved_and_published(fresh):
     publish.push(core_dsn=fresh, publish_dsn=pub)
     with psycopg.connect(pub) as c:
         assert [r[0] for r in c.execute("SELECT url FROM publish.change")] == ["https://a.kr/now"]
+    # 후보에서만 쓰는 바뀐 것을 고쳐도 공개는 그대로, 승인 매칭이 쓰는 바뀐 것의 확인 상태가 바뀌면 철회
+    def live():
+        with psycopg.connect(fresh) as c:
+            return c.execute("SELECT count(*) FROM core.publication WHERE target_type='idea' AND target_id=%s"
+                             " AND revoked_at IS NULL", (iid,)).fetchone()[0]
+    with psycopg.connect(fresh) as c:
+        c.execute("UPDATE core.change_match SET status='candidate' WHERE change_id=%s", (later,))
+        c.execute("UPDATE core.condition_change SET title='예정 정책(수정)' WHERE id=%s", (later,))
+        c.commit()
+    assert live() == 3
+    with psycopg.connect(fresh) as c:
+        c.execute("UPDATE core.condition_change SET verify_status='fetched' WHERE id=%s", (ok,))
+        c.commit()
+    assert live() == 0
 
 
 def test_manual_announcement_path_reaches_stage3(fresh):

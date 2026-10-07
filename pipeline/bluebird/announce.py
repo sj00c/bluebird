@@ -71,7 +71,8 @@ def _upsert(conn, a: dict, origin: str, by: str | None, verify: tuple[str, dict 
              verify_status, verify_detail, egress_call_id)
            VALUES (%s,'announcement',%s,%s,%s,%s,%s,%s,%s,%s,%s)
            ON CONFLICT (kind, ref_id) DO UPDATE SET title=EXCLUDED.title, url=EXCLUDED.url,
-             occurred_at=EXCLUDED.occurred_at, verify_status=coalesce(EXCLUDED.verify_status,
+             occurred_at=EXCLUDED.occurred_at, added_by=coalesce(EXCLUDED.added_by, core.condition_change.added_by),
+             verify_status=coalesce(EXCLUDED.verify_status,
              core.condition_change.verify_status), verify_detail=coalesce(EXCLUDED.verify_detail,
              core.condition_change.verify_detail), egress_call_id=coalesce(EXCLUDED.egress_call_id,
              core.condition_change.egress_call_id)""",

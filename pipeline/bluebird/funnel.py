@@ -590,7 +590,8 @@ def compute_top(*, dsn: str, week: date) -> list[tuple]:
                     s AS (SELECT DISTINCT ON (idea_id) idea_id, s FROM core.timeliness ORDER BY idea_id, as_of DESC),
                     obs AS (SELECT DISTINCT m.idea_id FROM core.change_match m
                               JOIN core.condition_change c ON c.id = m.change_id
-                             WHERE m.status = 'approved' AND c.tier = 'observed_new'),
+                             WHERE m.status = 'approved' AND c.tier = 'observed_new'
+                               AND core.match_eligible(m.id, %s)),
                     ap AS (SELECT target_id, max(approved_at) AS at FROM core.publication
                             WHERE target_type = 'idea' AND revoked_at IS NULL GROUP BY 1),
                     ranked AS (
@@ -600,7 +601,7 @@ def compute_top(*, dsn: str, week: date) -> list[tuple]:
                         FROM f JOIN s USING (idea_id) LEFT JOIN obs USING (idea_id)
                         JOIN ap ON ap.target_id = f.idea_id)
                SELECT idea_id, source_id, s FROM ranked WHERE fam_rank <= 4
-                ORDER BY observed DESC, s DESC, at DESC LIMIT 20""", (snap,)).fetchall()
+                ORDER BY observed DESC, s DESC, at DESC LIMIT 20""", (snap, snap)).fetchall()
         conn.execute("DELETE FROM core.weekly_top WHERE week=%s", (week,))
         for rank, (idea_id, fam, s) in enumerate(rows, 1):
             conn.execute("INSERT INTO core.weekly_top (week, rank, idea_id, s, source_family) VALUES (%s,%s,%s,%s,%s)",
