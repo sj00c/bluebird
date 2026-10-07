@@ -140,7 +140,7 @@
 | `objections pull` / `resolve` | DMZ inbox 이의 가져오기(가져온 행은 DMZ에서 삭제) / 처리 |
 | `coding sample`, `kappa` | κ용 표본 만들기, 일치도 계산 |
 | `eval goldset`, `verify top20` | 골드셋 회귀, 공개 Top 20이 전문가 승인과 같은지 확인 |
-| `kpi report` | G1–G13 현황표(사람 입력 대기 항목은 `human_blocked`) |
+| `kpi report` | G1–G13 현황표(사람 입력 대기 `human_blocked`, 키 대기 `key_required`, 진행 중 `in_progress`). G3는 100건 이상 표본만 통과, G4는 기준선(`eval goldset --baseline`) 뒤에만 통과, G5 목표는 `--top-target`(E3 승인 시) |
 
 외부 HTTP는 `pipeline/bluebird/egress.py`만 한다. 다른 모듈은 직접 HTTP를 열 수 없다. egress는 허용 도메인을 확인하고, 호출마다 `core.egress_call`에 남기고, 외부로 보내도 되는 필드(`core.export_policy`)만 내보낸다.
 
@@ -206,7 +206,7 @@ ingest → cards → (1 흔적 → 2 막힌 이유 → 3 바뀐 것 → 시의�
 | 단계 | 입력 → 출력 | 주기(운영) |
 |---|---|---|
 | ingest | seed 파일 → `idea`(익명 ID, 팀 이름 없음) | 매일 02:00 |
-| cards | `idea` → `idea_card`(`card_kind`별) | ingest와 함께 |
+| cards | `idea` → `idea_card`(`card_kind`별) | ingest 뒤(운영 타이머 02:30, 시험은 run-cycle) |
 | signals | 목록개방현황 내려받기 → `catalog_snapshot`, `signal_dataset`, `condition_change` | 매주 월 03:00 |
 | trace / diagnose | 흔적 → `trace_check`, `trace_verdict`; 막힌 이유 → `diagnosis` + `x_evidence` | 사람·LLM 제안 후 검토 |
 | changes / match | 바뀐 것 → `condition_change`; 아이디어와 연결 → `change_match` | 신호·입력 때 |
@@ -343,7 +343,7 @@ bluebird/
 | G7 | 실제 공고 1건에 대한 매칭 표시 |
 | G8 | 주제·공고 유사 검색 응답 속도(`deploy/test/p95.sh`) |
 | G9 | 공개된 진단·바뀐 것·시의성마다 근거 1개 이상 |
-| G10 | 반출 통제: 허용 열 밖 0, egress 밖 HTTP 0, 성명 일치 0 |
+| G10 | 반출 통제: 허용 열 밖 0, egress 밖 HTTP 0, 성명 일치 0(`kpi report`가 원본 파일 이름을 메모리에서만 다시 읽어 같은 아이디어의 공개 글과 대조, 개수만 기록) |
 | G11 | 이의 제기 왕복: 접수 → pull → DMZ 삭제 → 처리 → 반영 |
 | G12 | "바뀐 것" 무작위 20건 맹검 점검 정밀도 |
 | G13 | `sources check` 결과(키 없는 소스 포함) |

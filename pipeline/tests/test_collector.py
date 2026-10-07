@@ -118,3 +118,21 @@ def test_list_masking_keeps_generic_team_words():
     # 팀명 안의 흔한 낱말(데이터·연구소)은 본문에서 가리지 않고, 팀명 전체와 사람 이름만 가린다
     out = mask_team("데이터 연구소가 만든 주차면 데이터가 없어 홍길동이 제안", "데이터 연구소(홍길동)")
     assert out == f"{MASK}가 만든 주차면 데이터가 없어 {MASK}이 제안"
+
+
+def test_names_out_collects_name_forms_in_memory_only(tmp_path):
+    """G10 성명 일치 감사용: 어댑터는 요청할 때만 메모리 dict에 이름 형태를 담고, 레코드에는 이름이 없다."""
+    from bluebird.anonymize import find_name
+    from bluebird.sources import design_idea_csv, science_museum_csv
+    s = _write_csv(tmp_path / "s.csv", ["대회명", "주제", "소속명", "제목", "지도교사", "수상자", "수상명"], [
+        ["제69회 전국과학전람회", "물리", "", "줄다리기 줄의 비밀", "한홍수", "김하린, 송다원", "특상"]])
+    d = _write_csv(tmp_path / "d.csv", ["등록번호", "연도", "포상", "수상자", "제목", "내용"], [
+        ["1000000302", "2022", "대상", "이민수", "휠체어 충전 테이블", "내용"], ["1000000303", "2022", "상", "○○○", "t", ""]])
+    names: dict = {}
+    rows = list(science_museum_csv(SourceSpec("sm", "science_museum_csv", s, "n", "l", "", 2, True), b"x" * 32, names))
+    rows += list(design_idea_csv(SourceSpec("d", "design_idea_csv", d, "n", "l", "", 2, True), b"x" * 32, names))
+    assert set(names) == {rows[0]["idea_id"], rows[1]["idea_id"]}  # 마스킹된 수상자(○○○)는 대조할 이름이 없다
+    assert set(names[rows[0]["idea_id"]]) == {"한홍수", "김하린", "송다원"}
+    assert all(not find_name(r["title"], names.get(r["idea_id"], [])) for r in rows)
+    assert find_name("이민수가 만든 테이블", names[rows[1]["idea_id"]])
+    assert not find_name("maintAIn", ["AI"]) and find_name("AI 진단", ["AI"])

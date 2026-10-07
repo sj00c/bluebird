@@ -53,22 +53,38 @@ def team_kind(team: str) -> str:
     return "brand"
 
 
-def mask_team(text: str, team: str) -> str:
-    """text 안의 팀명(원형·정리형)을 ○○로 치환. 2자 미만 팀명은 오탐이 커서 치환하지 않는다."""
-    if not text:
-        return text
+def name_variants(team: str) -> list[str]:
+    """팀명·성명 원문에서 본문에 나올 수 있는 형태들(긴 것부터). 2자 미만·마스킹된 형태는 뺀다."""
+    if not team or _MASKED.search(team):
+        return []
     cleaned = clean_team(team)
     variants = {team.strip(), cleaned}
     if _PAREN.search(team) or _LIST_SEP.search(team):
         # 괄호 앞 팀명은 통째로('데이터 연구소(홍길동)' → '데이터 연구소')
         variants.add(_PAREN.split(team, 1)[0].strip())
-        # '메디뷰(MediView)' → '메디뷰', 'MediView' / '팀명(이름1, 이름2)'·'이름1, 이름2' → 이름마다 마스킹
+        # '메디뷰(MediView)' → '메디뷰', 'MediView' / '팀명(이름1, 이름2)'·'이름1, 이름2' → 이름마다
         variants.update(t for t in _LIST_SPLIT.split(_PAREN.sub(" ", team)) if _maskable_token(t))
-    for v in sorted((v for v in variants if len(v) >= 2), key=len, reverse=True):
-        # 라틴 문자로 시작·끝나는 변형은 단어 경계에서만(maintain 안의 'AI' 같은 오치환 방지)
-        pre = r"(?<![A-Za-z0-9])" if v[0].isascii() and v[0].isalnum() else ""
-        post = r"(?![A-Za-z0-9])" if v[-1].isascii() and v[-1].isalnum() else ""
-        text = re.sub(pre + re.escape(v) + post, MASK, text, flags=re.IGNORECASE)
+    return sorted((v for v in variants if len(v) >= 2 and v != "-"), key=len, reverse=True)
+
+
+def _name_re(v: str) -> str:
+    # 라틴 문자로 시작·끝나는 변형은 단어 경계에서만(maintain 안의 'AI' 같은 오치환 방지)
+    pre = r"(?<![A-Za-z0-9])" if v[0].isascii() and v[0].isalnum() else ""
+    post = r"(?![A-Za-z0-9])" if v[-1].isascii() and v[-1].isalnum() else ""
+    return pre + re.escape(v) + post
+
+
+def find_name(text: str | None, variants: list[str]) -> bool:
+    """text에 이름 형태가 남아 있는가(G10 성명 일치 감사). 대소문자 무시, 라틴 낱말은 경계에서만."""
+    return bool(text) and any(re.search(_name_re(v), text, flags=re.IGNORECASE) for v in variants)
+
+
+def mask_team(text: str, team: str) -> str:
+    """text 안의 팀명(원형·정리형)을 ○○로 치환. 2자 미만 팀명은 오탐이 커서 치환하지 않는다."""
+    if not text:
+        return text
+    for v in name_variants(team):
+        text = re.sub(_name_re(v), MASK, text, flags=re.IGNORECASE)
     return text
 
 

@@ -1,4 +1,4 @@
-"""원본 적재: seed 파일 → 마스킹·익명 ID → core DB. (구 Z1 collect + 번들 + import-core를 대체)
+"""원본 적재: seed 파일 → 마스킹·익명 ID → core DB.
 
 소스별 ingest_run을 남기고, 같은 파일(sha256)이 이미 성공 적재됐으면 건너뛴다.
 """

@@ -97,7 +97,7 @@ def main(argv: list[str] | None = None) -> int:
     x.add_argument("--seed", type=int, required=True)
     x.add_argument("--sample-id")
 
-    x = sub.add_parser("kappa", help="G3 κ: 표본 2인 코딩 일치도(표본이 없으면 --size·--seed로 만든다)")
+    x = sub.add_parser("kappa", help="G3 κ: 표본 2인 코딩 일치도(표본이 없으면 --sample·--seed로 만든다)")
     x.add_argument("--dsn", default=_env("BB_DSN"))
     x.add_argument("--sample", type=int, default=100, help="표본 크기")
     x.add_argument("--seed", type=int, required=True)
@@ -115,6 +115,7 @@ def main(argv: list[str] | None = None) -> int:
     x.add_argument("--dsn", default=_env("BB_DSN"))
     x.add_argument("--publish-dsn", default=_env("BB_PUBLISH_DSN"))
     x.add_argument("--week", type=date.fromisoformat)
+    x.add_argument("--target", type=int, default=kpi.TOP_TARGET, help="E3 승인 시 min(20, 공개 후보 수)")
 
     kp = sub.add_parser("kpi", help="KPI").add_subparsers(dest="sub", required=True)
     x = kp.add_parser("report", help="G1–G13 현황표(사람 입력 대기 = human_blocked)")
@@ -123,6 +124,12 @@ def main(argv: list[str] | None = None) -> int:
     x.add_argument("--inbox-dsn", default=_env("BB_INBOX_DSN"))
     x.add_argument("--p95-ms", type=float, help="deploy/test/p95.sh 결과")
     x.add_argument("--week", type=date.fromisoformat)
+    x.add_argument("--top-target", type=int, default=kpi.TOP_TARGET, help="G5 목표(E3 승인 시 조정)")
+    x.add_argument("--kappa-sample", help="G3 기준 표본 id(없으면 100건 이상 중 최근)")
+    # G10 성명 일치 대조: 원본 파일·익명화 키(업무망 backend에만 있음). 없으면 G10은 진행 중으로 남는다.
+    x.add_argument("--config", type=Path, default=_p("BB_SOURCES"))
+    x.add_argument("--seed-dir", type=Path, default=_p("BB_SEED_DIR"))
+    x.add_argument("--secret", type=Path, default=_p("BB_ANON_SECRET"))
     x.add_argument("--json", action="store_true")
 
     _funnel_parsers(sub)
@@ -172,23 +179,31 @@ def main(argv: list[str] | None = None) -> int:
         if not exists:
             objections.make_sample(dsn=a.dsn, size=a.sample, seed=a.seed, sample_id=sid)
         r = kpi.kappa(dsn=a.dsn, sample_id=sid)
-        print(kpi.dumps(r) if a.json else
+        print(funnel.dumps(r) if a.json else
               f"[kappa] {sid}: κ={r['kappa']} 코딩 {r['coded_pairs']}/{r['size']} "
               f"(A {r['coded_a']}, B {r['coded_b']}) 코드별 {r['per_code_agreement']} U {r['u_share']} → {r['status']}")
+        return 1 if r["status"] == kpi.FAIL else 0
     elif a.cmd == "eval":
         _require(ap, a, "dsn")
         text = sys.stdin.read() if a.gold == "-" else Path(a.gold).read_text(encoding="utf-8-sig")
-        print(kpi.dumps(kpi.goldset(dsn=a.dsn, gold_csv=text, baseline=a.baseline)))
+        r = kpi.goldset(dsn=a.dsn, gold_csv=text, baseline=a.baseline)
+        print(funnel.dumps(r))
+        return 1 if r["status"] == kpi.FAIL else 0
     elif a.cmd == "verify":
         _require(ap, a, "dsn", "publish_dsn")
-        r = kpi.verify_top20(dsn=a.dsn, publish_dsn=a.publish_dsn, week=a.week)
-        print(kpi.dumps(r))
-        return 0 if r["status"] in (kpi.PASS, kpi.HUMAN) else 1
+        r = kpi.verify_top20(dsn=a.dsn, publish_dsn=a.publish_dsn, week=a.week, target=a.target)
+        print(funnel.dumps(r))
+        return 1 if r["status"] == kpi.FAIL else 0
     elif a.cmd == "kpi":
         _require(ap, a, "dsn", "publish_dsn")
-        rows = kpi.report(dsn=a.dsn, publish_dsn=a.publish_dsn, inbox_dsn=a.inbox_dsn, p95_ms=a.p95_ms, week=a.week)
+        names = None
+        if a.config and a.seed_dir and a.secret and a.secret.exists():
+            with db.connect(a.publish_dsn) as pc:
+                names = kpi.name_leaks(pc, config=a.config, seed_dir=a.seed_dir, secret=ingest.load_secret(a.secret))
+        rows = kpi.report(dsn=a.dsn, publish_dsn=a.publish_dsn, inbox_dsn=a.inbox_dsn, p95_ms=a.p95_ms, week=a.week,
+                          top_target=a.top_target, kappa_sample=a.kappa_sample, names=names)
         if a.json:
-            print(kpi.dumps(rows))
+            print(funnel.dumps(rows))
         else:
             kpi.print_report(rows)
         return 1 if any(r["status"] == kpi.FAIL for r in rows) else 0

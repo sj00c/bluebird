@@ -1,0 +1,12 @@
+# 업무망 호스트. 매일 02:30 카드 만들기(ingest 02:00 뒤). 살아 있는 아이디어마다 카드 1개(G1).
+[Unit]
+Description=bluebird cards timer
+
+[Timer]
+OnCalendar=*-*-* 02:30:00 Asia/Seoul
+RandomizedDelaySec=5m
+Persistent=true
+Unit=bluebird-job@cards.service
+
+[Install]
+WantedBy=timers.target

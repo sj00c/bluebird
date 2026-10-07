@@ -52,7 +52,6 @@ DMZ의 세 호스트는 작은 규모에서는 한 호스트에 합쳐도 된다
 |---|---|---|---|
 | `bluebird_core` | biz-db | `bluebird` | 소유자(마이그레이션·적재·처리). backend-jobs가 사용 |
 | | | `bb_api` | backend-api 전용 최소 권한. 읽기 + 검토·승인·이의 처리 열만 쓰기 (마이그레이션 0008) |
-| | | `bluebird_ro` | 백업·감사 조회 |
 | `bluebird_publish` | dmz-db | `bb_migrator` | 스키마 변경(필요할 때만) |
 | | | `bb_publisher` | 공개본 교체(push) |
 | | | `bb_inbox_reader` | inbox 읽기·삭제만 |
@@ -60,7 +59,7 @@ DMZ의 세 호스트는 작은 규모에서는 한 호스트에 합쳐도 된다
 
 `pg_hba` 요약 (`deploy/prod/postgres/`)
 
-- core: `hostssl`, SCRAM. `bluebird`·`bb_api`는 biz-app, `bluebird_ro`는 biz-backup에서만. 그 밖은 reject. DMZ 대역은 허용하지 않는다.
+- core: `hostssl`, SCRAM. `bluebird`·`bb_api`는 biz-app에서만. 그 밖은 reject. DMZ 대역은 허용하지 않는다.
 - 공개용 DB: `bb_portal`은 dmz-web에서, `bb_publisher`·`bb_inbox_reader`·`bb_migrator`는 업무망 biz-app에서만. 슈퍼유저는 원격 로그인 불가.
 - 마이그레이션: `pipeline/bluebird/db/migrations/{core,publish}/`. `bluebird migrate --target core|publish`로 적용한다.
 - `bb_api`는 마이그레이션이 NOLOGIN으로 만든다. 배포 때 한 번 `ALTER ROLE bb_api LOGIN PASSWORD :'pw'`를 psql 변수(stdin)로 실행한다. 새 core 표를 만드는 마이그레이션은 `bb_api` 권한을 같이 정한다.
@@ -90,11 +89,12 @@ real_ip_recursive on;
 | 타이머 | 시각(KST) | 명령 |
 |---|---|---|
 | `bluebird-ingest.timer` | 매일 02:00 | `bluebird ingest` |
+| `bluebird-cards.timer` | 매일 02:30 | `bluebird cards` (새 아이디어 카드) |
 | `bluebird-signals.timer` | 매주 월 03:00 | `bluebird signals catalog-fetch --out-dir /srv/bluebird/signals` |
 | `bluebird-publish.timer` | 매일 06:00 | `bluebird publish` (승인분 → 공개용 DB) |
 | `bluebird-pull-objections.timer` | 10분마다 | `bluebird objections pull` (inbox 가져오기 후 삭제) |
 
-상시 실행: `bluebird-api.service`(업무망 호스트, 루프백 8000), `bluebird-console.service`(루프백 3001, 앞단 console-gw), dmz-web의 `bluebird-portal.service`(루프백 3000).
+상시 실행: `bluebird-api.service`(업무망 호스트, 루프백 8000), `bluebird-console.service`(루프백 3001, 앞단 console-gw), dmz-web의 `bluebird-portal.service`(루프백 3000). 루프백 수신 주소는 단위 파일이 `-e`로 고정한다(env 파일로 바꿀 수 없음). console-gw는 `deploy/prod/nginx/console-gw.conf`(443, 관리자 단말 대역만 allow, 그 밖 403)로 biz-app의 nginx에 올린다.
 
 카드 만들기, 흔적·진단·바뀐 것 입력, 검토 승인은 콘솔과 `bluebird` 명령으로 사람이 진행한다. 단위 파일은 `deploy/prod/systemd/`.
 

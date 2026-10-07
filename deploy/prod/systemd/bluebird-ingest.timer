@@ -1,4 +1,4 @@
-# 업무망 호스트. 매일 02:00 수집·카드 만들기(공공데이터포털 야간 갱신 이후).
+# 업무망 호스트. 매일 02:00 원본 수집(공공데이터포털 야간 갱신 이후). 카드는 02:30 bluebird-cards.timer.
 [Unit]
 Description=bluebird ingest timer
 

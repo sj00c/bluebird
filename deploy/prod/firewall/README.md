@@ -24,7 +24,6 @@
 |---|---|---|---|
 | dmz-web | dmz-db | 5432/tcp | 포털 읽기·이의 접수(`bb_portal`) |
 | biz-app | biz-db | 5432/tcp | core DB (`bluebird`, `bb_api`) |
-| biz-backup | biz-db | 5432/tcp | 백업·감사 조회(`bluebird_ro`) |
 | 관리망 | 전 서버 | 22/tcp | 관리 (접근통제 솔루션 경유) |
 
 차단

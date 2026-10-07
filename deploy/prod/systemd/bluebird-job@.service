@@ -1,5 +1,6 @@
 # 업무망 호스트(backend-jobs). 파이프라인 작업 1회 실행 템플릿. 인스턴스 이름 = 작업 이름.
 #   bluebird-job@ingest.service          : bluebird ingest
+#   bluebird-job@cards.service           : bluebird cards (새 아이디어 카드, ingest 뒤)
 #   bluebird-job@signals.service         : bluebird signals catalog-fetch --out-dir ...
 #   bluebird-job@publish.service         : bluebird publish
 #   bluebird-job@pull-objections.service : bluebird objections pull

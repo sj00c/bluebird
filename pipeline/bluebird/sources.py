@@ -15,7 +15,7 @@ from collections.abc import Iterator
 from dataclasses import dataclass
 from pathlib import Path
 
-from .anonymize import MASK, anon_id, mask_team, team_kind
+from .anonymize import MASK, anon_id, mask_team, name_variants, team_kind
 
 _WS = re.compile(r"\s+")
 
@@ -81,15 +81,17 @@ def _year(s: str) -> int | None:
     return int(s[:4]) if s[:4].isdigit() else None
 
 
-def awards_csv(spec: SourceSpec, secret: bytes) -> Iterator[dict]:
+def awards_csv(spec: SourceSpec, secret: bytes, names: dict[str, list[str]] | None = None) -> Iterator[dict]:
     """공공데이터 활용 창업경진대회 수상작(no, host, year, award, team, item, data, part)."""
     with spec.path.open(encoding="utf-8-sig", newline="") as f:
         for r in csv.DictReader(f):
             team = r.get("team") or ""
             year = _year(r["year"])
             item = mask_team((r.get("item") or "").strip(), team)
+            iid = anon_id(secret, spec.id, r["no"], year)
+            _keep_names(names, iid, team)
             yield {
-                "idea_id": anon_id(secret, spec.id, r["no"], year),
+                "idea_id": iid,
                 "source_id": spec.id,
                 "contest_name": "범정부 공공데이터 활용 창업경진대회",
                 "host_org": _norm(r.get("host")),
@@ -110,7 +112,7 @@ def _host_from_institutions(inst: str) -> str:
     return ", ".join(hosts)
 
 
-def kipris_idea_master(spec: SourceSpec, secret: bytes) -> Iterator[dict]:
+def kipris_idea_master(spec: SourceSpec, secret: bytes, names: dict[str, list[str]] | None = None) -> Iterator[dict]:
     """KIPRIS 공모전 아이디어 idea_master.csv(02_kipris_bulk 로더 산출물). 팀·개인 컬럼이 원래 없다."""
     with spec.path.open(encoding="utf-8-sig", newline="") as f:
         for r in csv.DictReader(f):
@@ -133,6 +135,12 @@ def kipris_idea_master(spec: SourceSpec, secret: bytes) -> Iterator[dict]:
                     "patent_applno": [x for x in (r.get("PATENT_APPLNO") or "").split(";") if x],
                 },
             }
+
+
+def _keep_names(names: dict[str, list[str]] | None, idea_id: str, raw: str) -> None:
+    """G10 성명 일치 감사용: 이 아이디어의 팀명·성명 형태를 호출자가 준 메모리 dict에만 담는다(DB·파일에 쓰지 않음)."""
+    if names is not None and (v := name_variants(raw)):
+        names.setdefault(idea_id, []).extend(v)
 
 
 def _read_csv(path: Path) -> list[dict]:
@@ -186,7 +194,7 @@ def _record(spec: SourceSpec, secret: bytes, key: str, **kw) -> dict:
     return rec
 
 
-def startup_final_xlsx(spec: SourceSpec, secret: bytes) -> Iterator[dict]:
+def startup_final_xlsx(spec: SourceSpec, secret: bytes, names: dict[str, list[str]] | None = None) -> Iterator[dict]:
     """범정부 공공데이터 활용 창업경진대회 본선 수상작(No., 수상연도, 회차, 수상내역, 참가팀, 아이템명, 서비스 내용, 활용 공공데이터, 비고)."""
     import openpyxl
 
@@ -205,7 +213,7 @@ def startup_final_xlsx(spec: SourceSpec, secret: bytes) -> Iterator[dict]:
         year = _year(r["수상연도"])
         body = _text(mask_team(r["서비스 내용"], team))
         used = _text(r["활용 공공데이터(기관)"]) or ""
-        yield _record(
+        rec = _record(
             spec, secret, key(year, _norm(r["수상내역"]), _norm(r["아이템명"])),
             contest_name="범정부 공공데이터 활용 창업경진대회(본선)", host_org="행정안전부", year=year,
             award=_norm(r["수상내역"]) or None,
@@ -215,9 +223,11 @@ def startup_final_xlsx(spec: SourceSpec, secret: bytes) -> Iterator[dict]:
             category=_norm(r["비고"]) or None,
             team_kind=team_kind(team),
         )
+        _keep_names(names, rec["idea_id"], team)
+        yield rec
 
 
-def science_museum_csv(spec: SourceSpec, secret: bytes) -> Iterator[dict]:
+def science_museum_csv(spec: SourceSpec, secret: bytes, names: dict[str, list[str]] | None = None) -> Iterator[dict]:
     """국립중앙과학관 수상작(대회명, 주제, 소속명, 제목, 지도교사, 수상자, 수상명).
 
     지도교사·수상자(성명)·소속명(학교)은 읽지 않는다. 제목에 수상자 이름이 들어 있으면 마스킹한다.
@@ -237,15 +247,18 @@ def science_museum_csv(spec: SourceSpec, secret: bytes) -> Iterator[dict]:
         year = (1954 + n if n and "과학전람회" in contest
                 else 1978 + n if n and "발명품" in contest else None)
         award = _norm(r.get("수상명"))
-        yield _record(
+        rec = _record(
             spec, secret, key(contest, title, award),
             contest_name=contest, host_org="국립중앙과학관", year=year,
             award=award if award and award != "등급외" else None, title=title[:300],
             category=_norm(r.get("주제")) or None, team_kind="masked",
         )
+        for name in re.split(r"[,\s]+", f"{r.get('수상자', '')} {r.get('지도교사', '')}"):
+            _keep_names(names, rec["idea_id"], name)
+        yield rec
 
 
-def mafra_contest_csv(spec: SourceSpec, secret: bytes) -> Iterator[dict]:
+def mafra_contest_csv(spec: SourceSpec, secret: bytes, names: dict[str, list[str]] | None = None) -> Iterator[dict]:
     """농식품 공공·빅데이터 활용 창업경진대회(경진대회명, 분야_포상, 작품명, 활용 공공데이터명, 데이터 등록일)."""
     key = _StableKeys()
     for r in _read_csv(spec.path):
@@ -263,7 +276,7 @@ def mafra_contest_csv(spec: SourceSpec, secret: bytes) -> Iterator[dict]:
         )
 
 
-def design_idea_csv(spec: SourceSpec, secret: bytes) -> Iterator[dict]:
+def design_idea_csv(spec: SourceSpec, secret: bytes, names: dict[str, list[str]] | None = None) -> Iterator[dict]:
     """공공디자인 국민아이디어공모 수상작(등록번호, 연도, 포상, 수상자, 제목, 내용). 수상자 성명은 읽지 않는다."""
     for r in _read_csv(spec.path):
         name = _norm(r.get("수상자"))
@@ -272,6 +285,7 @@ def design_idea_csv(spec: SourceSpec, secret: bytes) -> Iterator[dict]:
             continue
         body = mask_team((r.get("내용") or "").strip(), name)
         year = _year(r["연도"])
+        _keep_names(names, anon_id(secret, spec.id, r["등록번호"].strip(), year), name)
         yield _record(
             spec, secret, r["등록번호"].strip(),
             contest_name="공공디자인 국민아이디어공모", host_org="한국공예디자인문화진흥원", year=year,

@@ -214,11 +214,13 @@ check "보안 헤더(CSP)" "curl -sI http://localhost:$port/pool | grep -qi cont
 check "서버 버전 미노출" "! curl -sI http://localhost:$port/pool | grep -qiE '^server: nginx/[0-9]'"
 
 echo "== KPI 현황표(G1–G13, bluebird kpi report)"
-p95f="$(ls -t .runtime/p95-*.txt 2>/dev/null | head -1)"
-p95="$( [[ -n $p95f ]] && python3 -c "import json,sys; print(json.load(open(sys.argv[1]))['p95_ms'])" "$p95f")"
+# p95는 오늘 측정했고 요청 오류가 0인 최신 결과만 쓴다(오래됐거나 오류가 있으면 G8 진행 중으로 남는다).
+p95f="$(ls -t .runtime/p95-"$(date +%Y%m%d)"-*.txt 2>/dev/null | head -1)"
+p95="$( [[ -n $p95f ]] && python3 -c "import json,sys; d=json.load(open(sys.argv[1])); print(d['p95_ms'] if d['errors'] == 0 else '')" "$p95f")"
 kpi_out=".runtime/kpi-$(date +%Y%m%d-%H%M%S).txt"
-dc --profile jobs run --rm -T backend-jobs kpi report ${p95:+--p95-ms "$p95"} > "$kpi_out" 2>/dev/null; kpi_rc=$?
-cat "$kpi_out" | sed 's/^/      /'
+dc --profile jobs run --rm -T backend-jobs kpi report ${p95:+--p95-ms "$p95"} > "$kpi_out" 2> "$kpi_out.err"; kpi_rc=$?
+sed 's/^/      /' "$kpi_out"
+if [[ $kpi_rc -ne 0 ]]; then grep -v 'Container' "$kpi_out.err" | tail -20 | sed 's/^/      ! /'; fi
 check "kpi report 실행, fail 0(사람 대기·키 대기는 human_blocked·key_required로 표시)" "[[ $kpi_rc -eq 0 ]] && grep -q '^G13' $kpi_out"
 check "kpi: 자동 검증 항목 G1·G2·G9·G10·G11·G13 pass" \
   "[[ \$(grep -E '^(G1|G2|G9|G10|G11|G13) ' $kpi_out | grep -c ' pass ') -eq 6 ]]"

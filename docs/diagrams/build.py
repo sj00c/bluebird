@@ -20,7 +20,6 @@ FILL_LINK = "#f3f4f6"
 GRAY = "#6b7280"
 STEP = "#1f8a4c"
 NEW = "#2e5aa8"
-OLD = "#9ca3af"
 
 # Tabler Icons (MIT)
 ICONS = {
@@ -54,15 +53,15 @@ def zone(x, y, w, h, label, fill):
 
 
 def tag(x, y, kind):
-    color, text = {"new": (NEW, "신규"), "old": (OLD, "기존")}[kind]
+    color, text = NEW, "신규"
     parts.append(f'<rect x="{x}" y="{y}" width="40" height="18" rx="9" fill="{color}"/>')
     parts.append(t(x + 20, y + 13, text, 11, "#ffffff", "middle", 600))
 
 
 def card(x, y, w, h, kind, headers, body):
-    """kind: new(신규) / old(기존) / plain(태그 없음)."""
-    stroke = f'stroke="{NEW}" stroke-width="1.6"' if kind == "new" else f'stroke="{OLD}" stroke-width="1"'
-    fill = "#f3f4f6" if kind == "old" else "#ffffff"
+    """kind: new(신규) / plain(태그 없음)."""
+    stroke = f'stroke="{NEW}" stroke-width="1.6"' if kind == "new" else f'stroke="{GRAY}" stroke-width="1"'
+    fill = "#ffffff"
     parts.append(f'<rect x="{x}" y="{y}" width="{w}" height="{h}" rx="8" fill="{fill}" {stroke} filter="url(#shadow)"/>')
     hy = y + 16
     for ic, title in headers:
@@ -72,7 +71,7 @@ def card(x, y, w, h, kind, headers, body):
         hy += 36
     for i, line in enumerate(body):
         parts.append(t(x + w // 2, hy + 20 + i * 20, line, 12, "#4b5563", "middle"))
-    if kind in ("new", "old"):
+    if kind == "new":
         tag(x - 8, y - 10, kind)
 
 
@@ -211,7 +210,7 @@ def marker(mid, color):
 
 svg = f"""<svg viewBox="0 0 {W} {H}" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="bb-title bb-desc" font-family="'Pretendard', 'Noto Sans KR', 'Apple SD Gothic Neo', sans-serif">
 <title id="bb-title">파랑새 시스템 구성도</title>
-<desc id="bb-desc">국민은 HTTPS로 기관 홈페이지의 파랑새 메뉴에 접속하고, DMZ의 Nginx는 같은 DMZ의 공개용 DB만 조회하므로 국민 요청은 DMZ 안에서 끝난다. 내부 서버의 Backend는 관리자가 승인한 자료만 공개용 DB로 한 방향 반영한다. 자료 수집과 AI 분석은 DMZ 포워드 프록시를 거쳐 외부 API를 조회한다. 관리자는 내부 PC에서 검토하고 승인한다.</desc>
+<desc id="bb-desc">국민은 WAF를 거쳐 DMZ의 Nginx로 접속하고, 포털은 같은 DMZ의 공개용 DB만 조회하며 이의는 접수함에만 넣으므로 국민 요청은 DMZ 안에서 끝난다. 업무망으로 들어오는 연결은 없고, 업무망의 백엔드 작업이 승인된 자료를 공개용 DB로 밀어넣고 접수함의 이의를 가져온 뒤 지운다. 자료 수집과 AI 분석은 DMZ 포워드 프록시를 거쳐 허용 도메인의 외부 API만 조회한다. 관리자는 관리망의 PC에서 콘솔망의 관리자 콘솔로만 접속해 검토·승인·2인 코딩·이의 처리를 한다.</desc>
 <defs>
 <filter id="shadow" x="-10%" y="-10%" width="120%" height="130%"><feDropShadow dx="0" dy="1" stdDeviation="2" flood-color="#000" flood-opacity="0.16"/></filter>
 {marker("a", GRAY)}{marker("a-new", NEW)}
