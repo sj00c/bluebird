@@ -27,6 +27,11 @@ export type IdeaRow = {
   used_data: string[];
   category: string | null;
   source_url: string | null;
+  card_kind: string | null;
+  problem: string | null;
+  solution: string | null;
+  trace_status: string | null;
+  external_search: string | null;
 };
 
 export const PAGE_SIZE = 50;
@@ -76,8 +81,9 @@ export type DiagnosisRow = {
 export type ChangeRow = {
   id: string;
   kind: string;
-  tier: number | string | null;
+  tier: string | null;
   occurred_at: string | null;
+  registered_at: string | null;
   title: string;
   url: string | null;
   what_changed: string[];
@@ -95,6 +101,7 @@ export type TimelinessRow = {
   s: number | null;
   verdict: string;
   resolve_condition: string | null;
+  evidence_ids: string[];
 };
 
 export type EvidenceRow = {
@@ -118,7 +125,8 @@ export async function getRevival(id: string): Promise<{
       [id],
     ),
     pool.query<ChangeRow>(
-      `SELECT id::text AS id, kind, tier, occurred_at::text AS occurred_at, title, url,
+      `SELECT id::text AS id, kind, tier, occurred_at::text AS occurred_at, registered_at::text AS registered_at,
+              title, url,
               COALESCE(what_changed, '{}') AS what_changed, how_now,
               COALESCE(evidence_ids, '{}')::text[] AS evidence_ids
          FROM publish.change WHERE idea_id = $1
@@ -126,15 +134,18 @@ export async function getRevival(id: string): Promise<{
       [id],
     ),
     pool.query<TimelinessRow>(
-      `SELECT as_of::text AS as_of, tech, data, regulation, policy, n_scored, s, verdict, resolve_condition
+      `SELECT as_of::text AS as_of, tech, data, regulation, policy, n_scored, s, verdict, resolve_condition,
+              COALESCE(evidence_ids, '{}')::text[] AS evidence_ids
          FROM publish.timeliness WHERE idea_id = $1`,
       [id],
     ),
   ]);
   const diagnosis = d.rows[0] ?? null;
   const changes = c.rows;
+  const timeliness = t.rows[0] ?? null;
   const ids = new Set<string>(diagnosis?.evidence_ids ?? []);
   for (const ch of changes) for (const e of ch.evidence_ids) ids.add(e);
+  for (const e of timeliness?.evidence_ids ?? []) ids.add(e);
   let evidence: EvidenceRow[] = [];
   if (ids.size > 0) {
     const e = await pool.query<EvidenceRow>(
@@ -144,7 +155,99 @@ export async function getRevival(id: string): Promise<{
     );
     evidence = e.rows;
   }
-  return { diagnosis, changes, timeliness: t.rows[0] ?? null, evidence };
+  return { diagnosis, changes, timeliness, evidence };
+}
+
+// ---------------------------------------------------------------- 화면1: 이번 주 재조명
+export type TopRow = {
+  rank: number;
+  idea_id: string;
+  title: string;
+  year: number | null;
+  contest_name: string;
+  s: number | null;
+  verdict: string | null;
+  cause: string | null;
+  change_title: string | null;
+  change_kind: string | null;
+};
+
+export async function getWeeklyTop(): Promise<{ week: string | null; rows: TopRow[] }> {
+  const r = await pool.query<TopRow & { week: string }>(
+    `SELECT w.week::text AS week, w.rank, w.idea_id, i.title, i.year, i.contest_name, w.s,
+            t.verdict, d.cause, c.title AS change_title, c.kind AS change_kind
+       FROM publish.weekly_top w
+       JOIN publish.idea i ON i.id = w.idea_id
+       LEFT JOIN publish.timeliness t ON t.idea_id = w.idea_id
+       LEFT JOIN publish.diagnosis d ON d.idea_id = w.idea_id
+       LEFT JOIN LATERAL (SELECT title, kind FROM publish.change x WHERE x.idea_id = w.idea_id
+                           ORDER BY x.occurred_at DESC, x.id LIMIT 1) c ON true
+      ORDER BY w.rank
+      LIMIT 20`,
+  );
+  return { week: r.rows[0]?.week ?? null, rows: r.rows };
+}
+
+// ---------------------------------------------------------------- 화면2: 주제·공고 넣기
+// pg_trgm 유사 조회(제목 가중). word_similarity 문턱은 이 트랜잭션에만 적용한다(SET LOCAL).
+export const EXPLORE_LIMIT = 50;
+export type ExploreIdea = {
+  id: string;
+  title: string;
+  year: number | null;
+  contest_name: string;
+  award: string | null;
+  score: number;
+  cause: string | null;
+  verdict: string | null;
+  s: number | null;
+};
+export type ExploreAnnouncement = { id: string; title: string; org: string | null; apply_to: string | null; url: string };
+
+export async function explore(q: string): Promise<{
+  ideas: ExploreIdea[];
+  causes: { cause: string; n: number }[];
+  announcements: ExploreAnnouncement[];
+}> {
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN READ ONLY");
+    await client.query("SET LOCAL pg_trgm.word_similarity_threshold = 0.3");
+    const ideas = await client.query<ExploreIdea>(
+      `WITH hit AS (
+         SELECT i.id, i.title, i.year, i.contest_name, i.award,
+                greatest(word_similarity($1, i.title), 0.7 * word_similarity($1, coalesce(i.body, ''))) AS score
+           FROM publish.idea i
+          WHERE $1 <% i.title OR $1 <% i.body
+          ORDER BY score DESC, i.id
+          LIMIT ${EXPLORE_LIMIT})
+       SELECT h.id, h.title, h.year, h.contest_name, h.award, round(h.score::numeric, 2)::float AS score,
+              d.cause, t.verdict, t.s
+         FROM hit h
+         LEFT JOIN publish.diagnosis d ON d.idea_id = h.id
+         LEFT JOIN publish.timeliness t ON t.idea_id = h.id
+        ORDER BY h.score DESC, h.id`,
+      [q],
+    );
+    const ann = await client.query<ExploreAnnouncement>(
+      `SELECT id, title, org, apply_to::text AS apply_to, url
+         FROM publish.announcement
+        WHERE $1 <% title
+        ORDER BY word_similarity($1, title) DESC, id
+        LIMIT 10`,
+      [q],
+    );
+    await client.query("COMMIT");
+    const counts = new Map<string, number>();
+    for (const r of ideas.rows) if (r.cause) counts.set(r.cause, (counts.get(r.cause) ?? 0) + 1);
+    const causes = [...counts].map(([cause, n]) => ({ cause, n })).sort((a, b) => b.n - a.n);
+    return { ideas: ideas.rows, causes, announcements: ann.rows };
+  } catch (e) {
+    await client.query("ROLLBACK").catch(() => undefined);
+    throw e;
+  } finally {
+    client.release();
+  }
 }
 
 export const OBJECTION_KINDS = ["fact", "cause", "change", "privacy", "other"] as const;

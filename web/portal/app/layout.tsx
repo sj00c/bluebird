@@ -16,10 +16,12 @@ export default async function RootLayout({ children }: { children: React.ReactNo
     <html lang="ko">
       <body>
         <header className="top">
-          <Link href="/pool" className="logo">
+          <Link href="/" className="logo">
             파랑새<span>Bluebird · 공모전 아이디어 풀 진단·재발굴</span>
           </Link>
           <nav>
+            <Link href="/">이번 주 재조명</Link>
+            <Link href="/explore">주제·공고 넣기</Link>
             <Link href="/pool">아이디어 풀</Link>
           </nav>
           <div className="right">

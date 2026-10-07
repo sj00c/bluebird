@@ -37,6 +37,8 @@ def test_trace_not_run_is_pending_never_none():
     req = funnel.required_items("full_v1", env={})
     assert req == ("manual",)
     assert funnel.decide_trace("full_v1", {}, req) == ("pending", "not_done")
+    # 키가 없어 사람 확인만 했으면 외부 검색은 미실시(포털에 "외부 검색 미실시")
+    assert funnel.decide_trace("full_v1", {"manual": {"result": "none"}}, req) == ("none", "not_done")
     req_keys = funnel.required_items("full_v1", env={"NAVER_CLIENT_ID": "a", "NAVER_CLIENT_SECRET": "b"})
     assert req_keys == ("news_web", "manual")
     checks = {"manual": {"result": "none"}, "news_web": {"result": "not_run"}}

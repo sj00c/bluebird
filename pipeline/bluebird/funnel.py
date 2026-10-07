@@ -49,8 +49,9 @@ def decide_trace(profile: str, checks: dict[str, dict], required: tuple[str, ...
 
     checks[item] = {"result": found|none|not_run, "status": 사람이 manual에서 정한 분류(선택)}
     """
+    # external_search = 체계적 외부 검색(NAVER 뉴스·KIPRIS Plus 특허)을 실제로 돌렸는가. 사람 manual 확인은 따로 표기.
     external = "done" if any(checks.get(i, {}).get("result") in ("found", "none")
-                             for i in ("news_web", "ip", "manual")) else "not_done"
+                             for i in ("news_web", "ip")) else "not_done"
     if any(checks.get(i, {}).get("result", "not_run") == "not_run" for i in required):
         return "pending", external
     manual = checks.get("manual", {})
@@ -521,10 +522,13 @@ def score_set(*, dsn: str, idea_id: str, scores: dict[str, int | None], evidence
             (idea_id, as_of, scores.get("tech"), scores.get("data"), scores.get("regulation"), scores.get("policy"),
              Jsonb(score.DEFAULT_WEIGHTS), sc.n_scored, sc.s, sc.verdict, sc.resolve_condition, by),
         )
+        # 다시 채점하면 그 채점의 근거를 새로 건다(이전 축·URL 근거가 남지 않게).
+        tid = f"{idea_id}@{as_of.isoformat()}"
+        conn.execute("DELETE FROM core.x_evidence WHERE target_type='timeliness' AND target_id=%s", (tid,))
         for axis, url in evidence.items():
             if scores.get(axis) is not None:
-                _evidence(conn, kind="manual", url=url, title=f"S:{axis}", excerpt=f"by {by}", observed_at=as_of,
-                          target_type="timeliness", target_id=f"{idea_id}@{as_of.isoformat()}")
+                _evidence(conn, kind="manual", url=url, title=f"시의성 {score.AXIS_KO[axis]} 근거",
+                          excerpt=f"채점 {by}", observed_at=as_of, target_type="timeliness", target_id=tid)
         conn.commit()
     return sc
 

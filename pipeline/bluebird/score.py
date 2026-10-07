@@ -10,6 +10,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 AXES = ("tech", "data", "regulation", "policy")
+AXIS_KO = {"tech": "기술", "data": "데이터", "regulation": "규제", "policy": "정책"}
 DEFAULT_WEIGHTS = dict.fromkeys(AXES, 0.25)
 # 바뀐 것 종류 → S 축(D→data, R→regulation, C·M→policy, T→tech)
 KIND_AXIS = {"dataset_opened": "data", "law_effective": "regulation", "announcement": "policy",
@@ -47,5 +48,5 @@ def compute(scores: dict[str, int | None], change_kinds: set[str],
         return Score(len(scored), s, "now", None)
     if raw >= 3.0:
         low = min((v, k) for k, v in scored.items())[1]
-        return Score(len(scored), s, "conditional", f"{low} 조건 보완 필요")
+        return Score(len(scored), s, "conditional", f"{AXIS_KO[low]}({low}) 조건 보완 필요")
     return Score(len(scored), s, "hold", "점수 3.0 미만")

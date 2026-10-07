@@ -4,7 +4,9 @@ a { color: inherit; text-decoration: none; }
 .top { height: 56px; background: #0f2557; color: #fff; display: flex; align-items: center; padding: 0 24px; gap: 28px; }
 .top .logo { font-weight: 700; font-size: 18px; }
 .top .logo span { color: #7fb3ff; font-weight: 400; font-size: 13px; margin-left: 8px; }
-.top nav a { color: #fff; font-weight: 700; border-bottom: 2px solid #7fb3ff; padding-bottom: 4px; }
+.top nav { display: flex; gap: 18px; }
+.top nav a { color: #fff; font-weight: 700; padding-bottom: 4px; }
+.top nav a:hover { border-bottom: 2px solid #7fb3ff; }
 .top .right { margin-left: auto; font-size: 12px; color: #c7d2fe; }
 .wrap { max-width: 1200px; margin: 0 auto; padding: 18px 24px; }
 .card { background: #fff; border: 1px solid #e5e7eb; border-radius: 10px; padding: 20px; margin-bottom: 16px; }
@@ -13,6 +15,7 @@ a { color: inherit; text-decoration: none; }
 .filters input { flex: 1; }
 .filters button { background: #0f2557; color: #fff; border: 0; border-radius: 6px; padding: 8px 16px; cursor: pointer; }
 table { width: 100%; border-collapse: collapse; }
+th, td.nw { white-space: nowrap; }
 th { text-align: left; background: #f3f4f6; padding: 10px; font-weight: 600; }
 td { padding: 10px; border-top: 1px solid #e5e7eb; vertical-align: top; }
 td a { color: #0f2557; font-weight: 600; }
@@ -37,3 +40,7 @@ h2 { font-size: 15px; margin: 16px 0 8px; }
 .objection-form button { align-self: flex-start; background: #0f2557; color: #fff; border: 0; border-radius: 6px; padding: 8px 16px; cursor: pointer; }
 .notice { border-radius: 8px; padding: 10px 14px; margin-bottom: 8px; background: #ecfdf5; border: 1px solid #a7f3d0; }
 .notice.error { background: #fef2f2; border-color: #fecaca; }
+td.rank { width: 36px; font-weight: 700; color: #0f2557; }
+details.more { margin-top: 10px; }
+details.more summary { cursor: pointer; color: #0f2557; font-weight: 600; padding: 6px 0; }
+.step a, .quote a, .card p a { color: #1d4ed8; text-decoration: underline; text-underline-offset: 2px; }

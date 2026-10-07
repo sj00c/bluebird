@@ -1,26 +1,10 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { getIdea, getRevival } from "@/lib/db";
+import { CAUSE, CHANGE_KIND, tierText, traceText, VERDICT } from "@/lib/labels";
 
 export const dynamic = "force-dynamic";
 
-const CAUSE: Record<string, string> = {
-  T: "기술 미성숙",
-  D: "데이터 부족",
-  R: "규제",
-  M: "시장·수요",
-  C: "사업화 역량·자금",
-  O: "기타",
-  U: "판단 불가",
-};
-const CHANGE_KIND: Record<string, string> = {
-  dataset_opened: "데이터 개방",
-  law_effective: "법령 시행",
-  announcement: "지원 공고",
-  policy_news: "정책",
-  tech: "기술",
-};
-const VERDICT: Record<string, string> = { now: "지금 가능", conditional: "조건부 가능" };
 const OBJECTION_KIND: [string, string][] = [
   ["fact", "사실 오류"],
   ["cause", "막힌 이유"],
@@ -69,7 +53,7 @@ export default async function IdeaPage({
   return (
     <div className="card">
       <p className="muted">
-        <Link href="/pool">아이디어 풀</Link> › {idea.id}
+        <Link href="/">이번 주 재조명</Link> · <Link href="/pool">아이디어 풀</Link> › {idea.id}
       </p>
       <h1>{idea.title}</h1>
       <div>
@@ -80,7 +64,14 @@ export default async function IdeaPage({
         </span>
         {idea.host_org && <span className="tag">주최: {idea.host_org}</span>}
       </div>
-      {idea.body && <div className="body">{idea.body}</div>}
+      {idea.body ? <div className="body">{idea.body}</div> : <p className="muted">공개된 본문이 없습니다(제목·수상 정보만 있는 원본).</p>}
+      {(idea.problem || idea.solution) && (
+        <>
+          <h2>카드 요약</h2>
+          {idea.problem && <p><strong>풀려던 문제</strong> {idea.problem}</p>}
+          {idea.solution && <p><strong>해법</strong> {idea.solution}</p>}
+        </>
+      )}
       {idea.used_data.length > 0 && (
         <>
           <h2>당시 활용 데이터</h2>
@@ -93,6 +84,9 @@ export default async function IdeaPage({
           <div className="step">
             <h3>1 원본</h3>
             <p>위에 보이는 제출 당시의 아이디어입니다.</p>
+            {traceText(idea.trace_status, idea.external_search) && (
+              <p className="muted">사업화 흔적: {traceText(idea.trace_status, idea.external_search)}</p>
+            )}
           </div>
           <div className="step">
             <h3>2 막힌 이유</h3>
@@ -118,7 +112,11 @@ export default async function IdeaPage({
                     <strong>{c.title}</strong>
                   )}
                 </p>
-                {c.occurred_at && <p className="muted">시행/발생 {c.occurred_at}</p>}
+                {tierText(c) ? (
+                  <p className="muted">{tierText(c)}</p>
+                ) : (
+                  c.occurred_at && <p className="muted">{c.kind === "law_effective" ? "시행" : "발생"} {c.occurred_at}</p>
+                )}
                 {c.what_changed.length > 0 && (
                   <ul>{c.what_changed.map((w, i) => <li key={i}>{w}</li>)}</ul>
                 )}
@@ -141,6 +139,12 @@ export default async function IdeaPage({
                   ))}
                 </p>
                 {timeliness.resolve_condition && <p>{timeliness.resolve_condition}</p>}
+                {timeliness.evidence_ids.length > 0 && (
+                  <>
+                    <p className="muted">채점 근거</p>
+                    {evidenceBlock(timeliness.evidence_ids)}
+                  </>
+                )}
                 {timeliness.as_of && <p className="muted">기준일 {timeliness.as_of}</p>}
               </>
             ) : (

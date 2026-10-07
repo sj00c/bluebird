@@ -282,6 +282,13 @@ def test_funnel_end_to_end_human_path(fresh, tmp_path):
                           evidence={"regulation": "https://www.law.go.kr/x", "tech": "https://a.kr"}, by="t")
     assert sc.verdict == "now"
     assert stage()[4] is True
+    # 다시 채점하면 근거도 바뀐다(이전 근거 연결이 남지 않는다)
+    funnel.score_set(dsn=fresh, idea_id=iid, scores={"regulation": 5, "tech": 4},
+                     evidence={"regulation": "https://www.law.go.kr/x", "tech": "https://a.kr/v2"}, by="t")
+    with psycopg.connect(fresh) as c:
+        assert sorted(r[0] for r in c.execute(
+            "SELECT e.url FROM core.x_evidence x JOIN core.evidence e ON e.id=x.evidence_id"
+            " WHERE x.target_type='timeliness'")) == ["https://a.kr/v2", "https://www.law.go.kr/x"]
     funnel.approve(dsn=fresh, idea_id=iid, by="t")
     assert stage()[5] is True and stage()[6] is False
     with psycopg.connect(fresh) as c:  # 공개는 public_ok 소스만, push 후에만 6단계
@@ -295,7 +302,10 @@ def test_funnel_end_to_end_human_path(fresh, tmp_path):
     with psycopg.connect(pub) as c:
         url = c.execute("SELECT url FROM publish.change").fetchone()[0]
         ev = c.execute("SELECT count(*) FROM publish.evidence").fetchone()[0]
-    assert url.startswith("https://www.law.go.kr/") and ev >= 2
+        # v2: S 근거(채점 축마다 1개)가 공개되고 evidence 행이 실재한다
+        tl_ev = c.execute("SELECT t.n_scored, cardinality(t.evidence_ids), (SELECT count(*) FROM publish.evidence e"
+                          " WHERE e.id = ANY(t.evidence_ids)) FROM publish.timeliness t").fetchone()
+    assert url.startswith("https://www.law.go.kr/") and ev >= 4 and tl_ev == (2, 2, 2)
     rep = funnel.report(dsn=fresh)
     assert rep["total"]["s6"] == 1
 
@@ -321,7 +331,6 @@ def test_funnel_end_to_end_human_path(fresh, tmp_path):
         assert c.execute("SELECT status FROM core.change_match WHERE idea_id=%s", (iid,)).fetchone()[0] == "rejected"
         assert c.execute("SELECT count(*) FROM core.x_evidence WHERE target_type='diagnosis' AND target_id=%s",
                          (iid,)).fetchone()[0] == 1  # 이전 원인(R)의 근거는 떨어졌다
-
 
 def test_s6_needs_applied_snapshot_and_future_change_does_not_pass(fresh):
     """push가 DMZ에 반영되지 않으면(applied_at 없음) 6단계가 아니다. 시행일이 미래인 바뀐 것은 3단계를 통과하지 않는다."""
@@ -361,6 +370,16 @@ def test_s6_needs_applied_snapshot_and_future_change_does_not_pass(fresh):
         assert c.execute("SELECT s6 FROM core.revival_candidate WHERE idea_id=%s", (iid,)).fetchone()[0] is True
         assert c.execute("SELECT revived_ids FROM core.publish_snapshot WHERE applied_at IS NOT NULL"
                          " ORDER BY id DESC LIMIT 1").fetchone()[0] == [iid]
+
+    # S 근거가 채점 축보다 적으면: 트리거가 공개를 철회하고(1차), 트리거를 우회해도 publish가 거부한다(2차, G9)
+    with psycopg.connect(fresh) as c:
+        c.execute("ALTER TABLE core.x_evidence DISABLE TRIGGER x_evidence_revoke")
+        c.execute("DELETE FROM core.x_evidence WHERE target_type='timeliness' AND evidence_id ="
+                  " (SELECT min(evidence_id) FROM core.x_evidence WHERE target_type='timeliness')")
+        c.execute("ALTER TABLE core.x_evidence ENABLE TRIGGER x_evidence_revoke")
+        c.commit()
+    with pytest.raises(publish.PublishError, match="fewer evidence than scored axes"):
+        publish.push(core_dsn=fresh, publish_dsn=_pub_db())
 
 
 def test_publish_refuses_forbidden_wording_in_own_text(fresh):

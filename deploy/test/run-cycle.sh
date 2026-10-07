@@ -27,4 +27,4 @@ job publish
 
 dc up -d --wait portal nginx
 dc up -d --wait --force-recreate backend-api console console-gw
-echo "[cycle] done. http://localhost:$(grep BB_HTTP_PORT .env | cut -d= -f2)/pool  console: http://127.0.0.1:$(grep BB_CONSOLE_PORT .env | cut -d= -f2)"
+echo "[cycle] done. http://localhost:$(grep BB_HTTP_PORT .env | cut -d= -f2)/  console: http://127.0.0.1:$(grep BB_CONSOLE_PORT .env | cut -d= -f2)"

@@ -193,6 +193,16 @@ check "수용된 이의 1건 이상 실제 처리됨(콘솔 E2E 기록)" \
 echo "== 공개 화면"
 code() { curl -s -o /dev/null -w '%{http_code}' "http://localhost:$port$1"; }
 check "GET /pool 200" "[[ \$(code /pool) == 200 ]]"
+check "화면1 GET / 이번 주 재조명 200, weekly_top 1위 표시" \
+  "[[ \$(code /) == 200 ]] && curl -s http://localhost:$port/ | grep -q \"\$(pub_sql 'SELECT idea_id FROM publish.weekly_top ORDER BY rank LIMIT 1')\""
+check "화면2 GET /explore?q= 200, API 결과 있음·짧은 질의 400" \
+  "[[ \$(code '/explore?q=%EB%8C%80%EC%B2%B4%EC%A1%B0%EC%A0%9C') == 200 && \$(code '/api/v1/explore?q=a') == 400 ]] && curl -s 'http://localhost:$port/api/v1/explore?q=%EB%8C%80%EC%B2%B4%EC%A1%B0%EC%A0%9C' | python3 -c 'import json,sys; sys.exit(0 if json.load(sys.stdin)[\"ideas\"] else 1)'"
+top1="$(pub_sql 'SELECT idea_id FROM publish.weekly_top ORDER BY rank LIMIT 1')"
+check "화면3 카드: 4단계·흔적 범위 문구·S 근거·이의 폼" \
+  "curl -s http://localhost:$port/ideas/$top1 | grep -q '지금 하려면' && curl -s http://localhost:$port/ideas/$top1 | grep -qE '외부 검색 (미실시|\(뉴스·특허\) 실시)' && curl -s http://localhost:$port/ideas/$top1 | grep -q '채점 근거' && curl -s http://localhost:$port/ideas/$top1 | grep -q 'name=\"body\"'"
+check "공개 S마다 채점 축 수만큼 근거(v2), 근거 행 실재" \
+  "[[ \$(pub_sql \"SELECT count(*) FROM publish.timeliness t WHERE cardinality(t.evidence_ids) < t.n_scored OR EXISTS (SELECT 1 FROM unnest(t.evidence_ids) e WHERE e NOT IN (SELECT id FROM publish.evidence))\") -eq 0 ]]"
+check "공개용 DB 템플릿 v2" "[[ \$(pub_sql 'SELECT template_version FROM meta.snapshot_log ORDER BY snapshot_id DESC LIMIT 1') == v2 ]]"
 first="$(curl -s "http://localhost:$port/api/v1/ideas" | python3 -c 'import json,sys; print(json.load(sys.stdin)["items"][0]["id"])')"
 check "GET /ideas/$first 200" "[[ \$(code /ideas/$first) == 200 ]]"
 check "GET /api/v1/ideas/없는ID 404" "[[ \$(code /api/v1/ideas/ID-0000-none) == 404 ]]"

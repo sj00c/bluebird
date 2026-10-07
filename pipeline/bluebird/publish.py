@@ -21,7 +21,7 @@ from psycopg.types.json import Jsonb
 
 from . import db, wording
 
-TEMPLATE_VERSION = "v1"
+TEMPLATE_VERSION = "v2"
 PORTAL_ROLE = "bb_portal"
 
 
@@ -95,8 +95,12 @@ QUERIES: dict[str, tuple[tuple[str, ...], str]] = {
             ORDER BY 1""",
     ),
     "change": (
-        ("id", "idea_id", "kind", "tier", "occurred_at", "title", "url", "what_changed", "how_now", "evidence_ids"),
-        """SELECT m.id, m.idea_id, c.kind, c.tier, c.occurred_at, c.title, c.url, m.what_changed, m.how_now,
+        ("id", "idea_id", "kind", "tier", "occurred_at", "registered_at", "title", "url", "what_changed", "how_now",
+         "evidence_ids"),
+        """SELECT m.id, m.idea_id, c.kind, c.tier, c.occurred_at,
+                  (SELECT sd.registered_at FROM core.signal_dataset sd
+                    WHERE c.kind = 'dataset_opened' AND sd.public_data_pk = c.ref_id),
+                  c.title, c.url, m.what_changed, m.how_now,
                   ARRAY(SELECT x.evidence_id FROM core.x_evidence x
                          WHERE x.target_type = 'change_match' AND x.target_id = m.id::text ORDER BY 1)
              FROM core.change_match m
@@ -109,9 +113,13 @@ QUERIES: dict[str, tuple[tuple[str, ...], str]] = {
             ORDER BY 1""",
     ),
     "timeliness": (
-        ("idea_id", "as_of", "tech", "data", "regulation", "policy", "n_scored", "s", "verdict", "resolve_condition"),
+        ("idea_id", "as_of", "tech", "data", "regulation", "policy", "n_scored", "s", "verdict", "resolve_condition",
+         "evidence_ids"),
         """SELECT DISTINCT ON (t.idea_id) t.idea_id, t.as_of, t.tech, t.data, t.regulation, t.policy, t.n_scored,
-                  t.s, t.verdict, t.resolve_condition
+                  t.s, t.verdict, t.resolve_condition,
+                  ARRAY(SELECT x.evidence_id FROM core.x_evidence x
+                         WHERE x.target_type = 'timeliness' AND x.target_id = t.idea_id || '@' || t.as_of::text
+                         ORDER BY 1)
              FROM core.timeliness t
              JOIN core.idea i ON i.id = t.idea_id AND i.retired_at IS NULL AND i.withheld_at IS NULL
              JOIN core.source s ON s.id = i.source_id AND s.public_ok
@@ -171,7 +179,7 @@ def collect(core_conn) -> dict[str, list[tuple]]:
     for table, (_, q) in QUERIES.items():
         data[table] = [tuple(r) for r in core_conn.execute(q)]
     data["announcement_match"] = [r for r in data["announcement_match"] if r[2] <= 5]
-    ev_ids = sorted({e for t in ("diagnosis", "change") for r in data[t] for e in r[-1]})
+    ev_ids = sorted({e for t in ("diagnosis", "change", "timeliness") for r in data[t] for e in r[-1]})
     data["evidence"] = [
         tuple(r) for r in core_conn.execute(
             "SELECT id, kind, url, title, excerpt, observed_at FROM core.evidence WHERE id = ANY(%s) ORDER BY id",
@@ -183,6 +191,10 @@ def collect(core_conn) -> dict[str, list[tuple]]:
         empty = [r[0] for r in data[t] if not r[-1] and not (t == "diagnosis" and r[1] == "U")]
         if empty:
             raise PublishError(f"{t}: {len(empty)} row(s) without evidence, e.g. {empty[:3]}")
+    # S: 채점한 축 수(n_scored)만큼 근거가 있어야 한다(축마다 근거 1개, score_set이 강제).
+    short = [r[0] for r in data["timeliness"] if len(r[-1]) < r[6]]
+    if short:
+        raise PublishError(f"timeliness: {len(short)} row(s) with fewer evidence than scored axes, e.g. {short[:3]}")
     # 우리가 쓴 글(카드 요약·진단·바뀐 것·S 조건)에 금지 표현이 있으면 반영하지 않는다(원문 인용·제목은 제외).
     for t, cols in OWN_TEXT.items():
         idx = [columns(t).index(c) for c in cols]
