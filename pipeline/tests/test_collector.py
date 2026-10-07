@@ -136,3 +136,15 @@ def test_names_out_collects_name_forms_in_memory_only(tmp_path):
     assert all(not find_name(r["title"], names.get(r["idea_id"], [])) for r in rows)
     assert find_name("이민수가 만든 테이블", names[rows[1]["idea_id"]])
     assert not find_name("maintAIn", ["AI"]) and find_name("AI 진단", ["AI"])
+
+
+def test_mask_team_keeps_masking_latin_oo_and_partly_masked_teams():
+    """'oo'가 든 영문 팀명, 일부만 가려진 팀('이**(브레싱스)')도 이름 부분은 가린다(G10 대조 형태도 같다)."""
+    from bluebird.anonymize import audit_variants
+    assert mask_team("Pill Good 앱", "Pill Good") == f"{MASK} 앱"
+    assert mask_team("SCHOOL REBIRTH 플랫폼", "SCHOOL REBIRTH") == f"{MASK} 플랫폼"
+    assert "Red" not in mask_team("Red Connect 플랫폼", "김** (Red Connect)")
+    assert mask_team("브레싱스 호흡 코치", "이**(브레싱스)") == f"{MASK} 호흡 코치"
+    assert audit_variants("이**(브레싱스)") == ["브레싱스"]
+    assert "홍길동" in audit_variants("김*수, 홍길동") and not any("*" in v for v in audit_variants("김*수, 홍길동"))
+    assert audit_variants("○○○") == [] and audit_variants("") == []

@@ -53,9 +53,13 @@ def team_kind(team: str) -> str:
     return "brand"
 
 
+_MASK_CHAR = re.compile(r"[○*]")
+
+
 def name_variants(team: str) -> list[str]:
-    """팀명·성명 원문에서 본문에 나올 수 있는 형태들(긴 것부터). 2자 미만·마스킹된 형태는 뺀다."""
-    if not team or _MASKED.search(team):
+    """팀명·성명 원문에서 본문에 나올 수 있는 형태들(긴 것부터, 2자 이상). mask_team과 G10 감사가 같은 형태를 쓴다.
+    부분 마스킹된 팀('이**(브레싱스)')도 브랜드 부분은 형태로 남는다."""
+    if not team:
         return []
     cleaned = clean_team(team)
     variants = {team.strip(), cleaned}
@@ -64,7 +68,12 @@ def name_variants(team: str) -> list[str]:
         variants.add(_PAREN.split(team, 1)[0].strip())
         # '메디뷰(MediView)' → '메디뷰', 'MediView' / '팀명(이름1, 이름2)'·'이름1, 이름2' → 이름마다
         variants.update(t for t in _LIST_SPLIT.split(_PAREN.sub(" ", team)) if _maskable_token(t))
-    return sorted((v for v in variants if len(v) >= 2 and v != "-"), key=len, reverse=True)
+    return sorted((v for v in variants if len(v) >= 2), key=len, reverse=True)
+
+
+def audit_variants(team: str) -> list[str]:
+    """G10 대조용 형태: 마스킹 문자(○·*)가 든 형태는 이미 가려진 것이라 뺀다('이**(브레싱스)' → '브레싱스'만)."""
+    return [v for v in name_variants(team) if not _MASK_CHAR.search(v)]
 
 
 def _name_re(v: str) -> str:

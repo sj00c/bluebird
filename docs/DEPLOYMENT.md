@@ -96,7 +96,7 @@ real_ip_recursive on;
 
 상시 실행: `bluebird-api.service`(업무망 호스트, 루프백 8000), `bluebird-console.service`(루프백 3001, 앞단 console-gw), dmz-web의 `bluebird-portal.service`(루프백 3000). 루프백 수신 주소는 단위 파일이 `-e`로 고정한다(env 파일로 바꿀 수 없음). console-gw는 `deploy/prod/nginx/console-gw.conf`(443, 관리자 단말 대역만 allow, 그 밖 403)로 biz-app의 nginx에 올린다.
 
-카드 만들기, 흔적·진단·바뀐 것 입력, 검토 승인은 콘솔과 `bluebird` 명령으로 사람이 진행한다. 단위 파일은 `deploy/prod/systemd/`.
+카드 만들기는 타이머(02:30)가 한다. 흔적·진단·바뀐 것 입력, 검토 승인은 콘솔과 `bluebird` 명령으로 사람이 진행한다. 단위 파일은 `deploy/prod/systemd/`.
 
 ## 7. 환경변수 (`deploy/prod/env.example`)
 

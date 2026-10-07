@@ -156,7 +156,7 @@ def goldset(*, dsn: str, gold_csv: str, baseline: bool = False) -> dict:
         out = {"gold_rows": len(gold), "matched_ideas": len(gold) - unmatched, "unmatched": unmatched,
                "pending": pending, "decided": len(matched), "confusion": conf, "f1": f1s, "macro_f1": macro,
                "realized_pivot_recall": recall_rp, "baseline_macro_f1": base["macro_f1"] if base else None,
-               "status": status}
+               "baseline_run": baseline, "status": status}
         _log(conn, "kpi-goldset", "ok", out)
         if baseline and status == PASS:
             _log(conn, "kpi-goldset-baseline", "ok", out)
@@ -233,18 +233,31 @@ def name_leaks(pc, *, config, seed_dir, secret: bytes) -> dict[str, int]:
     from .anonymize import find_name
 
     names: dict[str, list[str]] = {}
-    files = 0
+    files = missing = 0
     for spec in load_sources(config, seed_dir):
-        if spec.public_ok and spec.path.exists():
-            for _ in ADAPTERS[spec.adapter](spec, secret, names):
-                pass
-            files += 1
-    hits = 0
+        if not spec.public_ok:
+            continue
+        if not spec.path.exists():
+            missing += 1  # 공개 소스 원본이 없으면 대조를 못 한 것이다(G10 통과 아님)
+            continue
+        for _ in ADAPTERS[spec.adapter](spec, secret, names):
+            pass
+        files += 1
+    hits = compared = 0
     for iid, title, body, problem, solution in pc.execute(
             "SELECT id, title, body, problem, solution FROM publish.idea WHERE id = ANY(%s)", (list(names),)):
+        compared += 1
         if any(find_name(t, names[iid]) for t in (title, body, problem, solution)):
             hits += 1
-    return {"name_matches": hits, "ideas_with_names": len(names), "source_files": files}
+    return {"name_matches": hits, "compared": compared, "ideas_with_names": len(names), "source_files": files,
+            "missing_files": missing}
+
+
+def names_checked(names: dict[str, int] | None) -> bool:
+    """이름 대조가 실제로 됐는가: 공개 소스 파일이 다 있고, 이름 있는 공개 아이디어와 실제로 맞춰 봤다.
+    익명화 키가 적재 때와 다르면 ID가 안 맞아 compared=0이 된다."""
+    return bool(names) and names["missing_files"] == 0 and names["source_files"] > 0 and (
+        names["ideas_with_names"] == 0 or names["compared"] > 0)
 
 
 def audit_g10(conn, pc, *, names: dict[str, int] | None) -> dict[str, int | None]:
@@ -275,7 +288,7 @@ def audit_g10(conn, pc, *, names: dict[str, int] | None) -> dict[str, int | None
                                  'person_name', 'contact')""").fetchone()[0]
     return {"off_whitelist_calls": off_host, "forbidden_fields_sent": bad_field,
             "full_card_without_llm_call": full_without_llm_call, "publish_columns_outside_template": extra_cols,
-            "publish_name_columns": name_cols, "name_matches": None if names is None else names["name_matches"]}
+            "publish_name_columns": name_cols, "name_matches": names["name_matches"] if names_checked(names) else None}
 
 
 def report(*, dsn: str, publish_dsn: str, inbox_dsn: str | None = None, p95_ms: float | None = None,
@@ -306,21 +319,36 @@ def report(*, dsn: str, publish_dsn: str, inbox_dsn: str | None = None, p95_ms: 
         sid = kappa_sample or (conn.execute(
             """SELECT sample_id FROM core.coding_sample GROUP BY sample_id HAVING count(*) >= %s
                 ORDER BY max(created_at) DESC LIMIT 1""", (KAPPA_MIN_SAMPLE,)).fetchone() or [None])[0]
+    k = None
     if sid:
-        k = kappa(dsn=dsn, sample_id=sid)
+        try:
+            k = kappa(dsn=dsn, sample_id=sid)
+        except KeyError:
+            rows.append(_row("G3", "원인 분류 κ", HUMAN, f"표본 {sid} 없음(bluebird kappa로 생성)",
+                             f"표본 ≥{KAPPA_MIN_SAMPLE}, κ ≥{KAPPA_TARGET}"))
+    if k:
         rows.append(_row("G3", "원인 분류 κ", k["status"],
                          f"표본 {sid}: κ={k['kappa']} 코딩 {k['coded_pairs']}/{k['size']} U {k['u_share']}",
                          f"표본 ≥{KAPPA_MIN_SAMPLE}, κ ≥{KAPPA_TARGET}, U ≤20%"))
-    else:
+    elif not sid:
         rows.append(_row("G3", "원인 분류 κ", HUMAN, f"{KAPPA_MIN_SAMPLE}건 표본 없음(bluebird kappa로 생성)",
                          f"표본 ≥{KAPPA_MIN_SAMPLE}, κ ≥{KAPPA_TARGET}"))
 
     with db.connect(dsn) as conn:
 
-        g = _latest(conn, "kpi-goldset")
-        rows.append(_row("G4", "골드셋 회귀", g["status"] if g else PROGRESS,
-                         f"판정 {g['decided']}/{g['matched_ideas']} (pending {g['pending']}), macro-F1 {g['macro_f1']}"
-                         if g else "미실행(bluebird eval goldset)", "macro-F1 하락 ≤5pt"))
+        # G4: 골드셋 CSV에 팀명이 있어 리포트 때 다시 돌리지 않고 마지막 실행을 보여 준다(실행 시각 표시).
+        # 기준선을 막 잡은 실행은 비교가 아니므로 통과로 치지 않는다.
+        g4 = conn.execute("""SELECT stats, finished_at FROM core.pipeline_run WHERE stage='kpi-goldset' AND status='ok'
+                              ORDER BY id DESC LIMIT 1""").fetchone()
+        if g4:
+            g, at = g4
+            st = PROGRESS if g.get("baseline_run") and g["status"] == PASS else g["status"]
+            rows.append(_row("G4", "골드셋 회귀", st,
+                             f"판정 {g['decided']}/{g['matched_ideas']} (pending {g['pending']}), macro-F1 {g['macro_f1']}"
+                             f", 기준선 {g['baseline_macro_f1']}{' (이번이 기준선)' if g.get('baseline_run') else ''}"
+                             f", 실행 {at:%Y-%m-%d %H:%M}", "기준선 대비 macro-F1 하락 ≤5pt"))
+        else:
+            rows.append(_row("G4", "골드셋 회귀", PROGRESS, "미실행(bluebird eval goldset)", "기준선 대비 macro-F1 하락 ≤5pt"))
 
         week = _week(conn, week)
     t = verify_top20(dsn=dsn, publish_dsn=publish_dsn, week=week, target=top_target)
@@ -334,7 +362,7 @@ def report(*, dsn: str, publish_dsn: str, inbox_dsn: str | None = None, p95_ms: 
             "SELECT DISTINCT id FROM publish.change WHERE kind = 'dataset_opened'")]
         by_tier = dict(conn.execute(
             """SELECT CASE WHEN s.tier = 'observed_new' AND s.rereg_of IS NULL
-                            AND s.first_seen_at::date BETWEEN %s AND %s THEN 'window_new' ELSE s.tier END,
+                            AND (s.first_seen_at AT TIME ZONE 'Asia/Seoul')::date BETWEEN %s AND %s THEN 'window_new' ELSE s.tier END,
                       count(DISTINCT c.id)
                  FROM core.change_match m JOIN core.condition_change c ON c.id = m.change_id
                  JOIN core.signal_dataset s ON s.public_data_pk = c.ref_id
@@ -367,7 +395,9 @@ def report(*, dsn: str, publish_dsn: str, inbox_dsn: str | None = None, p95_ms: 
         a10 = audit_g10(conn, pc, names=names)
         g10 = FAIL if any(a10.values()) else (PROGRESS if a10["name_matches"] is None else PASS)
         rows.append(_row("G10", "반출 통제", g10, ", ".join(f"{k} {v}" for k, v in a10.items())
-                         + ("" if names is None else f" (이름 대조 {names['ideas_with_names']:,}건)"),
+                         + ("" if names is None else
+                            f" (이름 대조 {names['compared']:,}/{names['ideas_with_names']:,}건, 원본 파일 "
+                            f"{names['source_files']}, 없음 {names['missing_files']})"),
                          "전부 0, 성명 일치 0 (+ test_no_direct_http)"))
 
         ob = conn.execute(

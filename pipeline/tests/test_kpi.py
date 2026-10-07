@@ -136,7 +136,7 @@ def test_top20_and_report(fresh):
         return {r["goal"]: r for r in kpi.report(dsn=fresh, publish_dsn=pub, inbox_dsn=pub, p95_ms=50.0, week=week,
                                                  top_target=1, **kw)}
 
-    clean = {"name_matches": 0, "ideas_with_names": 1, "source_files": 1}
+    clean = {"name_matches": 0, "compared": 1, "ideas_with_names": 1, "source_files": 1, "missing_files": 0}
     rows = rep(names=clean)
     assert list(rows) == [f"G{n}" for n in range(1, 14)]
     assert rows["G1"]["status"] == kpi.FAIL  # 테스트 DB는 카드 1건(<10,000)
@@ -173,3 +173,102 @@ def test_top20_and_report(fresh):
         c.commit()
     with psycopg.connect(fresh) as c:
         assert kpi.audit_g9(c)["diagnosis"] == 1
+
+
+@db_only
+def test_name_leaks_end_to_end(fresh, tmp_path):
+    """원본 파일을 같은 익명화 키로 다시 읽어 공개 글에 이름이 남았는지 센다. 파일이 없거나 키가 다르면 대조 안 됨."""
+    import csv
+
+    from bluebird import cards, db, ingest, publish
+    from bluebird.funnel import dumps
+
+    (tmp_path / "secret").write_bytes(b"s" * 32)
+    (tmp_path / "other").write_bytes(b"o" * 32)
+    cfg = tmp_path / "sources.toml"
+    cfg.write_text('[[source]]\nid="d"\nadapter="design_idea_csv"\nfile="d.csv"\nname="n"\nlicense="l"\nlayer=2\n'
+                   'public_ok=true\nexport_grade="O"\npolicy_approved_by="t"\npolicy_approved_at="2026-10-06"\n',
+                   encoding="utf-8")
+    with (tmp_path / "d.csv").open("w", encoding="utf-8", newline="") as f:
+        w = csv.writer(f)
+        w.writerow(["등록번호", "연도", "포상", "수상자", "제목", "내용"])
+        w.writerow(["1", "2022", "대상", "이민수", "휠체어 충전 테이블", "이민수가 만든 압전 충전 테이블"])
+        w.writerow(["2", "2022", "상", "최준영", "경계를 잇다", "길 위의 벤치"])
+    ingest.ingest(dsn=fresh, config=cfg, seed_dir=tmp_path, secret_path=tmp_path / "secret")
+    cards.build(dsn=fresh)
+    pub = _pub_db()
+    publish.push(core_dsn=fresh, publish_dsn=pub)
+    secret = (tmp_path / "secret").read_bytes()
+
+    def leaks(**kw):
+        with db.connect(pub) as pc:
+            return kpi.name_leaks(pc, **{"config": cfg, "seed_dir": tmp_path, "secret": secret, **kw})
+
+    clean = leaks()
+    assert (clean["name_matches"], clean["compared"], clean["source_files"], clean["missing_files"]) == (0, 2, 1, 0)
+    assert kpi.names_checked(clean) and "이민수" not in dumps(clean)
+    with psycopg.connect(pub) as c:  # 공개 글에 이름이 새어 나간 경우
+        c.execute("UPDATE publish.idea SET body = body || ' 문의: 최준영' WHERE title = '경계를 잇다'")
+        c.commit()
+    assert leaks()["name_matches"] == 1
+    wrong = leaks(secret=(tmp_path / "other").read_bytes())  # 키가 다르면 ID가 안 맞아 대조 0
+    assert wrong["compared"] == 0 and not kpi.names_checked(wrong)
+    (tmp_path / "d.csv").rename(tmp_path / "gone.csv")
+    gone = leaks()
+    assert gone["missing_files"] == 1 and not kpi.names_checked(gone)
+    with db.connect(fresh) as conn, db.connect(pub) as pc:
+        assert kpi.audit_g10(conn, pc, names=gone)["name_matches"] is None
+
+
+@db_only
+def test_g6_counts_published_window_changes_and_fails_after_window(fresh, monkeypatch):
+    from datetime import date
+
+    with psycopg.connect(fresh) as c:
+        _seed_idea(c)
+        c.commit()
+    pub = _pub_db()
+    from bluebird import publish
+    publish.push(core_dsn=fresh, publish_dsn=pub)
+    rows = {r["goal"]: r for r in kpi.report(dsn=fresh, publish_dsn=pub)}
+    assert rows["G6"]["status"] == kpi.PROGRESS and "창 안 신규 0건" in rows["G6"]["value"]
+    monkeypatch.setattr(kpi, "today_kst", lambda: date(2026, 12, 8))
+    rows = {r["goal"]: r for r in kpi.report(dsn=fresh, publish_dsn=pub)}
+    assert rows["G6"]["status"] == kpi.FAIL  # 창이 닫혔는데 10건 미만
+
+
+@db_only
+def test_report_g3_uses_100_sample_not_pilot(fresh):
+    with psycopg.connect(fresh) as c:
+        _seed_idea(c)
+        c.execute("INSERT INTO core.coding_sample VALUES ('pilot30',%s,'s:-',1)", (IID,))
+        c.commit()
+    pub = _pub_db()
+    from bluebird import publish
+    publish.push(core_dsn=fresh, publish_dsn=pub)
+    g3 = {r["goal"]: r for r in kpi.report(dsn=fresh, publish_dsn=pub)}["G3"]
+    assert g3["status"] == kpi.HUMAN and "100건 표본 없음" in g3["value"]  # 파일럿 표본은 기준이 아니다
+    g3 = {r["goal"]: r for r in kpi.report(dsn=fresh, publish_dsn=pub, kappa_sample="nope")}["G3"]
+    assert g3["status"] == kpi.HUMAN and "nope 없음" in g3["value"]
+
+
+@db_only
+def test_cli_exit_codes(fresh):
+    from bluebird import cli
+    with psycopg.connect(fresh) as c:
+        _seed_idea(c)
+        c.commit()
+    gold = "year,item,final\n2019,제목,none\n"
+    import io
+    import sys
+    old = sys.stdin
+    try:
+        sys.stdin = io.StringIO(gold)
+        assert cli.main(["eval", "goldset", "--dsn", fresh, "--gold", "-"]) == 0  # 진행 중
+    finally:
+        sys.stdin = old
+    pub = _pub_db()
+    from bluebird import publish
+    publish.push(core_dsn=fresh, publish_dsn=pub)
+    assert cli.main(["verify", "top20", "--dsn", fresh, "--publish-dsn", pub]) == 0  # Top 없음 → 진행 중
+    assert cli.main(["kpi", "report", "--dsn", fresh, "--publish-dsn", pub, "--secret", "/nonexistent"]) == 1  # G1 FAIL

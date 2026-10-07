@@ -15,7 +15,7 @@ from collections.abc import Iterator
 from dataclasses import dataclass
 from pathlib import Path
 
-from .anonymize import MASK, anon_id, mask_team, name_variants, team_kind
+from .anonymize import MASK, anon_id, audit_variants, mask_team, team_kind
 
 _WS = re.compile(r"\s+")
 
@@ -139,7 +139,7 @@ def kipris_idea_master(spec: SourceSpec, secret: bytes, names: dict[str, list[st
 
 def _keep_names(names: dict[str, list[str]] | None, idea_id: str, raw: str) -> None:
     """G10 성명 일치 감사용: 이 아이디어의 팀명·성명 형태를 호출자가 준 메모리 dict에만 담는다(DB·파일에 쓰지 않음)."""
-    if names is not None and (v := name_variants(raw)):
+    if names is not None and (v := audit_variants(raw)):
         names.setdefault(idea_id, []).extend(v)
 
 
@@ -230,7 +230,7 @@ def startup_final_xlsx(spec: SourceSpec, secret: bytes, names: dict[str, list[st
 def science_museum_csv(spec: SourceSpec, secret: bytes, names: dict[str, list[str]] | None = None) -> Iterator[dict]:
     """국립중앙과학관 수상작(대회명, 주제, 소속명, 제목, 지도교사, 수상자, 수상명).
 
-    지도교사·수상자(성명)·소속명(학교)은 읽지 않는다. 제목에 수상자 이름이 들어 있으면 마스킹한다.
+    지도교사·수상자(성명)·소속명(학교)은 레코드에 넣지 않는다. 이름은 제목 마스킹과 G10 감사(names, 메모리)에만 쓴다.
     """
     key = _StableKeys()
     for r in _read_csv(spec.path):
@@ -238,9 +238,9 @@ def science_museum_csv(spec: SourceSpec, secret: bytes, names: dict[str, list[st
         title = _norm(r["제목"])
         if not title:
             continue
-        for name in re.split(r"[,\s]+", f"{r.get('수상자', '')} {r.get('지도교사', '')}"):
-            if len(name) >= 2:
-                title = title.replace(name, MASK)
+        people = [n for n in re.split(r"[,\s]+", f"{r.get('수상자', '')} {r.get('지도교사', '')}") if len(n) >= 2]
+        for name in people:
+            title = title.replace(name, MASK)
         m = re.search(r"제\s*(\d+)\s*회", contest)
         n = int(m.group(1)) if m else None
         # 파일 기준일 2024-09-09 기준 최신 회차: 제69회 전국과학전람회(2023), 제44회 전국학생과학발명품경진대회(2022).
@@ -253,7 +253,7 @@ def science_museum_csv(spec: SourceSpec, secret: bytes, names: dict[str, list[st
             award=award if award and award != "등급외" else None, title=title[:300],
             category=_norm(r.get("주제")) or None, team_kind="masked",
         )
-        for name in re.split(r"[,\s]+", f"{r.get('수상자', '')} {r.get('지도교사', '')}"):
+        for name in people:
             _keep_names(names, rec["idea_id"], name)
         yield rec
 
@@ -277,7 +277,8 @@ def mafra_contest_csv(spec: SourceSpec, secret: bytes, names: dict[str, list[str
 
 
 def design_idea_csv(spec: SourceSpec, secret: bytes, names: dict[str, list[str]] | None = None) -> Iterator[dict]:
-    """공공디자인 국민아이디어공모 수상작(등록번호, 연도, 포상, 수상자, 제목, 내용). 수상자 성명은 읽지 않는다."""
+    """공공디자인 국민아이디어공모 수상작(등록번호, 연도, 포상, 수상자, 제목, 내용). 수상자 성명은 레코드에 넣지 않고
+    본문 마스킹과 G10 감사(names, 메모리)에만 쓴다."""
     for r in _read_csv(spec.path):
         name = _norm(r.get("수상자"))
         title = _norm(mask_team(r["제목"], name))
@@ -285,14 +286,15 @@ def design_idea_csv(spec: SourceSpec, secret: bytes, names: dict[str, list[str]]
             continue
         body = mask_team((r.get("내용") or "").strip(), name)
         year = _year(r["연도"])
-        _keep_names(names, anon_id(secret, spec.id, r["등록번호"].strip(), year), name)
-        yield _record(
+        rec = _record(
             spec, secret, r["등록번호"].strip(),
             contest_name="공공디자인 국민아이디어공모", host_org="한국공예디자인문화진흥원", year=year,
             award=_norm(r.get("포상")) or None, title=title[:300],
             body=body if body and _norm(body) != title else None,
             team_kind="masked",
         )
+        _keep_names(names, rec["idea_id"], name)
+        yield rec
 
 
 ADAPTERS = {
