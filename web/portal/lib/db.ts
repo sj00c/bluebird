@@ -36,9 +36,16 @@ export type IdeaRow = {
 
 export const PAGE_SIZE = 50;
 
-export async function listIdeas(opts: { q?: string; year?: number; page: number }) {
+export type PoolFilter = { q?: string; year?: number; source?: string; verified?: boolean; page: number };
+
+export async function listIdeas(opts: PoolFilter) {
   const where: string[] = [];
   const args: unknown[] = [];
+  if (opts.source) {
+    args.push(opts.source);
+    where.push(`i.source_id = $${args.length}`);
+  }
+  if (opts.verified) where.push(`EXISTS (SELECT 1 FROM publish.diagnosis d WHERE d.idea_id = i.id)`);
   if (opts.q) {
     args.push(`%${opts.q}%`);
     where.push(`i.title ILIKE $${args.length}`);
@@ -50,9 +57,11 @@ export async function listIdeas(opts: { q?: string; year?: number; page: number 
   const cond = where.length ? `WHERE ${where.join(" AND ")}` : "";
   const total = await pool.query<{ n: string }>(`SELECT count(*) AS n FROM publish.idea i ${cond}`, args);
   args.push(PAGE_SIZE, (opts.page - 1) * PAGE_SIZE);
-  const rows = await pool.query<IdeaRow>(
-    `SELECT i.*, s.name AS source_name, s.license
+  const rows = await pool.query<IdeaRow & { cause: string | null; verdict: string | null; s: number | null }>(
+    `SELECT i.*, s.name AS source_name, s.license, d.cause, t.verdict, t.s
        FROM publish.idea i JOIN publish.source s ON s.id = i.source_id
+       LEFT JOIN publish.diagnosis d ON d.idea_id = i.id
+       LEFT JOIN publish.timeliness t ON t.idea_id = i.id
        ${cond}
       ORDER BY i.year DESC NULLS LAST, i.id
       LIMIT $${args.length - 1} OFFSET $${args.length}`,
@@ -274,11 +283,211 @@ export async function insertObjection(o: { ideaId: string; kind: ObjectionKind; 
 }
 
 export async function poolStats() {
-  const r = await pool.query<{ ideas: string; sources: string; snapshot_at: Date | null }>(
+  const r = await pool.query<{ ideas: string; sources: string; verified: string; snapshot_at: Date | null }>(
     `SELECT (SELECT count(*) FROM publish.idea) AS ideas,
             (SELECT count(*) FROM publish.source) AS sources,
+            (SELECT count(*) FROM publish.diagnosis) AS verified,
             (SELECT max(applied_at) FROM meta.snapshot_log) AS snapshot_at`,
   );
   const row = r.rows[0];
-  return { ideas: Number(row.ideas), sources: Number(row.sources), snapshotAt: row.snapshot_at };
+  return { ideas: Number(row.ideas), sources: Number(row.sources), verified: Number(row.verified), snapshotAt: row.snapshot_at };
+}
+
+export async function sourceList() {
+  const r = await pool.query<{ id: string; name: string }>(`SELECT id, name FROM publish.source ORDER BY name`);
+  return r.rows;
+}
+
+// ---------------------------------------------------------------- 진단 카드 목록: 담당자 검증을 마쳐 공개된 카드
+export type VerifiedCard = {
+  idea_id: string;
+  title: string;
+  year: number | null;
+  contest_name: string;
+  award: string | null;
+  cause: string;
+  secondary: string | null;
+  s: number | null;
+  verdict: string | null;
+  changes: number;
+  change_title: string | null;
+  change_kind: string | null;
+};
+
+export async function verifiedCards(): Promise<VerifiedCard[]> {
+  const r = await pool.query<VerifiedCard>(
+    `SELECT d.idea_id, i.title, i.year, i.contest_name, i.award, d.cause, d.secondary, t.s, t.verdict,
+            (SELECT count(*)::int FROM publish.change x WHERE x.idea_id = d.idea_id) AS changes,
+            c.title AS change_title, c.kind AS change_kind
+       FROM publish.diagnosis d
+       JOIN publish.idea i ON i.id = d.idea_id
+       LEFT JOIN publish.timeliness t ON t.idea_id = d.idea_id
+       LEFT JOIN LATERAL (SELECT title, kind FROM publish.change x WHERE x.idea_id = d.idea_id
+                           ORDER BY x.occurred_at DESC NULLS LAST, x.id LIMIT 1) c ON true
+      ORDER BY t.s DESC NULLS LAST, i.year DESC NULLS LAST, d.idea_id`,
+  );
+  return r.rows;
+}
+
+// ---------------------------------------------------------------- 시의성 재평가 목록
+export type TimelinessListRow = TimelinessRow & {
+  idea_id: string;
+  title: string;
+  year: number | null;
+  contest_name: string;
+  cause: string | null;
+};
+
+export async function timelinessList(): Promise<TimelinessListRow[]> {
+  const r = await pool.query<TimelinessListRow>(
+    `SELECT t.idea_id, i.title, i.year, i.contest_name, d.cause,
+            t.as_of::text AS as_of, t.tech, t.data, t.regulation, t.policy, t.n_scored, t.s, t.verdict,
+            t.resolve_condition, COALESCE(t.evidence_ids, '{}')::text[] AS evidence_ids
+       FROM publish.timeliness t
+       JOIN publish.idea i ON i.id = t.idea_id
+       LEFT JOIN publish.diagnosis d ON d.idea_id = t.idea_id
+      ORDER BY t.s DESC NULLS LAST, t.idea_id`,
+  );
+  return r.rows;
+}
+
+// ---------------------------------------------------------------- 카드 상세 보조: 비슷한 아이디어 수·관련 공고
+// 제목 trigram 유사도(0.3 이상). 같은 아이디어는 뺀다. 결과는 공고 매칭 화면(/match?q=제목)과 같은 기준이 아니라
+// 제목끼리의 비교라서 "비슷한 제목"으로만 표시한다.
+export async function similarCount(id: string, title: string): Promise<number> {
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN READ ONLY");
+    await client.query("SET LOCAL pg_trgm.similarity_threshold = 0.3");
+    await client.query("SET LOCAL statement_timeout = '1s'");
+    const r = await client.query<{ n: number }>(
+      `SELECT count(*)::int AS n FROM publish.idea WHERE title % $1 AND id <> $2`,
+      [title, id],
+    );
+    await client.query("COMMIT");
+    return r.rows[0].n;
+  } catch {
+    await client.query("ROLLBACK").catch(() => undefined);
+    return 0;
+  } finally {
+    client.release();
+  }
+}
+
+export type AnnouncementMatchRow = {
+  id: string;
+  title: string;
+  org: string | null;
+  apply_to: string | null;
+  url: string;
+  similarity: number | null;
+};
+
+export async function announcementMatches(ideaId: string): Promise<AnnouncementMatchRow[]> {
+  const r = await pool.query<AnnouncementMatchRow>(
+    `SELECT a.id, a.title, a.org, a.apply_to::text AS apply_to, a.url, m.similarity
+       FROM publish.announcement_match m JOIN publish.announcement a ON a.id = m.announcement_id
+      WHERE m.idea_id = $1
+      ORDER BY m.rank`,
+    [ideaId],
+  );
+  return r.rows;
+}
+
+export async function recentAnnouncements(limit = 8): Promise<ExploreAnnouncement[]> {
+  const r = await pool.query<ExploreAnnouncement>(
+    `SELECT id, title, org, apply_to::text AS apply_to, url
+       FROM publish.announcement
+      ORDER BY apply_to DESC NULLS LAST, id
+      LIMIT $1`,
+    [limit],
+  );
+  return r.rows;
+}
+
+// ---------------------------------------------------------------- 풀 현황·통계
+export type PoolOverview = {
+  ideas: number;
+  sources: number;
+  traced: number;
+  externalSearched: number;
+  verified: number;
+  revival: number;
+  changes: number;
+  scored: number;
+  announcements: number;
+  causes: { cause: string; n: number }[];
+  verdicts: { verdict: string; n: number }[];
+};
+
+export async function poolOverview(): Promise<PoolOverview> {
+  const [a, c, v] = await Promise.all([
+    pool.query<Record<string, string>>(
+      `SELECT (SELECT count(*) FROM publish.idea) AS ideas,
+              (SELECT count(*) FROM publish.source) AS sources,
+              (SELECT count(*) FROM publish.idea WHERE trace_status IS NOT NULL AND trace_status <> 'pending') AS traced,
+              (SELECT count(*) FROM publish.idea WHERE external_search = 'done') AS external_searched,
+              (SELECT count(*) FROM publish.diagnosis) AS verified,
+              (SELECT count(*) FROM publish.timeliness WHERE s >= 4.0) AS revival,
+              (SELECT count(DISTINCT idea_id) FROM publish.change) AS changes,
+              (SELECT count(*) FROM publish.timeliness) AS scored,
+              (SELECT count(*) FROM publish.announcement) AS announcements`,
+    ),
+    pool.query<{ cause: string; n: number }>(
+      `SELECT cause, count(*)::int AS n FROM publish.diagnosis GROUP BY cause ORDER BY n DESC, cause`,
+    ),
+    pool.query<{ verdict: string; n: number }>(
+      `SELECT verdict, count(*)::int AS n FROM publish.timeliness GROUP BY verdict ORDER BY n DESC`,
+    ),
+  ]);
+  const r = a.rows[0];
+  return {
+    ideas: Number(r.ideas),
+    sources: Number(r.sources),
+    traced: Number(r.traced),
+    externalSearched: Number(r.external_searched),
+    verified: Number(r.verified),
+    revival: Number(r.revival),
+    changes: Number(r.changes),
+    scored: Number(r.scored),
+    announcements: Number(r.announcements),
+    causes: c.rows,
+    verdicts: v.rows,
+  };
+}
+
+export type SourceStat = {
+  id: string;
+  name: string;
+  license: string;
+  url: string;
+  ideas: number;
+  with_body: number;
+  y_min: number | null;
+  y_max: number | null;
+};
+
+export async function sourceStats(): Promise<SourceStat[]> {
+  const r = await pool.query<SourceStat>(
+    `SELECT s.id, s.name, s.license, s.url, count(i.id)::int AS ideas,
+            count(i.id) FILTER (WHERE coalesce(btrim(i.body), '') <> '')::int AS with_body,
+            min(i.year) AS y_min, max(i.year) AS y_max
+       FROM publish.source s LEFT JOIN publish.idea i ON i.source_id = s.id
+      GROUP BY s.id ORDER BY ideas DESC`,
+  );
+  return r.rows;
+}
+
+export async function yearStats(): Promise<{ year: number; n: number }[]> {
+  const r = await pool.query<{ year: number; n: number }>(
+    `SELECT year, count(*)::int AS n FROM publish.idea WHERE year IS NOT NULL GROUP BY year ORDER BY year`,
+  );
+  return r.rows;
+}
+
+export async function cardKindStats(): Promise<{ card_kind: string; n: number }[]> {
+  const r = await pool.query<{ card_kind: string; n: number }>(
+    `SELECT coalesce(card_kind, '-') AS card_kind, count(*)::int AS n FROM publish.idea GROUP BY 1 ORDER BY n DESC`,
+  );
+  return r.rows;
 }

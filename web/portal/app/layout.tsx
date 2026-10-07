@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { poolStats } from "@/lib/db";
+import { Nav } from "./nav";
 import "./globals.css";
 
 export const metadata: Metadata = {
@@ -19,14 +20,10 @@ export default async function RootLayout({ children }: { children: React.ReactNo
           <Link href="/" className="logo">
             파랑새<span>Bluebird · 공모전 아이디어 풀 진단·재발굴</span>
           </Link>
-          <nav>
-            <Link href="/">이번 주 재조명</Link>
-            <Link href="/explore">주제·공고 넣기</Link>
-            <Link href="/pool">아이디어 풀</Link>
-          </nav>
+          <Nav />
           <div className="right">
-            풀 {stats.ideas.toLocaleString("ko-KR")}건 · 출처 {stats.sources}종
-            {stats.snapshotAt && ` · 갱신 ${stats.snapshotAt.toISOString().slice(0, 10)}`}
+            풀 {stats.ideas.toLocaleString("ko-KR")}건 · 출처 {stats.sources}종 · 검증 카드 {stats.verified}건
+            {stats.snapshotAt && ` · 최근 갱신 ${stats.snapshotAt.toISOString().slice(0, 10)}`}
           </div>
         </header>
         <main className="wrap">{children}</main>
