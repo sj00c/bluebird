@@ -239,12 +239,13 @@ class Egress:
     # ------------------------------------------------------------ 공개 API
     def get(self, purpose: str, url: str, *, params: Mapping[str, object] | None = None,
             fields: Mapping[str, Field] | None = None, path_template: str | None = None,
-            secret_params: Mapping[str, str] | None = None) -> Response:
-        """GET. fields 값은 쿼리 파라미터로 붙는다(반출 검사 후)."""
+            secret_params: Mapping[str, str] | None = None,
+            secret_headers: Mapping[str, str] | None = None) -> Response:
+        """GET. fields 값은 쿼리 파라미터로 붙는다(반출 검사 후). secret_* 는 감사 행에 남지 않는 인증값."""
         fields = fields or {}
         q = {**(params or {}), **{k: v for k, (_, v) in fields.items()}}
         return self._send(purpose, "GET", url, path_template=path_template, fields=fields, params=q,
-                          body=None, headers=None, secret_params=secret_params)
+                          body=None, headers=secret_headers, secret_params=secret_params)
 
     def post_form(self, purpose: str, url: str, form: Mapping[str, str], *,
                   path_template: str | None = None) -> Response:

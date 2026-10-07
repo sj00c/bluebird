@@ -74,6 +74,25 @@ check "카탈로그 스냅샷 #0 적재(sha256 f63f4429)" \
   "[[ \$(core_sql \"SELECT count(*) FROM core.catalog_snapshot WHERE id=0 AND file_sha256 LIKE 'f63f4429%'\") -eq 1 ]]"
 check "egress 차단 기록 외 허용 호출은 모두 화이트리스트" \
   "[[ \$(core_sql \"SELECT count(*) FROM core.egress_call WHERE decision='allowed' AND dest_host !~ '(data\\.go\\.kr|law\\.go\\.kr|kipris\\.or\\.kr|k-startup\\.go\\.kr|bizinfo\\.go\\.kr|openapi\\.naver\\.com|api\\.openai\\.com|api\\.anthropic\\.com)\$'\") -eq 0 ]]"
+
+echo "== 원본·카드·소스 점검(G1·G2·G13)"
+check "core.idea 29,828행(6개 파일 소스)"                "[[ $core_n -eq 29828 ]]"
+check "공개용 DB 아이디어 3,394 이상(G2)"              "[[ $pub_n -ge 3394 ]]"
+check "모든 아이디어에 카드 1개(G1 ≥ 10,000)" \
+  "[[ \$(core_sql 'SELECT count(*) FROM core.idea_card') -eq $core_n && $core_n -ge 10000 ]]"
+check "KIPRIS 카드는 모두 local_extract(반출 보류)" \
+  "[[ \$(core_sql \"SELECT count(*) FROM core.idea_card k JOIN core.idea i ON i.id=k.idea_id WHERE i.source_id='kipris_contest_idea_bulk' AND k.card_kind<>'local_extract'\") -eq 0 ]]"
+check "본문 없는 카드는 title_only, missing_data는 본문 근거만" \
+  "[[ \$(core_sql \"SELECT count(*) FROM core.idea_card k JOIN core.idea i ON i.id=k.idea_id WHERE (coalesce(btrim(i.body),'')='') <> (k.card_kind='title_only') OR (k.card_kind='title_only' AND jsonb_array_length(k.missing_data)>0)\") -eq 0 ]]"
+last_check="(SELECT DISTINCT ON (source_id) source_id, status FROM core.source_check ORDER BY source_id, checked_at DESC, id DESC)"
+check "sources check: 파일 소스 6개 ok" \
+  "[[ \$(core_sql \"SELECT count(*) FROM $last_check c JOIN core.source s ON s.id=c.source_id WHERE c.status='ok'\") -eq 6 ]]"
+check "sources check: 키 없는 외부 소스(목록·법제처) ok" \
+  "[[ \$(core_sql \"SELECT count(*) FROM $last_check c WHERE c.source_id IN ('datagokr_catalog_15062804','law_drf_eflaw') AND c.status='ok'\") -eq 2 ]]"
+check "sources check: 키 필요 소스는 ok 또는 key_required(error·blocked 0)" \
+  "[[ \$(core_sql \"SELECT count(*) FROM $last_check c WHERE c.source_id IN ('kstartup_announcement_15125364','acrc_public_proposal_15059115','bizinfo_announcement','naver_search_news','kipris_plus_patent','openai_api','anthropic_api') AND c.status IN ('ok','key_required')\") -eq 7 ]]"
+check "sources check 외부 호출은 egress 감사 행에 연결" \
+  "[[ \$(core_sql \"SELECT count(*) FROM core.source_check c LEFT JOIN core.egress_call e ON e.id=c.egress_call_id WHERE c.http_status IS NOT NULL AND e.purpose IS DISTINCT FROM 'source_check'\") -eq 0 ]]"
 if [[ -f .runtime/secrets/w0_public_ids.txt ]]; then
   while IFS='|' read -r id title; do
     check "W0 이전 공개 ID 유지: $id" "[[ \"\$(pub_sql \"SELECT title FROM publish.idea WHERE id='$id'\")\" == '$title' ]]"

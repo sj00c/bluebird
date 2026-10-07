@@ -28,7 +28,12 @@ add_env BB_HTTP_PORT 8080
 
 # seed 파일
 seed() { [[ -f "$1" ]] && cp "$1" "$rt/seed/$2" && echo "[init] seed: $2"; return 0; }
-seed "$ref/03_pilot/source_data/awards_master_2013_2024.csv" awards_master_2013_2024.csv
+src="$ref/03_pilot/source_data"
+seed "$src/awards_master_2013_2024.csv" awards_master_2013_2024.csv
+seed "$src/gov_opendata_startup_contest_final_awards_2019_2025.xlsx" gov_opendata_startup_contest_final_awards_2019_2025.xlsx
+seed "$src/national_science_museum_awards_20240909.csv" national_science_museum_awards_20240909.csv
+seed "$src/mafra_agrifood_bigdata_contest_info.csv" mafra_agrifood_bigdata_contest_info.csv
+seed "$root/data/opendata/design_idea.csv" public_design_idea_15138745.csv
 kipris_zip="$ref/02_kipris_bulk/kipris_contest_bulk_utf8.zip"
 if [[ -f "$kipris_zip" && ! -f "$rt/seed/kipris_idea_master.csv" ]]; then
   unzip -p "$kipris_zip" out/idea_master.csv > "$rt/seed/kipris_idea_master.csv"

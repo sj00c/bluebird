@@ -53,3 +53,49 @@ def test_awards_csv_drops_team_and_source_key(tmp_path):
     assert r["used_data"] == ["A데이터", "B데이터"]
     assert r["category"] is None
     assert r["team_kind"] == "person"  # 한글 3자 단독 → 실명 가능성으로 보수적 분류
+
+
+def _write_csv(path, header, rows, enc="cp949"):
+    with path.open("w", encoding=enc, newline="") as fh:
+        w = csv.writer(fh)
+        w.writerow(header)
+        w.writerows(rows)
+    return path
+
+
+def test_science_museum_drops_people_and_school(tmp_path):
+    from bluebird.sources import science_museum_csv
+    f = _write_csv(tmp_path / "s.csv", ["대회명", "주제", "소속명", "제목", "지도교사", "수상자", "수상명"], [
+        ["제69회 전국과학전람회", "물리", "", "줄다리기 줄의 비밀", "한홍수", "김하린, 송다원", "특상"],
+        ["제44회 전국학생과학발명품경진대회", "생활", "서울○○초등학교", "김하린의 접이식 우산", "", "김하린", "등급외"],
+    ])
+    rows = list(science_museum_csv(SourceSpec("sm", "science_museum_csv", f, "n", "l", "", 2, True), b"x" * 32))
+    text = str(rows)
+    for leaked in ("한홍수", "김하린", "송다원", "초등학교"):
+        assert leaked not in text
+    assert [r["year"] for r in rows] == [2023, 2022]
+    assert rows[0]["award"] == "특상" and rows[1]["award"] is None  # 등급외 = 수상 아님
+    assert rows[1]["title"] == f"{MASK}의 접이식 우산"
+    assert all(set(r) == set(AWARD_RECORD_COLUMNS) for r in rows)
+
+
+def test_design_idea_drops_winner_name(tmp_path):
+    from bluebird.sources import design_idea_csv
+    f = _write_csv(tmp_path / "d.csv", ["등록번호", "연도", "포상", "수상자", "제목", "내용"], [
+        ["1000000301", "2023", "특별상", "최준영", "경계를 잇다", "경계를 잇다"],
+        ["1000000302", "2022", "대상", "이민수", "휠체어 충전 테이블", "이민수가 만든 압전 충전 테이블"],
+    ])
+    rows = list(design_idea_csv(SourceSpec("d", "design_idea_csv", f, "n", "l", "", 2, True), b"x" * 32))
+    assert "최준영" not in str(rows) and "이민수" not in str(rows)
+    assert rows[0]["body"] is None  # 제목과 같은 내용은 본문으로 치지 않음
+    assert rows[1]["body"] == f"{MASK}가 만든 압전 충전 테이블"
+
+
+def test_mafra_splits_part_and_award(tmp_path):
+    from bluebird.sources import mafra_contest_csv
+    f = _write_csv(tmp_path / "m.csv", ["경진대회명", "분야_포상", "작품명", "활용 공공데이터명", "데이터 등록일"], [
+        ["2015년 창업경진대회", "서비스 개발 / 우수상", "대한민국명산", "명산등산로 서비스, 산악기상정보", "2022-04-28"],
+    ])
+    (r,) = mafra_contest_csv(SourceSpec("m", "mafra_contest_csv", f, "n", "l", "", 2, True), b"x" * 32)
+    assert (r["year"], r["category"], r["award"]) == (2015, "서비스 개발", "우수상")
+    assert r["used_data"] == ["명산등산로 서비스", "산악기상정보"]

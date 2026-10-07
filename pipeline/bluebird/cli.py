@@ -11,7 +11,7 @@ import sys
 from datetime import date
 from pathlib import Path
 
-from . import db, ingest, publish
+from . import cards, db, ingest, publish, sources_check
 from .signals import catalog
 
 
@@ -46,6 +46,18 @@ def main(argv: list[str] | None = None) -> int:
     i.add_argument("--only")
     i.add_argument("--force", action="store_true")
 
+    cb = sub.add_parser("cards", help="아이디어 카드(P1) 생성 + G1 card_kind별 보고")
+    cb.add_argument("--dsn", default=_env("BB_DSN"))
+    cb.add_argument("--rebuild", action="store_true")
+
+    sc = sub.add_parser("sources", help="소스 점검")
+    scs = sc.add_subparsers(dest="sources_cmd", required=True)
+    chk = scs.add_parser("check", help="파일·외부 소스 실제 호출 점검 → core.source_check")
+    chk.add_argument("--dsn", default=_env("BB_DSN"))
+    chk.add_argument("--config", type=Path, default=_p("BB_SOURCES"))
+    chk.add_argument("--seed-dir", type=Path, default=_p("BB_SEED_DIR"))
+    chk.add_argument("--secret", type=Path, default=_p("BB_ANON_SECRET"))
+
     pb = sub.add_parser("publish", help="승인분 → DMZ 공개용 DB 교체(push)")
     pb.add_argument("--dsn", default=_env("BB_DSN"))
     pb.add_argument("--publish-dsn", default=_env("BB_PUBLISH_DSN"))
@@ -75,6 +87,17 @@ def main(argv: list[str] | None = None) -> int:
         _require(ap, a, "dsn", "config", "seed_dir", "secret")
         ingest.ingest(dsn=a.dsn, config=a.config, seed_dir=a.seed_dir, secret_path=a.secret, only=a.only,
                       force=a.force)
+    elif a.cmd == "cards":
+        _require(ap, a, "dsn")
+        cards.build(dsn=a.dsn, rebuild=a.rebuild)
+    elif a.cmd == "sources":
+        _require(ap, a, "dsn", "config", "seed_dir", "secret")
+        res = sources_check.run(dsn=a.dsn, config=a.config, seed_dir=a.seed_dir, secret_path=a.secret)
+        sources_check.print_table(res)
+        bad = [r["source_id"] for r in res if r["tier"] == "must" and r["status"] in ("error", "blocked")]
+        if bad:
+            print(f"must sources failing: {', '.join(bad)}", file=sys.stderr)
+            return 2
     elif a.cmd == "publish":
         _require(ap, a, "dsn", "publish_dsn")
         publish.push(core_dsn=a.dsn, publish_dsn=a.publish_dsn)

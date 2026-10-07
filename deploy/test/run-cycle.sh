@@ -12,6 +12,9 @@ job migrate --target core
 job migrate --target publish
 
 job ingest "$@"
+job cards
+# 어떤 소스가 실제로 불러와지는지 점검(must 실패 시 종료코드 2 — 판정은 verify.sh)
+job sources check || echo "[cycle] sources check: must source failing (see table)"
 # 스냅샷 #0은 한 번만 적재된다(같은 sha256이면 건너뜀).
 job signals catalog-import --file /seed/catalog_snapshot0_2026-10-06.csv --taken-at 2026-10-06
 job publish

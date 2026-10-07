@@ -45,6 +45,7 @@ x-backend-env: &backend-env
   NAVER_CLIENT_SECRET: ${NAVER_CLIENT_SECRET:-}
   KIPRIS_PLUS_KEY: ${KIPRIS_PLUS_KEY:-}
   LAW_OC: ${LAW_OC:-}
+  BIZINFO_KEY: ${BIZINFO_KEY:-}
 
 services:
   # ------------------------------------------------------------------ 업무망

@@ -11,7 +11,7 @@ adapter = "awards_csv"
 file = "awards_master_2013_2024.csv"
 name = "범정부 공공데이터 활용 창업경진대회 예선기관 수상작(2013~2024)"
 license = "공공데이터포털 개방 데이터 (이용조건 재확인 필요)"
-url = ""
+url = "https://www.data.go.kr/data/15146089/fileData.do"
 layer = 2
 public_ok = true
 export_grade = "O"
@@ -28,3 +28,55 @@ url = "https://plus.kipris.or.kr"
 layer = 1
 public_ok = false
 export_grade = "pending"
+
+[[source]]
+id = "gov_startup_final_awards"
+adapter = "startup_final_xlsx"
+file = "gov_opendata_startup_contest_final_awards_2019_2025.xlsx"
+name = "범정부 공공데이터 활용 창업경진대회 본선 수상작(2019~2025)"
+license = "공공누리 제1유형(출처표시)"
+url = "https://www.data.go.kr/data/15146087/fileData.do"
+layer = 2
+public_ok = true
+export_grade = "O"
+policy_approved_by = "test-operator"
+policy_approved_at = "2026-10-07T00:00:00+09:00"
+
+[[source]]
+id = "science_museum_awards"
+adapter = "science_museum_csv"
+file = "national_science_museum_awards_20240909.csv"
+name = "국립중앙과학관 수상작(전국과학전람회 제69회·학생과학발명품경진대회 제44회)"
+license = "이용허락범위 제한 없음"
+url = "https://www.data.go.kr/data/15135618/fileData.do"
+layer = 2
+public_ok = true
+export_grade = "O"
+policy_approved_by = "test-operator"
+policy_approved_at = "2026-10-07T00:00:00+09:00"
+
+[[source]]
+id = "mafra_agrifood_contest"
+adapter = "mafra_contest_csv"
+file = "mafra_agrifood_bigdata_contest_info.csv"
+name = "농림축산식품부 농식품 공공·빅데이터 활용 창업경진대회(2015~2023)"
+license = "이용허락범위 제한 없음"
+url = "https://www.data.go.kr/data/15131197/fileData.do"
+layer = 2
+public_ok = true
+export_grade = "O"
+policy_approved_by = "test-operator"
+policy_approved_at = "2026-10-07T00:00:00+09:00"
+
+[[source]]
+id = "public_design_ideas"
+adapter = "design_idea_csv"
+file = "public_design_idea_15138745.csv"
+name = "공공디자인 국민아이디어공모 수상작"
+license = "이용허락범위 제한 없음"
+url = "https://www.data.go.kr/data/15138745/fileData.do"
+layer = 2
+public_ok = true
+export_grade = "O"
+policy_approved_by = "test-operator"
+policy_approved_at = "2026-10-07T00:00:00+09:00"
