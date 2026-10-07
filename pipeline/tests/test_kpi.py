@@ -1,5 +1,6 @@
 """G006: KPI 도구(κ·골드셋·Top 20·G1–G13 현황표)."""
 
+import io
 from datetime import date
 
 import psycopg
@@ -136,7 +137,7 @@ def test_top20_and_report(fresh):
         return {r["goal"]: r for r in kpi.report(dsn=fresh, publish_dsn=pub, inbox_dsn=pub, p95_ms=50.0, week=week,
                                                  top_target=1, **kw)}
 
-    clean = {"name_matches": 0, "compared": 1, "ideas_with_names": 1, "source_files": 1, "missing_files": 0}
+    clean = {"name_matches": 0, "compared": 1, "expected": 1, "ideas_with_names": 1, "source_files": 1, "missing_files": 0}
     rows = rep(names=clean)
     assert list(rows) == [f"G{n}" for n in range(1, 14)]
     assert rows["G1"]["status"] == kpi.FAIL  # 테스트 DB는 카드 1건(<10,000)
@@ -201,16 +202,22 @@ def test_name_leaks_end_to_end(fresh, tmp_path):
     secret = (tmp_path / "secret").read_bytes()
 
     def leaks(**kw):
-        with db.connect(pub) as pc:
-            return kpi.name_leaks(pc, **{"config": cfg, "seed_dir": tmp_path, "secret": secret, **kw})
+        with db.connect(fresh) as conn, db.connect(pub) as pc:
+            return kpi.name_leaks(conn, pc, **{"config": cfg, "seed_dir": tmp_path, "secret": secret, **kw})
 
     clean = leaks()
-    assert (clean["name_matches"], clean["compared"], clean["source_files"], clean["missing_files"]) == (0, 2, 1, 0)
+    assert (clean["name_matches"], clean["compared"], clean["expected"], clean["source_files"],
+            clean["missing_files"]) == (0, 2, 2, 1, 0)
     assert kpi.names_checked(clean) and "이민수" not in dumps(clean)
     with psycopg.connect(pub) as c:  # 공개 글에 이름이 새어 나간 경우
         c.execute("UPDATE publish.idea SET body = body || ' 문의: 최준영' WHERE title = '경계를 잇다'")
         c.commit()
     assert leaks()["name_matches"] == 1
+    with psycopg.connect(pub) as c:  # 공개 대상인데 publish에 없는 아이디어가 있으면 다 본 것이 아니다
+        c.execute("DELETE FROM publish.idea WHERE title = '휠체어 충전 테이블'")
+        c.commit()
+    partial = leaks()
+    assert (partial["compared"], partial["expected"]) == (1, 2) and not kpi.names_checked(partial)
     wrong = leaks(secret=(tmp_path / "other").read_bytes())  # 키가 다르면 ID가 안 맞아 대조 0
     assert wrong["compared"] == 0 and not kpi.names_checked(wrong)
     (tmp_path / "d.csv").rename(tmp_path / "gone.csv")
@@ -259,7 +266,6 @@ def test_cli_exit_codes(fresh):
         _seed_idea(c)
         c.commit()
     gold = "year,item,final\n2019,제목,none\n"
-    import io
     import sys
     old = sys.stdin
     try:
@@ -272,3 +278,23 @@ def test_cli_exit_codes(fresh):
     publish.push(core_dsn=fresh, publish_dsn=pub)
     assert cli.main(["verify", "top20", "--dsn", fresh, "--publish-dsn", pub]) == 0  # Top 없음 → 진행 중
     assert cli.main(["kpi", "report", "--dsn", fresh, "--publish-dsn", pub, "--secret", "/nonexistent"]) == 1  # G1 FAIL
+
+
+@db_only
+def test_report_g4_baseline_run_is_progress_then_compare_passes(fresh):
+    from bluebird import publish
+    with psycopg.connect(fresh) as c:
+        _seed_idea(c)
+        c.execute("INSERT INTO core.trace_verdict (idea_id, status, profile_version, external_search)"
+                  " VALUES (%s,'none','full_v1','not_done') ON CONFLICT (idea_id) DO UPDATE SET status='none'", (IID,))
+        c.commit()
+    pub = _pub_db()
+    publish.push(core_dsn=fresh, publish_dsn=pub)
+    gold = "year,item,final\n2019,제목,none\n"
+    base = kpi.goldset(dsn=fresh, gold_csv=gold, baseline=True)
+    g4 = {r["goal"]: r for r in kpi.report(dsn=fresh, publish_dsn=pub)}["G4"]
+    assert base["status"] == kpi.PASS and base["decided"] == 1
+    assert g4["status"] == kpi.PROGRESS and "이번이 기준선" in g4["value"] and "KST" in g4["value"]
+    kpi.goldset(dsn=fresh, gold_csv=gold)
+    g4 = {r["goal"]: r for r in kpi.report(dsn=fresh, publish_dsn=pub)}["G4"]
+    assert g4["status"] == kpi.PASS and "이번이 기준선" not in g4["value"]

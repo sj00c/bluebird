@@ -198,8 +198,8 @@ def main(argv: list[str] | None = None) -> int:
         _require(ap, a, "dsn", "publish_dsn")
         names = None
         if a.config and a.seed_dir and a.secret and a.secret.exists():
-            with db.connect(a.publish_dsn) as pc:
-                names = kpi.name_leaks(pc, config=a.config, seed_dir=a.seed_dir, secret=ingest.load_secret(a.secret))
+            with db.connect(a.dsn) as conn, db.connect(a.publish_dsn) as pc:
+                names = kpi.name_leaks(conn, pc, config=a.config, seed_dir=a.seed_dir, secret=ingest.load_secret(a.secret))
         rows = kpi.report(dsn=a.dsn, publish_dsn=a.publish_dsn, inbox_dsn=a.inbox_dsn, p95_ms=a.p95_ms, week=a.week,
                           top_target=a.top_target, kappa_sample=a.kappa_sample, names=names)
         if a.json:

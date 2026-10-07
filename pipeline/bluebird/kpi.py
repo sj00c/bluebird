@@ -18,7 +18,7 @@ from psycopg.types.json import Jsonb
 
 from . import db
 from .publish import QUERIES, columns
-from .signals.catalog import today_kst
+from .signals.catalog import KST, today_kst
 from .sources import ADAPTERS, load_sources
 from .sources_check import BLOCKED, REMOTES
 
@@ -227,9 +227,10 @@ def audit_g9(conn) -> dict[str, int]:
     return {k: conn.execute(v).fetchone()[0] for k, v in q.items()}
 
 
-def name_leaks(pc, *, config, seed_dir, secret: bytes) -> dict[str, int]:
+def name_leaks(conn, pc, *, config, seed_dir, secret: bytes) -> dict[str, int]:
     """G10 성명 일치: 공개 원본 파일의 팀명·수상자·지도교사 이름을 메모리에서만 다시 읽어, 같은 아이디어의 공개 글
-    (제목·본문·문제·해결)에 남아 있는지 센다. 이름은 어디에도 저장·출력하지 않고 개수만 돌려준다."""
+    (제목·본문·문제·해결)에 남아 있는지 센다. 이름은 어디에도 저장·출력하지 않고 개수만 돌려준다.
+    expected = 이름 있는 아이디어 중 core에서 공개 대상(살아 있고 보류 아님)인 것. 대조 수가 이와 같아야 다 본 것이다."""
     from .anonymize import find_name
 
     names: dict[str, list[str]] = {}
@@ -243,21 +244,24 @@ def name_leaks(pc, *, config, seed_dir, secret: bytes) -> dict[str, int]:
         for _ in ADAPTERS[spec.adapter](spec, secret, names):
             pass
         files += 1
+    expected = conn.execute(
+        """SELECT count(*) FROM core.idea WHERE id = ANY(%s) AND retired_at IS NULL AND withheld_at IS NULL""",
+        (list(names),)).fetchone()[0]
     hits = compared = 0
     for iid, title, body, problem, solution in pc.execute(
             "SELECT id, title, body, problem, solution FROM publish.idea WHERE id = ANY(%s)", (list(names),)):
         compared += 1
         if any(find_name(t, names[iid]) for t in (title, body, problem, solution)):
             hits += 1
-    return {"name_matches": hits, "compared": compared, "ideas_with_names": len(names), "source_files": files,
-            "missing_files": missing}
+    return {"name_matches": hits, "compared": compared, "expected": expected, "ideas_with_names": len(names),
+            "source_files": files, "missing_files": missing}
 
 
 def names_checked(names: dict[str, int] | None) -> bool:
-    """이름 대조가 실제로 됐는가: 공개 소스 파일이 다 있고, 이름 있는 공개 아이디어와 실제로 맞춰 봤다.
-    익명화 키가 적재 때와 다르면 ID가 안 맞아 compared=0이 된다."""
+    """이름 대조가 실제로 됐는가: 공개 소스 파일이 다 있고, 공개 대상인 이름 있는 아이디어를 빠짐없이 맞춰 봤다.
+    익명화 키가 적재 때와 다르면 ID가 안 맞아 expected=compared=0이 되므로 expected>0도 요구한다."""
     return bool(names) and names["missing_files"] == 0 and names["source_files"] > 0 and (
-        names["ideas_with_names"] == 0 or names["compared"] > 0)
+        names["ideas_with_names"] == 0 or names["compared"] == names["expected"] > 0)
 
 
 def audit_g10(conn, pc, *, names: dict[str, int] | None) -> dict[str, int | None]:
@@ -342,11 +346,11 @@ def report(*, dsn: str, publish_dsn: str, inbox_dsn: str | None = None, p95_ms: 
                               ORDER BY id DESC LIMIT 1""").fetchone()
         if g4:
             g, at = g4
-            st = PROGRESS if g.get("baseline_run") and g["status"] == PASS else g["status"]
+            st = g["status"] if g["status"] != PASS or g.get("baseline_run") is False else PROGRESS
             rows.append(_row("G4", "골드셋 회귀", st,
                              f"판정 {g['decided']}/{g['matched_ideas']} (pending {g['pending']}), macro-F1 {g['macro_f1']}"
                              f", 기준선 {g['baseline_macro_f1']}{' (이번이 기준선)' if g.get('baseline_run') else ''}"
-                             f", 실행 {at:%Y-%m-%d %H:%M}", "기준선 대비 macro-F1 하락 ≤5pt"))
+                             f", 실행 {at.astimezone(KST):%Y-%m-%d %H:%M} KST", "기준선 대비 macro-F1 하락 ≤5pt"))
         else:
             rows.append(_row("G4", "골드셋 회귀", PROGRESS, "미실행(bluebird eval goldset)", "기준선 대비 macro-F1 하락 ≤5pt"))
 
@@ -362,7 +366,7 @@ def report(*, dsn: str, publish_dsn: str, inbox_dsn: str | None = None, p95_ms: 
             "SELECT DISTINCT id FROM publish.change WHERE kind = 'dataset_opened'")]
         by_tier = dict(conn.execute(
             """SELECT CASE WHEN s.tier = 'observed_new' AND s.rereg_of IS NULL
-                            AND (s.first_seen_at AT TIME ZONE 'Asia/Seoul')::date BETWEEN %s AND %s THEN 'window_new' ELSE s.tier END,
+                            AND s.first_seen_at BETWEEN %s AND %s THEN 'window_new' ELSE s.tier END,
                       count(DISTINCT c.id)
                  FROM core.change_match m JOIN core.condition_change c ON c.id = m.change_id
                  JOIN core.signal_dataset s ON s.public_data_pk = c.ref_id
@@ -396,7 +400,7 @@ def report(*, dsn: str, publish_dsn: str, inbox_dsn: str | None = None, p95_ms: 
         g10 = FAIL if any(a10.values()) else (PROGRESS if a10["name_matches"] is None else PASS)
         rows.append(_row("G10", "반출 통제", g10, ", ".join(f"{k} {v}" for k, v in a10.items())
                          + ("" if names is None else
-                            f" (이름 대조 {names['compared']:,}/{names['ideas_with_names']:,}건, 원본 파일 "
+                            f" (이름 대조 {names['compared']:,}/{names['expected']:,}건(보류·퇴역 제외), 원본 파일 "
                             f"{names['source_files']}, 없음 {names['missing_files']})"),
                          "전부 0, 성명 일치 0 (+ test_no_direct_http)"))
 
