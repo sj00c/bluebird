@@ -289,6 +289,14 @@ def test_funnel_end_to_end_human_path(fresh, tmp_path):
         assert sorted(r[0] for r in c.execute(
             "SELECT e.url FROM core.x_evidence x JOIN core.evidence e ON e.id=x.evidence_id"
             " WHERE x.target_type='timeliness'")) == ["https://a.kr/v2", "https://www.law.go.kr/x"]
+    # 같은 URL을 두 축 근거로 써도 축마다 근거가 따로 생긴다(공개 가드가 막지 않게). 채점자 이름은 근거에 없다.
+    funnel.score_set(dsn=fresh, idea_id=iid, scores={"regulation": 5, "tech": 4},
+                     evidence={"regulation": "https://www.law.go.kr/x", "tech": "https://www.law.go.kr/x"},
+                     by="scorer-kim")
+    with psycopg.connect(fresh) as c:
+        rows = c.execute("SELECT e.url, e.title, e.excerpt FROM core.x_evidence x JOIN core.evidence e"
+                         " ON e.id=x.evidence_id WHERE x.target_type='timeliness'").fetchall()
+    assert len(rows) == 2 and all("scorer-kim" not in f"{t}{e}" for _, t, e in rows)
     funnel.approve(dsn=fresh, idea_id=iid, by="t")
     assert stage()[5] is True and stage()[6] is False
     with psycopg.connect(fresh) as c:  # 공개는 public_ok 소스만, push 후에만 6단계
@@ -306,6 +314,9 @@ def test_funnel_end_to_end_human_path(fresh, tmp_path):
         tl_ev = c.execute("SELECT t.n_scored, cardinality(t.evidence_ids), (SELECT count(*) FROM publish.evidence e"
                           " WHERE e.id = ANY(t.evidence_ids)) FROM publish.timeliness t").fetchone()
     assert url.startswith("https://www.law.go.kr/") and ev >= 4 and tl_ev == (2, 2, 2)
+    with psycopg.connect(pub) as c:  # 채점자(by)는 공개되지 않는다
+        assert c.execute("SELECT count(*) FROM publish.evidence WHERE concat(title, excerpt) LIKE '%%scorer-kim%%'"
+                         ).fetchone()[0] == 0
     rep = funnel.report(dsn=fresh)
     assert rep["total"]["s6"] == 1
 

@@ -15,12 +15,7 @@ _ABSENT = (r"(?:없(?:던|었)|존재하지\s*않(?:던|았)|나오지\s*않(?:�
 FORBIDDEN = re.compile(_PAST + r"\s*(?:[가-힣A-Za-z0-9]+\s+){0,3}?" + _ABSENT
                        + r"|존재하지\s*않던|그\s*당시\s*존재하지\s*않")
 
-# 카탈로그 tier별 화면 문구(§3.10). 날짜는 "관측"·"등록"으로만 말한다.
-TIER_TEXT = {
-    "observed_new": "파랑새 관측 {first_seen_at} 신규",
-    "reappeared": "{first_seen_at} 목록에 다시 나타남, 포털 등록 {registered_at}",
-    "portal_registered": "포털 등록 {registered_at}",
-}
+# 카탈로그 tier별 화면 문구(§3.10)는 web/portal/lib/labels.ts tierText 한 곳에 둔다.
 
 
 class WordingError(ValueError):

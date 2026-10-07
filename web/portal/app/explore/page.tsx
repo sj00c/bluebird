@@ -1,12 +1,12 @@
 import Link from "next/link";
-import { explore } from "@/lib/db";
+import { cleanQuery, explore } from "@/lib/db";
 import { CAUSE, VERDICT } from "@/lib/labels";
 
 export const dynamic = "force-dynamic";
 
 export default async function Explore({ searchParams }: { searchParams: Promise<{ q?: string }> }) {
   const { q: raw } = await searchParams;
-  const q = (raw ?? "").trim().slice(0, 200);
+  const q = cleanQuery(raw);
   const res = q.length >= 2 ? await explore(q) : null;
   const ready = res?.ideas.filter((i) => i.verdict) ?? [];
   const diagnosed = res?.ideas.filter((i) => i.cause).length ?? 0;
@@ -15,7 +15,7 @@ export default async function Explore({ searchParams }: { searchParams: Promise<
       <h1>주제·공고 넣기</h1>
       <p className="muted">관심 주제나 공고 제목을 넣으면 비슷한 과거 아이디어와, 그 아이디어들이 왜 막혔는지를 보여 줍니다.</p>
       <form className="filters" action="/explore">
-        <input name="q" defaultValue={q} placeholder="예: 대체조제, 만성질환 관리, 공공자전거" maxLength={200} />
+        <input name="q" aria-label="주제 또는 공고 제목" defaultValue={q} placeholder="예: 대체조제, 만성질환 관리, 공공자전거" maxLength={200} />
         <button type="submit">찾기</button>
       </form>
       {q && q.length < 2 && <p className="muted">두 글자 이상 넣어 주세요.</p>}

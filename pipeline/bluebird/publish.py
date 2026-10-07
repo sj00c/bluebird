@@ -191,7 +191,7 @@ def collect(core_conn) -> dict[str, list[tuple]]:
         empty = [r[0] for r in data[t] if not r[-1] and not (t == "diagnosis" and r[1] == "U")]
         if empty:
             raise PublishError(f"{t}: {len(empty)} row(s) without evidence, e.g. {empty[:3]}")
-    # S: 채점한 축 수(n_scored)만큼 근거가 있어야 한다(축마다 근거 1개, score_set이 강제).
+    # S: 채점한 축 수(n_scored)만큼 근거가 있어야 한다(score_set이 축마다 별도 근거 행을 만든다). 2차 방어선.
     short = [r[0] for r in data["timeliness"] if len(r[-1]) < r[6]]
     if short:
         raise PublishError(f"timeliness: {len(short)} row(s) with fewer evidence than scored axes, e.g. {short[:3]}")

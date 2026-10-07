@@ -522,13 +522,16 @@ def score_set(*, dsn: str, idea_id: str, scores: dict[str, int | None], evidence
             (idea_id, as_of, scores.get("tech"), scores.get("data"), scores.get("regulation"), scores.get("policy"),
              Jsonb(score.DEFAULT_WEIGHTS), sc.n_scored, sc.s, sc.verdict, sc.resolve_condition, by),
         )
-        # 다시 채점하면 그 채점의 근거를 새로 건다(이전 축·URL 근거가 남지 않게).
+        # 다시 채점하면 그 채점의 근거를 새로 건다(이전 축·URL 근거가 남지 않게). 같은 점수·근거로 다시 채점해도
+        # 연결이 바뀌므로 공개가 철회되고 다시 승인해야 한다(검토한 내용만 공개).
+        # 근거 행은 축마다 따로(excerpt=축 이름): 같은 URL을 두 축에 써도 축 수만큼 근거가 생긴다.
+        # 채점자(by)는 core.timeliness.scored_by에만 남기고 공개 근거에는 넣지 않는다(이름 비공개).
         tid = f"{idea_id}@{as_of.isoformat()}"
         conn.execute("DELETE FROM core.x_evidence WHERE target_type='timeliness' AND target_id=%s", (tid,))
         for axis, url in evidence.items():
             if scores.get(axis) is not None:
                 _evidence(conn, kind="manual", url=url, title=f"시의성 {score.AXIS_KO[axis]} 근거",
-                          excerpt=f"채점 {by}", observed_at=as_of, target_type="timeliness", target_id=tid)
+                          excerpt=f"시의성 축: {score.AXIS_KO[axis]}", observed_at=as_of, target_type="timeliness", target_id=tid)
         conn.commit()
     return sc
 

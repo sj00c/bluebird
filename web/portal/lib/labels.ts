@@ -22,13 +22,14 @@ export const VERDICT: Record<string, string> = { now: "지금 가능", condition
 // 데이터 개방 신호의 근거 수준(목록개방현황 스냅샷 비교). 날짜만으로 "새로 열렸다"고 말하지 않는다.
 export function tierText(c: { kind: string; tier: string | null; occurred_at: string | null; registered_at: string | null }): string | null {
   if (c.kind !== "dataset_opened") return null;
-  if (c.tier === "observed_new") return `파랑새 관측 신규 ${c.occurred_at ?? ""} · 포털 등록 ${c.registered_at ?? "-"}`;
-  if (c.tier === "reappeared") return `목록에 다시 나타남 ${c.occurred_at ?? ""} · 포털 등록 ${c.registered_at ?? "-"}`;
-  return `포털 등록 ${c.registered_at ?? c.occurred_at ?? "-"}`;
+  const reg = `포털 등록 ${c.registered_at ?? "-"}`;
+  if (c.tier === "observed_new") return `파랑새 관측 신규 · ${reg}`;
+  if (c.tier === "reappeared") return `목록에 다시 나타남 · ${reg}`;
+  return reg;
 }
 
 // 사업화 흔적 확인 범위
 export function traceText(status: string | null, externalSearch: string | null): string | null {
   if (!status || status === "pending") return null;
-  return externalSearch === "done" ? "외부 검색(뉴스·특허) 실시" : "외부 검색 미실시 · 담당자 확인만";
+  return externalSearch === "done" ? "외부 검색(뉴스·특허) 실시" : "외부 검색 미실시";
 }

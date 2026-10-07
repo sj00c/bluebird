@@ -204,6 +204,12 @@ export type ExploreIdea = {
 };
 export type ExploreAnnouncement = { id: string; title: string; org: string | null; apply_to: string | null; url: string };
 
+// 검색어: 제어문자(NUL 등)를 지우고 공백을 정리한 뒤 200자까지. Postgres text에는 NUL이 들어갈 수 없다.
+export function cleanQuery(raw: string | null | undefined): string {
+  // eslint-disable-next-line no-control-regex
+  return (raw ?? "").replace(/[\u0000-\u001f\u007f]/g, " ").replace(/\s+/g, " ").trim().slice(0, 200);
+}
+
 export async function explore(q: string): Promise<{
   ideas: ExploreIdea[];
   causes: { cause: string; n: number }[];
@@ -213,6 +219,7 @@ export async function explore(q: string): Promise<{
   try {
     await client.query("BEGIN READ ONLY");
     await client.query("SET LOCAL pg_trgm.word_similarity_threshold = 0.3");
+    await client.query("SET LOCAL statement_timeout = '1s'");
     const ideas = await client.query<ExploreIdea>(
       `WITH hit AS (
          SELECT i.id, i.title, i.year, i.contest_name, i.award,
