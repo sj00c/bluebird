@@ -84,7 +84,9 @@ def card_kind(has_body: bool, sent_to_llm: bool) -> str:
     return "full" if sent_to_llm else "local_extract"
 
 
-_CUE = re.compile(r"없|부족|미개방|비공개|공개되지\s*않|개방되지\s*않|구하기\s*어렵|확보|제공되지\s*않|부재|흩어져|분산")
+# 부정 어미만: '없이'(장비 없이 활용)·'안전 확보' 같은 긍정 문장은 단서가 아니다.
+_CUE = re.compile(r"없(?:다|어|는|고|음|으며|었|습)|부족|미개방|비공개|공개되지\s*않|개방되지\s*않|구하기\s*어렵"
+                  r"|확보(?:가|하기|되지)?\s*(?:어렵|안\s*되|못|불가)|제공되지\s*않|부재|흩어져|분산")
 _TOKEN = re.compile(r"[가-힣A-Za-z0-9]{2,}")
 _GENERIC = frozenset({"데이터", "정보", "자료", "통계"})
 EXCERPT_MIN, EXCERPT_MAX = 10, 300

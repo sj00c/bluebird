@@ -105,6 +105,24 @@ if [[ -f .runtime/secrets/w0_public_ids.txt ]]; then
   done < .runtime/secrets/w0_public_ids.txt
 fi
 
+echo "== 되살리기 깔때기(G3·G4·G5)"
+funnel_pub="$(core_sql 'SELECT idea_id FROM core.revival_candidate WHERE s6 ORDER BY 1')"
+check "6단계(공개)까지 간 아이디어 1건 이상"           "[[ -n \"$funnel_pub\" ]]"
+for t in diagnosis timeliness weekly_top; do
+  check "공개 ${t}는 6단계 아이디어만" \
+    "[[ -z \"\$(comm -23 <(pub_sql 'SELECT DISTINCT idea_id FROM publish.$t ORDER BY 1') <(echo \"$funnel_pub\"))\" ]]"
+done
+check "공개 진단·바뀐 것마다 근거 1개 이상, 근거 행 실재" \
+  "[[ \$(pub_sql \"SELECT count(*) FROM (SELECT evidence_ids FROM publish.diagnosis UNION ALL SELECT evidence_ids FROM publish.change) x WHERE cardinality(evidence_ids)=0 OR EXISTS (SELECT 1 FROM unnest(evidence_ids) e WHERE e NOT IN (SELECT id FROM publish.evidence))\") -eq 0 ]]"
+check "core 비-U 진단은 모두 근거 연결" \
+  "[[ \$(core_sql \"SELECT count(*) FROM core.diagnosis d WHERE d.\\\"primary\\\"<>'U' AND NOT EXISTS (SELECT 1 FROM core.x_evidence x WHERE x.target_type='diagnosis' AND x.target_id=d.idea_id)\") -eq 0 ]]"
+check "사람이 넣은 바뀐 것은 입력자 기록" \
+  "[[ \$(core_sql \"SELECT count(*) FROM core.condition_change WHERE origin='human' AND coalesce(added_by,'')=''\") -eq 0 ]]"
+check "공개 S는 now/conditional만" \
+  "[[ \$(pub_sql \"SELECT count(*) FROM publish.timeliness WHERE verdict NOT IN ('now','conditional')\") -eq 0 ]]"
+check "공개 글에 금지 표현 없음(그때 없던 등)" \
+  "! pub_sql \"SELECT rationale FROM publish.diagnosis UNION ALL SELECT title||' '||coalesce(how_now,'')||' '||array_to_string(what_changed,' ') FROM publish.change UNION ALL SELECT coalesce(excerpt,'') FROM publish.evidence\" | grep -qE '그때 없던|당시 없었던|당시 미개방이던|그 당시 존재하지 않'"
+
 echo "== 공개 화면"
 code() { curl -s -o /dev/null -w '%{http_code}' "http://localhost:$port$1"; }
 check "GET /pool 200" "[[ \$(code /pool) == 200 ]]"

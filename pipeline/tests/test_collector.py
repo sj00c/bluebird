@@ -112,3 +112,9 @@ def test_list_masking_keeps_generic_short_tokens_and_word_boundaries():
     out = mask_team("AI 기반 maintain 도구, Lab 안에서 김하나가 개발. Labor 통계 2명", team)
     # 이름(김하나)·3자 이상 팀 낱말(Lab)은 가리고, 2자 라틴 낱말(AI)·인원수(2명)·단어 속 부분(maintain, Labor)은 둔다
     assert out == f"AI 기반 maintain 도구, {MASK} 안에서 {MASK}가 개발. Labor 통계 2명"
+
+
+def test_list_masking_keeps_generic_team_words():
+    # 팀명 안의 흔한 낱말(데이터·연구소)은 본문에서 가리지 않고, 팀명 전체와 사람 이름만 가린다
+    out = mask_team("데이터 연구소가 만든 주차면 데이터가 없어 홍길동이 제안", "데이터 연구소(홍길동)")
+    assert out == f"{MASK}가 만든 주차면 데이터가 없어 {MASK}이 제안"

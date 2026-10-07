@@ -18,7 +18,9 @@ _COUNT_SUFFIX = re.compile(r"\s(외|등)(\s*\d+\s*명?)?(?=\s|$)")
 _PERSON_NAME = re.compile(r"^[가-힣]{2,4}$")
 _LIST_SEP = re.compile(r"[,，、·/]")
 _LIST_SPLIT = re.compile(r"[\s,，、·/]+")
-_NOT_NAME = frozenset({"외", "등", "팀", "및"})
+# 팀 목록에서 떼어 내도 이름이 아닌 흔한 낱말(본문의 같은 낱말까지 ○○가 되면 카드가 망가진다)
+_NOT_NAME = frozenset({"외", "등", "팀", "및", "데이터", "정보", "서비스", "스마트", "연구소", "연구실", "플랫폼",
+                       "솔루션", "주식회사", "컴퍼니", "랩", "그룹", "대학교", "학교", "센터", "시스템"})
 _COUNT_TOKEN = re.compile(r"^\d+\s*(명|인|개)?$")
 
 
@@ -58,6 +60,8 @@ def mask_team(text: str, team: str) -> str:
     cleaned = clean_team(team)
     variants = {team.strip(), cleaned}
     if _PAREN.search(team) or _LIST_SEP.search(team):
+        # 괄호 앞 팀명은 통째로('데이터 연구소(홍길동)' → '데이터 연구소')
+        variants.add(_PAREN.split(team, 1)[0].strip())
         # '메디뷰(MediView)' → '메디뷰', 'MediView' / '팀명(이름1, 이름2)'·'이름1, 이름2' → 이름마다 마스킹
         variants.update(t for t in _LIST_SPLIT.split(_PAREN.sub(" ", team)) if _maskable_token(t))
     for v in sorted((v for v in variants if len(v) >= 2), key=len, reverse=True):

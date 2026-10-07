@@ -296,7 +296,7 @@ class Egress:
         resp = self._send(purpose, "POST", url, path_template=urlsplit(url).path, fields=fields, params=None,
                           body=body, headers=headers)
         if resp.status >= 400:
-            raise EgressBlocked(f"{provider} HTTP {resp.status}: {resp.text[:300]}")
+            raise EgressBlocked(f"{provider} HTTP {resp.status}")  # 본문은 키 일부를 되돌려 줄 수 있어 남기지 않는다
         data = resp.json()
         text = (data["choices"][0]["message"]["content"] if provider == "openai"
                 else "".join(b.get("text", "") for b in data["content"]))

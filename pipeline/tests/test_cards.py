@@ -92,3 +92,10 @@ def test_anchor_rejects_weak_or_invented_missing_data():
     long_body = "가" * 290 + " 배차 데이터가 없다."
     assert _anchor(long_body, [{"name": "배차 데이터", "excerpt": long_body}]) == []
 
+
+def test_anchor_cue_needs_negative_ending():
+    body = "별도 장비 없이 드론 영상 데이터를 활용한다. 안전 확보를 위해 사고 통계 데이터를 쓴다. 주차면 점유 데이터가 없어 추정한다."
+    assert _anchor(body, [{"name": "드론 영상 데이터", "excerpt": "별도 장비 없이 드론 영상 데이터를 활용한다."}]) == []
+    assert _anchor(body, [{"name": "사고 통계 데이터", "excerpt": "안전 확보를 위해 사고 통계 데이터를 쓴다."}]) == []
+    assert len(_anchor(body, [{"name": "주차면 점유 데이터", "excerpt": "주차면 점유 데이터가 없어 추정한다."}])) == 1
+
