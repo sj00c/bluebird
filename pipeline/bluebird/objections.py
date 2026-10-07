@@ -18,7 +18,7 @@ KINDS = ("fact", "cause", "change", "privacy", "other")
 ID_RE = re.compile(r"^ID-[0-9]{4}-[0-9a-f]{10}$")
 MAX_BODY = 2000
 PULL_LIMIT = 200  # 한 번에 가져오는 건수 상한(DMZ가 넘겨도 나머지는 다음 주기)
-_CTRL = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]")
+CTRL = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]")
 
 
 def validate(row: tuple) -> tuple[dict | None, str | None]:
@@ -32,7 +32,7 @@ def validate(row: tuple) -> tuple[dict | None, str | None]:
         return None, "bad kind"
     if not isinstance(body, str):
         return None, "bad body"
-    body = _CTRL.sub("", body).strip()
+    body = CTRL.sub("", body).strip()
     if not 1 <= len(body) <= MAX_BODY:
         return None, "bad body length"
     return {"dmz_id": dmz_id, "dmz_uid": dmz_uid, "idea_id": idea_id, "kind": kind, "body": body, "submitted_at": submitted_at}, None
@@ -61,6 +61,10 @@ def pull(*, dsn: str, inbox_dsn: str, limit: int = PULL_LIMIT) -> dict:
                     continue
                 if core.execute("SELECT 1 FROM core.idea WHERE id=%s", (obj["idea_id"],)).fetchone() is None:
                     stats["unknown_idea"] += 1
+                    continue
+                if core.execute("SELECT 1 FROM core.objection WHERE dmz_uid IS NULL AND dmz_id=%s AND submitted_at=%s",
+                                (obj["dmz_id"], obj["submitted_at"])).fetchone():
+                    stats["duplicate"] += 1  # uid 도입 전에 가져왔지만 DMZ에서 지우기 전에 끊긴 행
                     continue
                 n = core.execute(
                     """INSERT INTO core.objection (dmz_id, dmz_uid, idea_id, kind, body, submitted_at)

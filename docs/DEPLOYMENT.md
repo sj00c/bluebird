@@ -75,6 +75,7 @@ z1-collect ──L1 망연계(파일)──▶ z2-app(importer/worker/publisher)
 - 마이그레이션: `pipeline/bluebird/db/migrations/{core,publish}/NNNN_*.sql`. `bluebird migrate --target core|publish`로 적용하고 `public.schema_migrations`에 기록한다. 이 디렉터리가 스키마의 유일한 소유자다.
 - 공개존 갱신 방식: 매번 전체 스냅샷을 하나의 트랜잭션 안에서 TRUNCATE→COPY로 교체한다. 그래서 포털은 갱신 도중에도 이전 스냅샷 또는 새 스냅샷만 보게 된다. 오래된 스냅샷이 늦게 도착하면 거부한다.
 - 접속: `hostssl` + `scram-sha-256`, 허용 IP 고정(`deploy/prod/postgres/pg_hba.*.conf`).
+- `bb_api`는 마이그레이션이 NOLOGIN으로 만든다. 배포 때 한 번 `ALTER ROLE bb_api LOGIN PASSWORD :'pw'`(psql 변수, stdin)로 비밀번호를 준다(시험 배포는 `deploy/test/run-cycle.sh`). 0008의 `GRANT SELECT ON ALL TABLES`는 그 시점 표에만 적용되므로, 새 core 표를 만드는 마이그레이션은 bb_api 권한을 함께 정한다.
 - 로그: 접속·종료·DDL·1초 이상 쿼리를 기록한다(`deploy/prod/postgres/bluebird.conf`).
 
 ## 5. 데이터 소스와 수집 주기

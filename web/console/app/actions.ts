@@ -2,7 +2,7 @@
 
 import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
-import { apiTry, post, TOKEN_COOKIE } from "@/lib/api";
+import { apiTry, getMe, post, TOKEN_COOKIE } from "@/lib/api";
 
 function str(f: FormData, k: string): string {
   const v = f.get(k);
@@ -25,12 +25,13 @@ export async function login(formData: FormData) {
     path: "/",
     maxAge: 60 * 60 * 12,
   });
-  const err = await apiTry("/api/me");
-  if (err) {
+  const me = await getMe();
+  if (!me) {
     jar.delete(TOKEN_COOKIE);
     redirect("/login?error=" + encodeURIComponent("접근 토큰을 확인할 수 없습니다."));
   }
-  redirect("/");
+  // 코더만인 사람은 큐를 볼 수 없으므로 코딩 화면으로 바로 보낸다.
+  redirect(me.roles.some((r) => ["reviewer", "expert", "auditor"].includes(r)) ? "/" : "/coding");
 }
 
 export async function logout() {

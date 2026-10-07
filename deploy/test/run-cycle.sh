@@ -10,8 +10,9 @@ dc build -q backend-jobs portal console
 dc up -d --wait core-db publish-db proxy
 job migrate --target core
 # backend-api 전용 역할(0008)에 로그인 비밀번호를 준다(.env API_DB_PASSWORD).
-dc exec -T core-db psql -U bluebird -d bluebird_core -v ON_ERROR_STOP=1 -q \
-  -c "ALTER ROLE bb_api LOGIN PASSWORD '$(grep ^API_DB_PASSWORD= .env | cut -d= -f2)'"
+# 비밀번호는 명령줄(ps에 보임)이 아니라 stdin으로 넘긴다.
+printf "\\set pw '%s'\nALTER ROLE bb_api LOGIN PASSWORD :'pw';\n" "$(grep ^API_DB_PASSWORD= .env | cut -d= -f2)" \
+  | dc exec -T core-db psql -U bluebird -d bluebird_core -v ON_ERROR_STOP=1 -q
 job migrate --target publish
 
 job ingest "$@"

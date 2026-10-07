@@ -19,7 +19,7 @@ from typing import Annotated, Literal
 
 import psycopg
 from fastapi import Depends, FastAPI, Header, HTTPException, Path, Query
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from . import db, funnel, objections, wording
 
@@ -77,6 +77,13 @@ def need(*roles: str):
 
 
 Me = Annotated[User, Depends(current_user)]
+
+
+def _no_ctrl(v: str | None) -> str | None:
+    """메모·처리 내용에 제어문자(줄바꿈·탭 제외)는 받지 않는다(NUL은 DB가 거부해 500이 됐다)."""
+    if v is not None and objections.CTRL.search(v):
+        raise ValueError("control characters are not allowed")
+    return v
 Staff = Annotated[User, Depends(need(*STAFF))]
 
 
@@ -180,6 +187,7 @@ class ReviewIn(BaseModel):
     round: Literal["final", "expert", "audit"]
     decision: Literal["approve", "reject"]
     note: str | None = Field(default=None, max_length=2000)
+    _ctrl = field_validator("note")(_no_ctrl)
 
 
 @app.post("/api/ideas/{idea_id}/review")
@@ -230,6 +238,7 @@ def coding(u: Annotated[User, Depends(need("coder"))]) -> dict:
 class CodeIn(BaseModel):
     code: Literal["T", "D", "R", "M", "C", "O", "U"]
     note: str | None = Field(default=None, max_length=1000)
+    _ctrl = field_validator("note")(_no_ctrl)
 
 
 @app.post("/api/coding/{idea_id}")
@@ -261,6 +270,7 @@ class ResolveIn(BaseModel):
     decision: Literal["accepted", "rejected"]
     resolution: str = Field(min_length=1, max_length=2000)
     withhold: bool = False
+    _ctrl = field_validator("resolution")(_no_ctrl)
 
 
 @app.post("/api/objections/{objection_id}/resolve")

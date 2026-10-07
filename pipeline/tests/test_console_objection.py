@@ -226,6 +226,11 @@ def test_coder_only_cannot_see_predictions_or_objections(client, fresh):
     assert client.post(f"/api/ideas/{IID}/review", headers=H("ca"),
                        json={"round": "final", "decision": "approve"}).status_code == 403
     assert client.get("/api/objections", headers=H("exp")).status_code == 403
+    # 제어문자(NUL 등)가 든 메모·처리 내용은 422(500 아님)
+    assert client.post("/api/objections/1/resolve", headers=H("rev"),
+                       json={"decision": "rejected", "resolution": "a\x00b"}).status_code == 422
+    assert client.post(f"/api/ideas/{IID}/review", headers=H("rev"),
+                       json={"round": "final", "decision": "approve", "note": "a\x00"}).status_code == 422
     # 공백뿐인 처리 내용은 422, 범위 밖 id는 422
     assert client.post("/api/objections/1/resolve", headers=H("rev"),
                        json={"decision": "rejected", "resolution": "   "}).status_code == 422
