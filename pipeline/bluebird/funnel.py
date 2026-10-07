@@ -531,7 +531,7 @@ def score_set(*, dsn: str, idea_id: str, scores: dict[str, int | None], evidence
         for axis, url in evidence.items():
             if scores.get(axis) is not None:
                 _evidence(conn, kind="manual", url=url, title=f"시의성 {score.AXIS_KO[axis]} 근거",
-                          excerpt=f"시의성 축: {score.AXIS_KO[axis]}", observed_at=as_of, target_type="timeliness", target_id=tid)
+                          excerpt=f"{score.EVIDENCE_EXCERPT}{score.AXIS_KO[axis]}", observed_at=as_of, target_type="timeliness", target_id=tid)
         conn.commit()
     return sc
 

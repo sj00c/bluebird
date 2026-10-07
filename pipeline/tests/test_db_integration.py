@@ -392,6 +392,17 @@ def test_s6_needs_applied_snapshot_and_future_change_does_not_pass(fresh):
     with pytest.raises(publish.PublishError, match="fewer evidence than scored axes"):
         publish.push(core_dsn=fresh, publish_dsn=_pub_db())
 
+    # 예전 형식 S 근거(채점자 이름이 excerpt에 있음)는 다시 채점할 때까지 공개하지 않는다
+    funnel.score_set(dsn=fresh, idea_id=iid, scores={"policy": 4, "tech": 4},
+                     evidence={"policy": "https://a.kr/p", "tech": "https://a.kr/t"}, by="t")
+    funnel.approve(dsn=fresh, idea_id=iid, by="t")
+    with psycopg.connect(fresh) as c:
+        c.execute("UPDATE core.evidence SET excerpt='by 홍길동' WHERE id = (SELECT min(evidence_id)"
+                  " FROM core.x_evidence WHERE target_type='timeliness')")
+        c.commit()
+    with pytest.raises(publish.PublishError, match="old format"):
+        publish.push(core_dsn=fresh, publish_dsn=_pub_db())
+
 
 def test_publish_refuses_forbidden_wording_in_own_text(fresh):
     with psycopg.connect(fresh) as c:

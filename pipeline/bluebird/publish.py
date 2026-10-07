@@ -19,7 +19,7 @@ import psycopg
 from psycopg import sql
 from psycopg.types.json import Jsonb
 
-from . import db, wording
+from . import db, score, wording
 
 TEMPLATE_VERSION = "v2"
 PORTAL_ROLE = "bb_portal"
@@ -195,6 +195,11 @@ def collect(core_conn) -> dict[str, list[tuple]]:
     short = [r[0] for r in data["timeliness"] if len(r[-1]) < r[6]]
     if short:
         raise PublishError(f"timeliness: {len(short)} row(s) with fewer evidence than scored axes, e.g. {short[:3]}")
+    # S 근거 excerpt는 축 이름만(score_set). 예전 형식(채점자 이름 포함)은 다시 채점할 때까지 내보내지 않는다.
+    tl_ev = {e for r in data["timeliness"] for e in r[-1]}
+    legacy = [r[0] for r in data["evidence"] if r[0] in tl_ev and not (r[4] or "").startswith(score.EVIDENCE_EXCERPT)]
+    if legacy:
+        raise PublishError(f"timeliness evidence: {len(legacy)} row(s) in old format (rescore needed), e.g. {legacy[:3]}")
     # 우리가 쓴 글(카드 요약·진단·바뀐 것·S 조건)에 금지 표현이 있으면 반영하지 않는다(원문 인용·제목은 제외).
     for t, cols in OWN_TEXT.items():
         idx = [columns(t).index(c) for c in cols]

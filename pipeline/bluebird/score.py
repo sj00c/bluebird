@@ -10,6 +10,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 AXES = ("tech", "data", "regulation", "policy")
+EVIDENCE_EXCERPT = "시의성 축: "  # S 근거 excerpt 머리말(축 이름만, 채점자 없음). publish가 형식을 확인한다.
 AXIS_KO = {"tech": "기술", "data": "데이터", "regulation": "규제", "policy": "정책"}
 DEFAULT_WEIGHTS = dict.fromkeys(AXES, 0.25)
 # 바뀐 것 종류 → S 축(D→data, R→regulation, C·M→policy, T→tech)
