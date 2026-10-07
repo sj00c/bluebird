@@ -194,6 +194,24 @@ def _pub_db(name="bbtest_pub2"):
     return pub
 
 
+LAW_XML = ("<?xml version='1.0' encoding='UTF-8'?><법령><기본정보><법령명_한글><![CDATA[드론법]]></법령명_한글>"
+           "<공포일자>20251001</공포일자><공포번호>12345</공포번호><시행일자>20260101</시행일자></기본정보></법령>")
+
+
+def _law_egress(dsn):
+    import httpx
+
+    from bluebird.egress import Egress, Policy, db_recorder
+
+    def h(req):
+        assert req.url.path == "/DRF/lawService.do" and req.url.params["MST"] == "777"
+        return httpx.Response(200, text=LAW_XML)
+
+    with psycopg.connect(dsn) as c:
+        pol = Policy.load(c)
+    return Egress(policy=pol, recorder=db_recorder(dsn), proxy="", transport=httpx.MockTransport(h))
+
+
 def test_funnel_end_to_end_human_path(fresh, tmp_path):
     """키 없는 경로: 사람 흔적·진단(근거) → 사람이 넣은 바뀐 것 → 사람 판정 → S → 승인 → push → 6단계."""
     from bluebird import funnel
@@ -231,8 +249,19 @@ def test_funnel_end_to_end_human_path(fresh, tmp_path):
     with pytest.raises(ValueError):
         funnel.change_add(dsn=fresh, kind="dataset_opened", url="https://x", title="t",
                           occurred_at=date(2026, 1, 1), by="t")
+    with pytest.raises(ValueError, match="law-mst"):
+        funnel.change_add(dsn=fresh, kind="law_effective", url="https://www.law.go.kr/lsInfoP.do?lsiSeq=1",
+                          title="드론 배송 허용", occurred_at=date(2026, 1, 1), by="t")
+    with pytest.raises(ValueError, match="시행일자"):  # API의 시행일자와 다르면 거부
+        funnel.change_add(dsn=fresh, kind="law_effective", url="https://www.law.go.kr/lsInfoP.do?lsiSeq=1",
+                          title="드론 배송 허용", occurred_at=date(2026, 1, 2), by="t", egress=_law_egress(fresh),
+                          law_mst="777")
     cid = funnel.change_add(dsn=fresh, kind="law_effective", url="https://www.law.go.kr/lsInfoP.do?lsiSeq=1",
-                            title="드론 배송 허용", occurred_at=date(2026, 1, 1), by="t")
+                            title="드론 배송 허용", occurred_at=date(2026, 1, 1), by="t", egress=_law_egress(fresh),
+                            law_mst="777")
+    with psycopg.connect(fresh) as c:
+        assert c.execute("SELECT verify_status, verify_detail->>'promulgation_no', egress_call_id IS NOT NULL"
+                         " FROM core.condition_change WHERE id=%s", (cid,)).fetchone() == ("api_verified", "12345", True)
     with pytest.raises(wording.WordingError):
         funnel.match_set(dsn=fresh, change_id=cid, idea_id=iid, verdict="yes", what_changed=[],
                          how_now="그때 없던 제도", by="t")
@@ -241,8 +270,9 @@ def test_funnel_end_to_end_human_path(fresh, tmp_path):
     assert stage()[3] is True
     # 바뀐 것 날짜가 as_of 스냅샷 다음 스냅샷 이후면 그 시점 기준으로는 통과하지 않는다
     with psycopg.connect(fresh) as c:
-        c.execute("UPDATE core.condition_change SET occurred_at='2026-10-20' WHERE id=%s", (cid,))
-        c.execute("INSERT INTO core.catalog_snapshot VALUES (1,'2026-10-12','f','x',0,1)")
+        # 스냅샷 0(10-06)의 기준일은 다음 스냅샷(10-07). 그날 이후에 일어난 바뀐 것은 스냅샷 0 기준으로 통과하지 않는다
+        c.execute("UPDATE core.condition_change SET occurred_at='2026-10-07' WHERE id=%s", (cid,))
+        c.execute("INSERT INTO core.catalog_snapshot VALUES (1,'2026-10-07','f','x',0,1)")
         assert c.execute("SELECT s3 FROM core.funnel_stage(0) WHERE idea_id=%s", (iid,)).fetchone()[0] is False
         assert c.execute("SELECT s3 FROM core.funnel_stage(1) WHERE idea_id=%s", (iid,)).fetchone()[0] is True
         c.rollback()
@@ -268,6 +298,121 @@ def test_funnel_end_to_end_human_path(fresh, tmp_path):
     assert url.startswith("https://www.law.go.kr/") and ev >= 2
     rep = funnel.report(dsn=fresh)
     assert rep["total"]["s6"] == 1
+
+    # 승인 뒤 진단을 고치면 공개가 철회되고, 다시 push해도 나가지 않는다(검토한 내용만 공개)
+    funnel.diagnose_set(dsn=fresh, idea_id=iid, cause="R", rationale="비행 규제(수정)",
+                        evidence=[("https://www.law.go.kr/x", "비행 승인")], by="t2")
+    assert stage()[5:] == (False, False)
+    res = publish.push(core_dsn=fresh, publish_dsn=pub)
+    assert (res["diagnosis"], res["change"], res["timeliness"], res["weekly_top"]) == (0, 0, 0, 0)
+    # 다시 승인하면 공개, 이어서 반려하면 아이디어·바뀐 것·weekly_top 모두 내려간다
+    funnel.approve(dsn=fresh, idea_id=iid, by="t")
+    funnel.compute_top(dsn=fresh, week=date(2026, 10, 12))
+    res = publish.push(core_dsn=fresh, publish_dsn=pub)
+    assert (res["diagnosis"], res["change"], res["weekly_top"]) == (1, 1, 1) and stage()[6] is True
+    funnel.reject(dsn=fresh, idea_id=iid, by="t", note="근거 부족")
+    res = publish.push(core_dsn=fresh, publish_dsn=pub)
+    assert (res["diagnosis"], res["change"], res["timeliness"], res["weekly_top"]) == (0, 0, 0, 0)
+    assert stage()[5:] == (False, False)
+    # 원인을 바꾸면 맞지 않는 매칭은 rejected로 빠진다
+    funnel.diagnose_set(dsn=fresh, idea_id=iid, cause="T", rationale="기술", evidence=[("https://a.kr/t", "기술")],
+                        by="t")
+    with psycopg.connect(fresh) as c:
+        assert c.execute("SELECT status FROM core.change_match WHERE idea_id=%s", (iid,)).fetchone()[0] == "rejected"
+        assert c.execute("SELECT count(*) FROM core.x_evidence WHERE target_type='diagnosis' AND target_id=%s",
+                         (iid,)).fetchone()[0] == 1  # 이전 원인(R)의 근거는 떨어졌다
+
+
+def test_s6_needs_applied_snapshot_and_future_change_does_not_pass(fresh):
+    """push가 DMZ에 반영되지 않으면(applied_at 없음) 6단계가 아니다. 시행일이 미래인 바뀐 것은 3단계를 통과하지 않는다."""
+    from bluebird import funnel
+
+    with psycopg.connect(fresh) as c:
+        _seed_idea(c)
+        c.execute("INSERT INTO core.catalog_snapshot VALUES (0,'2026-10-06','f','x',0,0)")
+        c.commit()
+    iid = "ID-2019-aaaaaaaaaa"
+    funnel.trace_manual(dsn=fresh, idea_id=iid, result="none", status=None, url=None, note="없음", by="t")
+    funnel.diagnose_set(dsn=fresh, idea_id=iid, cause="M", rationale="정책", evidence=[("https://a.kr/m", "정책")],
+                        by="t")
+    future = date(2099, 1, 1)
+    cid = funnel.change_add(dsn=fresh, kind="policy_news", url="https://a.kr/p", title="정책 시행 예정",
+                            occurred_at=future, by="t")
+    funnel.match_set(dsn=fresh, change_id=cid, idea_id=iid, verdict="human", what_changed=["지원"], how_now="신청 가능",
+                     by="t")
+    with psycopg.connect(fresh) as c:
+        assert c.execute("SELECT verify_status FROM core.condition_change WHERE id=%s", (cid,)).fetchone()[0] == "attested"
+        assert c.execute("SELECT s3 FROM core.revival_candidate WHERE idea_id=%s", (iid,)).fetchone()[0] is False
+        c.execute("UPDATE core.condition_change SET occurred_at='2026-01-01' WHERE id=%s", (cid,))
+        c.commit()
+        assert c.execute("SELECT s3 FROM core.revival_candidate WHERE idea_id=%s", (iid,)).fetchone()[0] is True
+    funnel.score_set(dsn=fresh, idea_id=iid, scores={"policy": 4, "tech": 4},
+                     evidence={"policy": "https://a.kr/p", "tech": "https://a.kr/t"}, by="t")
+    with psycopg.connect(fresh) as c:
+        c.execute("UPDATE core.source SET public_ok = true WHERE id='s'")
+        c.commit()
+    funnel.approve(dsn=fresh, idea_id=iid, by="t")
+    with psycopg.connect(fresh) as c:  # push가 기록만 하고 반영 전에 실패한 경우
+        c.execute("INSERT INTO core.publish_snapshot (template_version, template_sha256, rows) VALUES ('v1','x','{}')")
+        c.commit()
+        assert c.execute("SELECT s5, s6 FROM core.revival_candidate WHERE idea_id=%s", (iid,)).fetchone() == (True, False)
+    publish.push(core_dsn=fresh, publish_dsn=_pub_db())
+    with psycopg.connect(fresh) as c:
+        assert c.execute("SELECT s6 FROM core.revival_candidate WHERE idea_id=%s", (iid,)).fetchone()[0] is True
+        assert c.execute("SELECT revived_ids FROM core.publish_snapshot WHERE applied_at IS NOT NULL"
+                         " ORDER BY id DESC LIMIT 1").fetchone()[0] == [iid]
+
+
+def test_publish_refuses_forbidden_wording_in_own_text(fresh):
+    with psycopg.connect(fresh) as c:
+        _seed_idea(c)
+        c.execute("UPDATE core.source SET public_ok = true WHERE id='s'")
+        c.execute("UPDATE core.idea_card SET problem='그때까지 없던 데이터로 푼다'")
+        c.execute("INSERT INTO core.publication (target_type, target_id, scope, approved_by)"
+                  " VALUES ('idea','ID-2019-aaaaaaaaaa','card','t')")
+        c.commit()
+        with pytest.raises(publish.PublishError, match="forbidden wording"):
+            publish.collect(c)
+
+
+def test_match_judge_llm_path(fresh, monkeypatch):
+    """키가 있으면 후보 매칭을 LLM이 판정(egress 감사 행), status는 candidate 유지 — 승인은 사람. 키가 없으면 key_required."""
+    import json as _json
+
+    import httpx
+
+    from bluebird import funnel
+    from bluebird.egress import Egress, Policy, db_recorder
+
+    with psycopg.connect(fresh) as c:
+        _seed_idea(c, missing_data='[{"name": "배차 데이터", "excerpt": "배차 데이터가 없다"}]')
+        c.execute("INSERT INTO core.diagnosis (idea_id, \"primary\", extractor) VALUES ('ID-2019-aaaaaaaaaa','D','rule')")
+        c.execute("INSERT INTO core.evidence (id, kind, url) VALUES (900,'body_excerpt','https://a.kr/i')")
+        c.execute("INSERT INTO core.x_evidence VALUES ('diagnosis','ID-2019-aaaaaaaaaa',900)")
+        c.execute("INSERT INTO core.condition_change (id, kind, ref_id, occurred_at, url, title)"
+                  " VALUES ('dataset:9','dataset_opened','9','2024-01-01','https://www.data.go.kr/data/9','버스 배차 정보')")
+        c.execute("INSERT INTO core.change_match (change_id, idea_id, similarity) VALUES ('dataset:9','ID-2019-aaaaaaaaaa',0.5)")
+        c.commit()
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    assert funnel.match_judge(dsn=fresh)["key_required"] is True
+    monkeypatch.setenv("OPENAI_API_KEY", "k")
+    sent = []
+
+    def h(req):
+        sent.append(req.content.decode())
+        body = {"verdict": "partial", "what_changed": ["배차 정보 개방"], "how_now": "배차 정보로 대기시간을 알린다"}
+        return httpx.Response(200, json={"choices": [{"message": {"content": _json.dumps(body, ensure_ascii=False)}}]})
+
+    with psycopg.connect(fresh) as c:
+        pol = Policy.load(c)
+    eg = Egress(policy=pol, recorder=db_recorder(fresh), proxy="", transport=httpx.MockTransport(h))
+    assert funnel.match_judge(dsn=fresh, egress=eg)["partial"] == 1
+    with psycopg.connect(fresh) as c:
+        row = c.execute("SELECT llm_verdict, status, how_now FROM core.change_match").fetchone()
+        assert row == ("partial", "candidate", "배차 정보로 대기시간을 알린다")
+        assert c.execute("SELECT count(*) FROM core.egress_call WHERE purpose='llm'").fetchone()[0] == 1
+    assert "https://www.data.go.kr" not in sent[0]  # 이벤트 URL은 보내지 않는다
 
 
 def test_cards_llm_path_fallback_and_full_check(fresh, tmp_path, monkeypatch):

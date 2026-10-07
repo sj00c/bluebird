@@ -163,10 +163,13 @@ def _funnel_parsers(sub) -> None:
     x.add_argument("--title", required=True)
     x.add_argument("--occurred-at", type=date.fromisoformat, required=True)
     x.add_argument("--summary")
+    x.add_argument("--law-mst", help="law_effective: 국가법령정보 법령일련번호(MST). 시행일자를 API로 대조한다")
     x.add_argument("--by", **by)
 
     mt = sub.add_parser("match", help="3 바뀐 것 매칭").add_subparsers(dest="sub", required=True)
     p(mt, "candidates", "원인·종류가 맞는 후보 생성(D: 카탈로그, C: 공고)")
+    x = p(mt, "judge", "후보를 상용 LLM이 판정(키 있을 때, egress 경유; 승인은 사람)")
+    x.add_argument("--limit", type=int, default=50)
     x = p(mt, "set", "사람 판정")
     x.add_argument("--change", required=True)
     x.add_argument("--idea", required=True)
@@ -233,10 +236,12 @@ def _run_funnel(a) -> int:
     elif a.cmd == "changes":
         with Egress.from_dsn(dsn) as eg:
             print(funnel.change_add(dsn=dsn, kind=a.kind, url=a.url, title=a.title, occurred_at=a.occurred_at,
-                                    summary=a.summary, by=a.by, egress=eg))
+                                    summary=a.summary, by=a.by, egress=eg, law_mst=a.law_mst))
     elif a.cmd == "match":
         if a.sub == "candidates":
             funnel.match_candidates(dsn=dsn)
+        elif a.sub == "judge":
+            funnel.match_judge(dsn=dsn, limit=a.limit)
         else:
             print(funnel.match_set(dsn=dsn, change_id=a.change, idea_id=a.idea, verdict=a.verdict,
                                    what_changed=a.what_changed, how_now=a.how_now, by=a.by))

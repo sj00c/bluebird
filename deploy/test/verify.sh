@@ -107,8 +107,12 @@ fi
 
 echo "== 되살리기 깔때기(G3·G4·G5)"
 funnel_pub="$(core_sql 'SELECT idea_id FROM core.revival_candidate WHERE s6 ORDER BY 1')"
+revived="$(core_sql 'SELECT x FROM core.publish_snapshot ps, unnest(ps.revived_ids) x WHERE ps.id = (SELECT max(id) FROM core.publish_snapshot WHERE applied_at IS NOT NULL) ORDER BY 1')"
+check "6단계 = 반영 완료된 최신 스냅샷에 든 아이디어"   "[[ \"$revived\" == \"$funnel_pub\" ]]"
+check "법령 시행 바뀐 것은 국가법령정보 API로 확인된 것만 매칭 통과" \
+  "[[ \$(core_sql \"SELECT count(*) FROM core.revival_candidate r JOIN core.change_match m ON m.idea_id=r.idea_id AND m.status='approved' JOIN core.condition_change c ON c.id=m.change_id WHERE r.s6 AND c.kind='law_effective' AND c.verify_status<>'api_verified'\") -eq 0 ]]"
 check "6단계(공개)까지 간 아이디어 1건 이상"           "[[ -n \"$funnel_pub\" ]]"
-for t in diagnosis timeliness weekly_top; do
+for t in diagnosis change timeliness weekly_top announcement_match; do
   check "공개 ${t}는 6단계 아이디어만" \
     "[[ -z \"\$(comm -23 <(pub_sql 'SELECT DISTINCT idea_id FROM publish.$t ORDER BY 1') <(echo \"$funnel_pub\"))\" ]]"
 done

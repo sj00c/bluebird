@@ -35,7 +35,7 @@ ALLOWED_HOSTS = (
 # export_grade='O' 소스에서 정책 행 없이도 나갈 수 있는 내용 필드. 그 밖은 core.export_policy에 명시해야 한다.
 DEFAULT_EXPORTABLE = frozenset({
     "title", "body", "problem", "solution", "used_data", "missing_data", "category", "year", "domain",
-    "dataset_title", "dataset_description", "announcement_title", "announcement_summary", "law_title",
+    "dataset_title", "dataset_description", "announcement_title", "announcement_summary", "law_title", "change_title",
 })
 # 어떤 정책으로도 나갈 수 없는 필드.
 NEVER_EXPORT = frozenset({"team", "person_name", "objection_body", "contact", "review_note"})

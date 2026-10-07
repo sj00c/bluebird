@@ -19,7 +19,7 @@ import psycopg
 from psycopg import sql
 from psycopg.types.json import Jsonb
 
-from . import db
+from . import db, wording
 
 TEMPLATE_VERSION = "v1"
 PORTAL_ROLE = "bb_portal"
@@ -49,6 +49,18 @@ def register_template(migrator_dsn: str, version: str = TEMPLATE_VERSION) -> str
 
 # ---------------------------------------------------------------- core 쪽 수집
 # 각 표: (publish 테이블, 열 목록, core 조회 SQL). 열 목록은 템플릿과 같아야 한다(test_publish가 검사).
+# 아이디어 공개(카드·진단·S)가 살아 있음. 반려·철회된 아이디어의 바뀐 것·weekly_top이 남지 않게 한다.
+# + 지금도 5단계(승인 + 0–4단계 통과)인 아이디어만(collect가 만드는 pg_temp.stage5).
+_IDEA_LIVE = """(SELECT count(DISTINCT pi.scope) FROM core.publication pi
+        WHERE pi.target_type = 'idea' AND pi.target_id = {idea} AND pi.revoked_at IS NULL
+          AND pi.scope IN ('card', 'diagnosis', 'timeliness')) = 3
+        AND {idea} IN (SELECT idea_id FROM pg_temp.stage5)"""
+# 매칭 m이 지금 원인과 맞고, 아이디어 공개가 살아 있음
+_LIVE_FIT = ("""EXISTS (SELECT 1 FROM core.diagnosis dd JOIN core.cause_change_kind ck ON ck.cause = dd."primary"
+                 WHERE dd.idea_id = m.idea_id
+                   AND ck.kind = (SELECT kind FROM core.condition_change WHERE id = m.change_id))
+        AND """ + _IDEA_LIVE.format(idea="m.idea_id"))
+
 QUERIES: dict[str, tuple[tuple[str, ...], str]] = {
     "source": (
         ("id", "name", "license", "url"),
@@ -81,6 +93,7 @@ QUERIES: dict[str, tuple[tuple[str, ...], str]] = {
              JOIN core.source s ON s.id = i.source_id AND s.public_ok
              JOIN core.publication p ON p.target_type = 'idea' AND p.target_id = d.idea_id
                                     AND p.scope = 'diagnosis' AND p.revoked_at IS NULL
+            WHERE """ + _IDEA_LIVE.format(idea="d.idea_id") + """
             ORDER BY 1""",
     ),
     "change": (
@@ -94,7 +107,7 @@ QUERIES: dict[str, tuple[tuple[str, ...], str]] = {
              JOIN core.source s ON s.id = i.source_id AND s.public_ok
              JOIN core.publication p ON p.target_type = 'change_match' AND p.target_id = m.id::text
                                     AND p.scope = 'change' AND p.revoked_at IS NULL
-            WHERE m.status = 'approved'
+            WHERE m.status = 'approved' AND """ + _LIVE_FIT + """
             ORDER BY 1""",
     ),
     "timeliness": (
@@ -106,7 +119,7 @@ QUERIES: dict[str, tuple[tuple[str, ...], str]] = {
              JOIN core.source s ON s.id = i.source_id AND s.public_ok
              JOIN core.publication p ON p.target_type = 'idea' AND p.target_id = t.idea_id
                                     AND p.scope = 'timeliness' AND p.revoked_at IS NULL
-            WHERE t.verdict IN ('now', 'conditional')
+            WHERE t.verdict IN ('now', 'conditional') AND """ + _IDEA_LIVE.format(idea="t.idea_id") + """
             ORDER BY t.idea_id, t.as_of DESC""",
     ),
     "weekly_top": (
@@ -115,7 +128,7 @@ QUERIES: dict[str, tuple[tuple[str, ...], str]] = {
              FROM core.weekly_top w
              JOIN core.idea i ON i.id = w.idea_id AND i.retired_at IS NULL
              JOIN core.source s ON s.id = i.source_id AND s.public_ok
-            WHERE w.week = (SELECT max(week) FROM core.weekly_top)
+            WHERE w.week = (SELECT max(week) FROM core.weekly_top) AND """ + _IDEA_LIVE.format(idea="w.idea_id") + """
             ORDER BY w.rank""",
     ),
     "announcement": (
@@ -126,7 +139,8 @@ QUERIES: dict[str, tuple[tuple[str, ...], str]] = {
                             JOIN core.condition_change c ON c.id = m.change_id
                             JOIN core.publication p ON p.target_type = 'change_match' AND p.target_id = m.id::text
                                                    AND p.scope = 'change' AND p.revoked_at IS NULL
-                           WHERE c.kind = 'announcement' AND c.ref_id = a.id AND m.status = 'approved')
+                           WHERE c.kind = 'announcement' AND c.ref_id = a.id AND m.status = 'approved'
+                             AND """ + _LIVE_FIT + """)
             ORDER BY a.id""",
     ),
     "announcement_match": (
@@ -140,7 +154,7 @@ QUERIES: dict[str, tuple[tuple[str, ...], str]] = {
              JOIN core.source s ON s.id = i.source_id AND s.public_ok
              JOIN core.publication p ON p.target_type = 'change_match' AND p.target_id = m.id::text
                                     AND p.scope = 'change' AND p.revoked_at IS NULL
-            WHERE m.status = 'approved'""",
+            WHERE m.status = 'approved' AND """ + _LIVE_FIT,
     ),
 }
 # 적재 순서(FK)
@@ -150,6 +164,11 @@ EVIDENCE_COLUMNS = ("id", "kind", "url", "title", "excerpt", "observed_at")
 
 
 def collect(core_conn) -> dict[str, list[tuple]]:
+    # 승인 뒤 단계 조건이 깨지면(확인 안 된 바뀐 것, 미래 시행일, S 낮아짐) 진단·바뀐 것·S·Top은 나가지 않는다.
+    core_conn.execute("DROP TABLE IF EXISTS pg_temp.stage5")
+    core_conn.execute(
+        """CREATE TEMP TABLE stage5 AS SELECT idea_id FROM core.funnel_stage(
+             coalesce((SELECT max(id) FROM core.catalog_snapshot), -1)) WHERE s5""")
     data: dict[str, list[tuple]] = {}
     for table, (_, q) in QUERIES.items():
         data[table] = [tuple(r) for r in core_conn.execute(q)]
@@ -166,7 +185,26 @@ def collect(core_conn) -> dict[str, list[tuple]]:
         empty = [r[0] for r in data[t] if not r[-1] and not (t == "diagnosis" and r[1] == "U")]
         if empty:
             raise PublishError(f"{t}: {len(empty)} row(s) without evidence, e.g. {empty[:3]}")
+    # 우리가 쓴 글(카드 요약·진단·바뀐 것·S 조건)에 금지 표현이 있으면 반영하지 않는다(원문 인용·제목은 제외).
+    for t, cols in OWN_TEXT.items():
+        idx = [columns(t).index(c) for c in cols]
+        for r in data[t]:
+            for i in idx:
+                vals = r[i] if isinstance(r[i], list) else [r[i]]
+                for v in vals:
+                    if hit := wording.find(v if isinstance(v, str) else None):
+                        raise PublishError(f"{t}.{columns(t)[i]} of {r[0]}: forbidden wording {hit!r}")
     return data
+
+
+# 공개되는 우리 글(내부 작성). evidence.excerpt·원문 제목·본문은 인용이라 범위 밖.
+OWN_TEXT = {
+    "idea": ("problem", "solution"),
+    "diagnosis": ("rationale",),
+    "change": ("what_changed", "how_now"),
+    "timeliness": ("resolve_condition",),
+    "announcement_match": ("how_now",),
+}
 
 
 def columns(table: str) -> tuple[str, ...]:
@@ -239,6 +277,13 @@ def push(*, core_dsn: str, publish_dsn: str, version: str = TEMPLATE_VERSION) ->
             )
             pub.commit()
             _drop_prev(pub)
+        # DMZ 커밋이 끝난 뒤에만 반영 완료로 기록(단계 6은 이 기록과 revived_ids를 본다)
+        changed = {r[1] for r in data["change"]} | {r[1] for r in data["announcement_match"]}  # 둘 다 idea_id
+        revived = sorted({r[0] for r in data["diagnosis"]} & {r[0] for r in data["timeliness"]} & changed)
+        with db.connect(core_dsn) as core:
+            core.execute("UPDATE core.publish_snapshot SET applied_at=now(), revived_ids=%s WHERE id=%s",
+                         (revived, snap_id))
+            core.commit()
         stats.update({"snapshot_id": snap_id, **counts})
     print(f"[publish] snapshot {snap_id}: {counts}")
     return {"snapshot_id": snap_id, **counts}

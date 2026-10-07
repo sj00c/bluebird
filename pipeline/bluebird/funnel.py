@@ -16,8 +16,8 @@ from datetime import date, timedelta
 
 from psycopg.types.json import Jsonb
 
-from . import db, score, wording
-from .egress import Egress, EgressBlocked
+from . import db, llm, score, wording
+from .egress import Egress, EgressBlocked, EgressError
 from .signals.catalog import today_kst
 
 # ----------------------------------------------------------------------------- 공통
@@ -233,45 +233,91 @@ def diagnose_set(*, dsn: str, idea_id: str, cause: str, rationale: str, by: str,
     wording.check(rationale, *(e[1] for e in evidence))
     with db.connect(dsn) as conn:
         _idea(conn, idea_id)
+        prev = conn.execute('SELECT "primary" FROM core.diagnosis WHERE idea_id=%s', (idea_id,)).fetchone()
+        if prev is not None and prev[0] != cause:  # 원인이 바뀌면 이전 원인의 근거는 떼어 낸다
+            conn.execute("DELETE FROM core.x_evidence WHERE target_type='diagnosis' AND target_id=%s", (idea_id,))
         for url, excerpt in evidence:
             _evidence(conn, kind="manual", url=url, title=None, excerpt=excerpt, observed_at=today_kst(),
                       target_type="diagnosis", target_id=idea_id)
         conn.execute(
-            """INSERT INTO core.diagnosis (idea_id, "primary", secondary, rationale, extractor, model)
-               VALUES (%s,%s,%s,%s,'human',%s)
+            """INSERT INTO core.diagnosis (idea_id, "primary", secondary, rationale, extractor, model, decided_by)
+               VALUES (%s,%s,%s,%s,'human',%s,%s)
                ON CONFLICT (idea_id) DO UPDATE SET "primary"=EXCLUDED."primary", secondary=EXCLUDED.secondary,
-                 rationale=EXCLUDED.rationale, extractor='human', model=EXCLUDED.model, decided_at=now()""",
-            (idea_id, cause, secondary, rationale, f"human:{by}"),
+                 rationale=EXCLUDED.rationale, extractor='human', model=EXCLUDED.model,
+                 decided_by=EXCLUDED.decided_by, decided_at=now()""",
+            (idea_id, cause, secondary, rationale, f"human:{by}", by),
         )
         conn.commit()
 
 
 # ----------------------------------------------------------------------------- 3 바뀐 것
 
+LAW_API = "https://www.law.go.kr/DRF/lawService.do"
+
+
+def _xml_tag(text: str, tag: str) -> str | None:
+    m = re.search(rf"<{tag}>\s*(?:<!\[CDATA\[)?(.*?)(?:\]\]>)?\s*</{tag}>", text, re.DOTALL)
+    return m.group(1).strip() if m else None
+
+
+def verify_law(egress: Egress, *, mst: str, effective: date) -> tuple[dict, int | None]:
+    """국가법령정보 시행일 법령 본문(eflaw)을 egress로 열어 공포번호·공포일·시행일자를 읽는다.
+    시행일자가 effective와 다르면 거부. OC는 LAW_OC(없으면 시험 계정 test)."""
+    r = egress.get("collect", LAW_API,
+                   params={"target": "eflaw", "MST": mst, "efYd": effective.strftime("%Y%m%d"), "type": "XML"},
+                   path_template="/DRF/lawService.do", secret_params={"OC": os.environ.get("LAW_OC") or "test"})
+    if r.status != 200:
+        raise ValueError(f"law API HTTP {r.status}")
+    t = r.text
+    got = {"law_name": _xml_tag(t, "법령명_한글"), "promulgation_no": _xml_tag(t, "공포번호"),
+           "promulgated": _xml_tag(t, "공포일자"), "effective": _xml_tag(t, "시행일자"), "mst": mst}
+    if not got["promulgation_no"] or not got["effective"]:
+        raise ValueError(f"law API MST={mst}: no 공포번호/시행일자 in response")
+    if got["effective"] != effective.strftime("%Y%m%d"):
+        raise ValueError(f"law API 시행일자 {got['effective']} != --occurred-at {effective}")
+    return got, r.egress_call_id
+
+
 def change_add(*, dsn: str, kind: str, url: str, title: str, occurred_at: date, by: str,
-               summary: str | None = None, ref_id: str | None = None, egress: Egress | None = None) -> str:
+               summary: str | None = None, ref_id: str | None = None, egress: Egress | None = None,
+               law_mst: str | None = None) -> str:
     """사람이 근거 URL로 바뀐 것(법령 시행·정책·기술·공고)을 넣는다. dataset_opened는 카탈로그 신호로만 생긴다.
-    URL이 egress 화이트리스트 호스트면 실제로 열어 확인한다(열리지 않으면 거부)."""
+
+    확인 상태(verify_status)를 남긴다:
+    - law_effective: --law-mst로 국가법령정보 API를 egress로 열어 시행일자를 대조 → api_verified. 깔때기는 이것만 쓴다.
+    - 화이트리스트 호스트 URL: egress로 열어 200이면 fetched, 아니면 거부.
+    - 그 밖의 호스트: attested(사람 진술, 열어 보지 않음)."""
     if kind not in ("law_effective", "policy_news", "tech", "announcement"):
         raise ValueError("kind must be law_effective|policy_news|tech|announcement (dataset_opened는 카탈로그 신호만)")
     wording.check(title, summary)
-    if egress is not None:
+    status, detail, call_id = "attested", None, None
+    if kind == "law_effective":
+        if not law_mst or egress is None:
+            raise ValueError("law_effective needs --law-mst (법령일련번호): 시행일자를 국가법령정보 API로 대조한다")
+        detail, call_id = verify_law(egress, mst=law_mst, effective=occurred_at)
+        status = "api_verified"
+        ref_id = ref_id or f"law:{law_mst}:{detail['effective']}"
+    elif egress is not None:
         try:
             r = egress.get("collect", url, path_template="/human-evidence")
-            if r.status >= 400:
-                raise ValueError(f"{url} returned HTTP {r.status}")
         except EgressBlocked as e:
             if "not in allowlist" not in str(e):
                 raise
+        else:
+            if r.status != 200:
+                raise ValueError(f"{url} returned HTTP {r.status}")
+            status, detail, call_id = "fetched", {"http_status": r.status, "bytes": len(r.content)}, r.egress_call_id
     ref = ref_id or url
     cid = f"{kind}:{ref}"[:300]
     with db.connect(dsn) as conn:
         conn.execute(
             """INSERT INTO core.condition_change (id, kind, ref_id, occurred_at, tier, url, title, origin, added_by,
-                 summary) VALUES (%s,%s,%s,%s,NULL,%s,%s,'human',%s,%s)
+                 summary, verify_status, verify_detail, egress_call_id)
+               VALUES (%s,%s,%s,%s,NULL,%s,%s,'human',%s,%s,%s,%s,%s)
                ON CONFLICT (kind, ref_id) DO UPDATE SET title=EXCLUDED.title, url=EXCLUDED.url,
-                 occurred_at=EXCLUDED.occurred_at, summary=EXCLUDED.summary""",
-            (cid, kind, ref, occurred_at, url, title, by, summary),
+                 occurred_at=EXCLUDED.occurred_at, summary=EXCLUDED.summary, verify_status=EXCLUDED.verify_status,
+                 verify_detail=EXCLUDED.verify_detail, egress_call_id=EXCLUDED.egress_call_id""",
+            (cid, kind, ref, occurred_at, url, title, by, summary, status, Jsonb(detail) if detail else None, call_id),
         )
         conn.commit()
     return cid
@@ -382,6 +428,70 @@ def match_set(*, dsn: str, change_id: str, idea_id: str, verdict: str, what_chan
     return mid
 
 
+M1_VERSION = "m1-v1"
+M1_SYSTEM = ("You judge whether a public change (a dataset release, law, announcement, policy or technology) removes "
+             "the stated barrier of a past contest idea. Use only the given fields. Answer in Korean, JSON only.")
+M1_INSTRUCTION = (
+    'Return {"verdict": "yes"|"partial"|"no", "what_changed": [short Korean phrases], "how_now": "one Korean '
+    'sentence on what the idea can do now"}. Never claim something did not exist before; say only what is '
+    'available now. If unsure, answer "no".')
+
+
+def match_judge(*, dsn: str, limit: int = 50, egress: Egress | None = None) -> dict:
+    """후보 매칭을 상용 LLM이 판정(키가 있을 때만, egress 경유). 보내는 것은 아이디어 제목·문제와 바뀐 것의
+    제목뿐(이벤트 URL은 보내지 않고 근거로만 남는다). 결과는 제안: status는 candidate 그대로, 사람이 승인한다."""
+    prov = llm.provider()
+    if prov is None:
+        print("[match] judge: key_required (OPENAI_API_KEY/ANTHROPIC_API_KEY 없음) — `match set`으로 사람이 판정")
+        return {"judged": 0, "key_required": True}
+    own = egress is None
+    eg = egress or Egress.from_dsn(dsn)
+    n = {"yes": 0, "partial": 0, "no": 0, "failed": 0}
+    try:
+        with db.pipeline_run(dsn, "match-judge") as stats, db.connect(dsn) as conn:
+            rows = conn.execute(
+                """SELECT m.id, i.source_id, k.title, k.problem, c.kind, c.title, c.url, c.occurred_at
+                     FROM core.change_match m
+                     JOIN core.condition_change c ON c.id = m.change_id
+                     JOIN core.idea i ON i.id = m.idea_id AND i.retired_at IS NULL
+                     JOIN core.idea_card k ON k.idea_id = m.idea_id
+                    WHERE m.llm_verdict IS NULL AND m.status = 'candidate'
+                    ORDER BY m.similarity DESC NULLS LAST, m.id LIMIT %s""", (limit,)).fetchall()
+            for mid, sid, title, problem, kind, ctitle, curl, cat in rows:
+                fields = {"title": (sid, title), "change_title": (sid, f"[{kind}] {ctitle}")}
+                if problem:
+                    fields["problem"] = (sid, problem)
+                try:
+                    data, _ = llm.ask_json(eg, prov, system=M1_SYSTEM, instruction=M1_INSTRUCTION, fields=fields,
+                                           max_tokens=400)
+                    verdict = data.get("verdict")
+                    if verdict not in ("yes", "partial", "no"):
+                        raise ValueError(f"bad verdict {verdict!r}")
+                    what = [str(w)[:200] for w in data.get("what_changed") or []][:5]
+                    how = (str(data.get("how_now") or "").strip()[:500]) or None
+                    try:
+                        wording.check(how, *what)
+                    except wording.WordingError:
+                        what, how = [], None  # 금지 표현이면 문장은 버리고 판정만 남긴다
+                except (EgressError, ValueError, KeyError, TypeError, AttributeError):
+                    n["failed"] += 1
+                    continue
+                conn.execute(
+                    """UPDATE core.change_match SET llm_verdict=%s, what_changed=%s, how_now=%s, model=%s,
+                         prompt_version=%s, status=CASE WHEN %s='no' THEN 'rejected' ELSE status END WHERE id=%s""",
+                    (verdict, what, how, f"{prov.name}:{prov.model}", M1_VERSION, verdict, mid))
+                _evidence(conn, kind=kind, url=curl, title=ctitle, excerpt=None, observed_at=cat,
+                          target_type="change_match", target_id=str(mid))
+                conn.commit()
+                n[verdict] += 1
+            stats.update(n)
+    finally:
+        if own:
+            eg.close()
+    print(f"[match] judge {n}")
+    return n
+
+
 # ----------------------------------------------------------------------------- 4 S
 
 def score_set(*, dsn: str, idea_id: str, scores: dict[str, int | None], evidence: dict[str, str], by: str,
@@ -395,18 +505,21 @@ def score_set(*, dsn: str, idea_id: str, scores: dict[str, int | None], evidence
         _idea(conn, idea_id)
         kinds = {r[0] for r in conn.execute(
             """SELECT c.kind FROM core.change_match m JOIN core.condition_change c ON c.id = m.change_id
+                 JOIN core.diagnosis d ON d.idea_id = m.idea_id
+                 JOIN core.cause_change_kind ck ON ck.cause = d."primary" AND ck.kind = c.kind
                 WHERE m.idea_id=%s AND m.llm_verdict IN ('yes','partial','human') AND m.status <> 'rejected'""",
             (idea_id,))}
         sc = score.compute(scores, kinds)
         conn.execute(
             """INSERT INTO core.timeliness (idea_id, as_of, tech, data, regulation, policy, weights, n_scored, s,
-                 verdict, resolve_condition) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+                 verdict, resolve_condition, scored_by) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
                ON CONFLICT (idea_id, as_of) DO UPDATE SET tech=EXCLUDED.tech, data=EXCLUDED.data,
                  regulation=EXCLUDED.regulation, policy=EXCLUDED.policy, weights=EXCLUDED.weights,
                  n_scored=EXCLUDED.n_scored, s=EXCLUDED.s, verdict=EXCLUDED.verdict,
-                 resolve_condition=EXCLUDED.resolve_condition""",
+                 resolve_condition=EXCLUDED.resolve_condition, scored_by=EXCLUDED.scored_by,
+                 created_at=now()""",
             (idea_id, as_of, scores.get("tech"), scores.get("data"), scores.get("regulation"), scores.get("policy"),
-             Jsonb(score.DEFAULT_WEIGHTS), sc.n_scored, sc.s, sc.verdict, sc.resolve_condition),
+             Jsonb(score.DEFAULT_WEIGHTS), sc.n_scored, sc.s, sc.verdict, sc.resolve_condition, by),
         )
         for axis, url in evidence.items():
             if scores.get(axis) is not None:
@@ -456,11 +569,11 @@ def approve(*, dsn: str, idea_id: str, by: str, note: str | None = None) -> dict
 
 
 def reject(*, dsn: str, idea_id: str, by: str, note: str) -> None:
+    """반려: 아이디어·바뀐 것 공개를 모두 철회하고, 승인된 매칭은 후보로, weekly_top에서 뺀다."""
     with db.connect(dsn) as conn:
         conn.execute("INSERT INTO core.review (target_type, target_id, reviewer, round, decision, note)"
                      " VALUES ('idea',%s,%s,'final','reject',%s)", (idea_id, by, note))
-        conn.execute("UPDATE core.publication SET revoked_at=now() WHERE target_type='idea' AND target_id=%s"
-                     " AND revoked_at IS NULL", (idea_id,))
+        conn.execute("SELECT core.revoke_idea(%s)", (idea_id,))
         conn.commit()
 
 
