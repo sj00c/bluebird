@@ -10,7 +10,7 @@ HERE = Path(__file__).parent
 OUT = HERE / "architecture.html"
 PDF = HERE / "architecture.pdf"
 CHROME = "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
-W, H = 1600, 848
+W, H = 1600, 880
 
 ZONE_STROKE = "#34508a"
 ZONE_LABEL = "#d0312d"
@@ -112,12 +112,21 @@ def note(x, y, w, h, title, body, numbered=False):
             parts.append(t(x + 16, yy, "- " + line, 12))
 
 
+def subnet(x, y, w, h, text):
+    """업무망 안쪽의 별도 구간(콘솔망·관리망). 점선 파란 상자."""
+    zones.append(f'<rect x="{x}" y="{y}" width="{w}" height="{h}" rx="12" fill="none" '
+                 f'stroke="{NEW}" stroke-width="1.2" stroke-dasharray="6,4"/>')
+    zones.append(t(x + 16, y + 20, text, 12, NEW, weight=600))
+
+
 # ---------------- 구역 ----------------
 zone(32, 96, 144, 392, "사용자 Zone", FILL_ZONE)
 zone(208, 96, 384, 392, "DMZ Zone (서비스)", FILL_ZONE)
 zone(640, 96, 928, 480, "내부 서버 (업무망)", FILL_INT)
 zone(640, 616, 352, 192, "DMZ Zone (외부 연계)", FILL_LINK)
 zone(1040, 616, 528, 192, "외부 Zone", FILL_ZONE)
+subnet(1024, 108, 528, 168, "콘솔망 (콘솔 · API만 연결, 외부 연결 없음)")
+subnet(1328, 316, 224, 150, "관리망")
 
 # ---------------- 사용자 ----------------
 parts.append(icon("laptop", 80, 160, 48, "#1f2937"))
@@ -125,62 +134,68 @@ parts.append(t(104, 232, "국민", 14, "#111827", "middle", 600))
 parts.append(t(104, 250, "(일반 이용자)", 11, GRAY, "middle"))
 
 # ---------------- DMZ (서비스) ----------------
-card(256, 136, 288, 88, "old", [("server", "기관 홈페이지")], ["'아이디어 풀' 메뉴 추가"])
-card(256, 256, 288, 96, "new", [("server", "Nginx (파랑새 화면)")], ["SSL 암호화 · 요청 검사"])
-card(256, 384, 288, 88, "new", [("database", "공개용 DB")], ["승인된 자료만 · 읽기 전용"])
+card(256, 136, 288, 88, "new", [("server", "Nginx (WAF 뒤)")], ["SSL 암호화 · 요청 검사"])
+card(256, 256, 288, 88, "new", [("server", "포털 (Next.js)")], ["화면 · 조회 · 이의 접수"])
+card(256, 384, 288, 88, "new", [("database", "공개용 DB")], ["승인된 자료 · 이의 접수함"])
 
 # ---------------- 내부 서버 ----------------
 card(688, 128, 272, 136, "plain", [("shield", "공개 · 반출 정책")],
      ["담당자 승인 전에는 비공개", "팀명 · 개인정보 삭제", "외부 AI에는 반출 허용 자료만"])
-card(688, 320, 272, 128, "new", [("server", "Backend (FastAPI)")], ["수집 · AI 진단 · 검토", "승인 자료를 공개용 DB로 반영"])
+card(688, 320, 272, 128, "new", [("server", "백엔드 작업 (Python)")], ["수집 · AI 진단 · 점수 · 깔때기", "공개본 밀어넣기 · 이의 가져오기"])
+card(1040, 144, 256, 120, "new", [("server", "백엔드 API (FastAPI)")], ["토큰 확인 · 역할별 권한", "내부 DB만 사용"])
+card(1344, 144, 192, 120, "new", [("server", "관리자 콘솔")], ["검토 · 승인 · 2인 코딩", "이의 처리"])
 card(1040, 320, 256, 128, "new", [("database", "내부 DB (PostgreSQL)")], ["아이디어 · 진단 카드", "근거 URL · 승인 이력"])
-parts.append(icon("user", 1400, 344, 48, "#1f2937"))
-parts.append(t(1424, 416, "관리자", 14, "#111827", "middle", 600))
-parts.append(t(1424, 434, "(내부 PC)", 11, GRAY, "middle"))
+parts.append(icon("user", 1416, 350, 48, "#1f2937"))
+parts.append(t(1440, 416, "관리자 PC", 14, "#111827", "middle", 600))
+parts.append(t(1440, 434, "(업무망 내부)", 11, GRAY, "middle"))
 
 # ---------------- DMZ (외부 연계) · 외부 ----------------
-card(672, 664, 288, 112, "new", [("shield", "DMZ 포워드 프록시")], ["로깅 · SSL · 감사", "화이트리스트"])
+card(672, 664, 288, 112, "new", [("shield", "DMZ 포워드 프록시")], ["허용 도메인만 · 모든 호출 기록"])
 card(1072, 664, 464, 112, "plain", [("internet", "외부 API")],
-     ["공공데이터포털 · KIPRIS · 법제처 API", "OpenAI · Anthropic API"])
+     ["공공데이터포털 · 법제처 · KIPRIS 등", "OpenAI · Anthropic (허용 자료만)"])
 
 # ---------------- 흐름 ----------------
-arrow("M 140,180 H 252", NEW)                       # ① 국민 → 홈페이지 → Nginx
+arrow("M 140,180 H 252", NEW)                       # ① 국민 → WAF → Nginx
 step(196, 180, 1)
-label(196, 160, "HTTPS", "middle", "#374151")
+label(196, 160, "HTTPS · WAF", "middle", "#374151", FILL_ZONE)
 arrow("M 400,224 V 252", NEW)
-label(412, 243, "메뉴 클릭", "start", NEW, FILL_ZONE)
-arrow("M 400,352 V 380", NEW, both=True)            # ② Nginx ↔ 공개용 DB
-step(400, 366, 2, "조회 (DMZ 안에서 끝)", "right", bg=FILL_ZONE)
-arrow("M 684,428 H 548")                            # ③ Backend → 공개용 DB (한 방향)
-step(616, 428, 3, "승인 자료 반영")
-label(616, 460, "업무망 → DMZ 한 방향", "middle", "#374151")
+label(412, 243, "요청 전달", "start", NEW, FILL_ZONE)
+arrow("M 400,344 V 380", NEW, both=True)            # ② 포털 ↔ 공개용 DB
+step(400, 362, 2, "조회 · 이의 접수 (DMZ 안)", "right", bg=FILL_ZONE)
+arrow("M 684,392 H 548")                            # ③ 업무망 → 공개용 DB (밀어넣기)
+step(616, 392, 3, "공개본 밀어넣기", bg=FILL_ZONE)
+arrow("M 548,444 H 684")                            # ④ 업무망이 연결해 이의를 가져오고 삭제
+step(616, 444, 4, "이의 가져오기·삭제", bg=FILL_ZONE)
+label(656, 480, "연결은 항상 업무망이 연다", "start", "#374151", FILL_INT)
 lines_.append(f'<line x1="824" y1="264" x2="824" y2="320" stroke="{GRAY}" stroke-width="1.2" stroke-dasharray="2,3"/>')
-arrow("M 964,384 H 1036", GRAY, both=True)          # Backend ↔ 내부 DB
+arrow("M 964,384 H 1036", GRAY, both=True)          # 작업 ↔ 내부 DB
 label(1000, 368, "저장 · 조회", "middle", "#374151", FILL_INT)
-arrow("M 880,452 V 660", GRAY, both=True)           # ④ Backend ↔ 프록시
-step(880, 528, 4, "외부 API 조회 (수집 · AI 분석)", "right", bg=FILL_INT)
+arrow("M 1168,264 V 316", GRAY, both=True)          # API ↔ 내부 DB
+arrow("M 1340,204 H 1300", NEW)                     # 콘솔 → API
+arrow("M 880,452 V 660", GRAY, both=True)           # ⑤ 작업 ↔ 프록시
+step(880, 528, 5, "외부 조회 (수집 · AI 분석)", "right", bg=FILL_INT)
 arrow("M 964,720 H 1068", GRAY, both=True)          # 프록시 ↔ 외부 API
-arrow("M 1384,384 H 1300", NEW)                     # ⑤ 관리자 → 검토 · 승인
-step(1342, 384, 5, "검토 · 승인", bg=FILL_INT)
+arrow("M 1440,346 V 268", NEW)                      # ⑥ 관리자 PC → 콘솔
+step(1440, 300, 6, "콘솔 접속", "right", bg=FILL_INT)
 
 # ---------------- 설명 ----------------
 note(32, 512, 560, 138, "<DMZ Zone>", [
-    "기관 홈페이지에는 '아이디어 풀' 메뉴만 추가",
-    "국민 요청은 DMZ 안에서 끝남 (내부 서버로 들어가지 않음)",
-    "공개용 DB에는 승인된 자료만 두고, 화면은 읽기 전용",
-    "이의 제기는 DMZ에 보관 → 내부 서버가 가져감",
+    "국민 요청은 DMZ 안에서 끝남 (업무망으로 들어오지 않음)",
+    "포털은 공개용 DB만 읽고, 이의 제기는 접수함에만 넣음",
+    "업무망으로 들어오는 연결은 0 — 연결은 항상 업무망이 엶",
+    "DMZ에서 업무망으로 거는 연결은 모두 차단",
 ])
-note(32, 666, 560, 158, "<처리 흐름>", [
-    "국민이 기관 홈페이지의 파랑새 메뉴로 접속 (HTTPS)",
-    "Nginx는 DMZ의 공개용 DB만 조회",
-    "관리자가 승인한 자료만 내부 서버 → 공개용 DB로 반영 (한 방향)",
-    "자료 수집 · AI 분석은 DMZ 프록시를 거쳐 외부 API 조회",
-    "관리자는 내부 PC에서 검토 · 승인",
+note(32, 666, 560, 180, "<처리 흐름>", [
+    "국민이 WAF를 거쳐 Nginx로 접속 (HTTPS)",
+    "포털은 DMZ의 공개용 DB만 조회 · 이의 접수",
+    "승인된 자료를 업무망이 공개용 DB로 밀어넣음 (한 방향)",
+    "업무망이 접수함의 이의를 가져오고 DMZ에서 삭제",
+    "외부 조회 · AI 분석은 업무망 → DMZ 포워드 프록시",
+    "관리자 PC는 관리망에서 콘솔망의 콘솔로만 접속",
 ], numbered=True)
 
 # 범례
-tag(1360, 44, "old"); parts.append(t(1408, 57, "기존", 12))
-tag(1456, 44, "new"); parts.append(t(1504, 57, "신규", 12))
+tag(1496, 44, "new"); parts.append(t(1544, 57, "신규", 12))
 
 symbols = "\n".join(
     f'<symbol id="i-{k}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" '

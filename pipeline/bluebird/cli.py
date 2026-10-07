@@ -11,7 +11,7 @@ import sys
 from datetime import date
 from pathlib import Path
 
-from . import announce, cards, db, funnel, ingest, objections, publish, sources_check
+from . import announce, cards, db, funnel, ingest, kpi, objections, publish, sources_check
 from .signals import catalog
 
 
@@ -97,6 +97,34 @@ def main(argv: list[str] | None = None) -> int:
     x.add_argument("--seed", type=int, required=True)
     x.add_argument("--sample-id")
 
+    x = sub.add_parser("kappa", help="G3 κ: 표본 2인 코딩 일치도(표본이 없으면 --size·--seed로 만든다)")
+    x.add_argument("--dsn", default=_env("BB_DSN"))
+    x.add_argument("--sample", type=int, default=100, help="표본 크기")
+    x.add_argument("--seed", type=int, required=True)
+    x.add_argument("--sample-id")
+    x.add_argument("--json", action="store_true")
+
+    ev = sub.add_parser("eval", help="평가").add_subparsers(dest="sub", required=True)
+    x = ev.add_parser("goldset", help="G4 흔적 골드셋(파일럿 50건) 혼동행렬·macro-F1. 파일은 읽기만(팀명 저장 안 함)")
+    x.add_argument("--dsn", default=_env("BB_DSN"))
+    x.add_argument("--gold", required=True, help="CSV 경로, '-'면 표준입력")
+    x.add_argument("--baseline", action="store_true", help="이번 결과를 기준선으로 기록")
+
+    vf = sub.add_parser("verify", help="검증").add_subparsers(dest="sub", required=True)
+    x = vf.add_parser("top20", help="G5 Top 20 = 전문가 승인 = 공개")
+    x.add_argument("--dsn", default=_env("BB_DSN"))
+    x.add_argument("--publish-dsn", default=_env("BB_PUBLISH_DSN"))
+    x.add_argument("--week", type=date.fromisoformat)
+
+    kp = sub.add_parser("kpi", help="KPI").add_subparsers(dest="sub", required=True)
+    x = kp.add_parser("report", help="G1–G13 현황표(사람 입력 대기 = human_blocked)")
+    x.add_argument("--dsn", default=_env("BB_DSN"))
+    x.add_argument("--publish-dsn", default=_env("BB_PUBLISH_DSN"))
+    x.add_argument("--inbox-dsn", default=_env("BB_INBOX_DSN"))
+    x.add_argument("--p95-ms", type=float, help="deploy/test/p95.sh 결과")
+    x.add_argument("--week", type=date.fromisoformat)
+    x.add_argument("--json", action="store_true")
+
     _funnel_parsers(sub)
     a = ap.parse_args(argv)
     if a.cmd in FUNNEL_CMDS:
@@ -136,6 +164,34 @@ def main(argv: list[str] | None = None) -> int:
     elif a.cmd == "coding":
         _require(ap, a, "dsn")
         objections.make_sample(dsn=a.dsn, size=a.size, seed=a.seed, sample_id=a.sample_id)
+    elif a.cmd == "kappa":
+        _require(ap, a, "dsn")
+        sid = a.sample_id or f"k{a.sample}-s{a.seed}"
+        with db.connect(a.dsn) as conn:
+            exists = conn.execute("SELECT 1 FROM core.coding_sample WHERE sample_id=%s LIMIT 1", (sid,)).fetchone()
+        if not exists:
+            objections.make_sample(dsn=a.dsn, size=a.sample, seed=a.seed, sample_id=sid)
+        r = kpi.kappa(dsn=a.dsn, sample_id=sid)
+        print(kpi.dumps(r) if a.json else
+              f"[kappa] {sid}: κ={r['kappa']} 코딩 {r['coded_pairs']}/{r['size']} "
+              f"(A {r['coded_a']}, B {r['coded_b']}) 코드별 {r['per_code_agreement']} U {r['u_share']} → {r['status']}")
+    elif a.cmd == "eval":
+        _require(ap, a, "dsn")
+        text = sys.stdin.read() if a.gold == "-" else Path(a.gold).read_text(encoding="utf-8-sig")
+        print(kpi.dumps(kpi.goldset(dsn=a.dsn, gold_csv=text, baseline=a.baseline)))
+    elif a.cmd == "verify":
+        _require(ap, a, "dsn", "publish_dsn")
+        r = kpi.verify_top20(dsn=a.dsn, publish_dsn=a.publish_dsn, week=a.week)
+        print(kpi.dumps(r))
+        return 0 if r["status"] in (kpi.PASS, kpi.HUMAN) else 1
+    elif a.cmd == "kpi":
+        _require(ap, a, "dsn", "publish_dsn")
+        rows = kpi.report(dsn=a.dsn, publish_dsn=a.publish_dsn, inbox_dsn=a.inbox_dsn, p95_ms=a.p95_ms, week=a.week)
+        if a.json:
+            print(kpi.dumps(rows))
+        else:
+            kpi.print_report(rows)
+        return 1 if any(r["status"] == kpi.FAIL for r in rows) else 0
     elif a.cmd == "publish":
         _require(ap, a, "dsn", "publish_dsn")
         publish.push(core_dsn=a.dsn, publish_dsn=a.publish_dsn)

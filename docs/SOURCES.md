@@ -4,6 +4,39 @@
 기획서 목표 규모 3.9만 건. 아래 "확보" 표가 지금 손에 있는 것, 나머지는 수집 후보다.
 공공데이터포털 스캔 원자료: `data/opendata/candidates.tsv` (생성: `pipeline/tools/opendata_scan.py`).
 
+## 실측 점검 (sources check, 2026-10-07)
+
+`bluebird sources check`가 소스마다 실제로 불러 보고 `core.source_check`에 남긴 최신 결과다(소스별 마지막 1행). 키가 오면 같은 명령을 다시 돌린다.
+
+| 소스 | 상태 | 건수 | HTTP |
+|---|---|---|---|
+| kipris_contest_idea_bulk | ok | 26,434 | |
+| gov_startup_prelim_awards | ok | 2,190 | |
+| science_museum_awards | ok | 970 | |
+| law_drf_eflaw | ok | 169,340 | 200 |
+| mafra_agrifood_contest | ok | 92 | |
+| public_design_ideas | ok | 72 | |
+| gov_startup_final_awards | ok | 70 | |
+| datagokr_catalog_15062804 | ok | | 200 |
+| kipris_plus_patent | key_required | | 200 (키 없음) |
+| kstartup_announcement_15125364 | key_required | | 401 |
+| naver_search_news | key_required | | 401 |
+| openai_api | key_required | | 401 |
+| anthropic_api | key_required | | 401 |
+| acrc_public_proposal_15059115 | key_required | | 401 |
+| bizinfo_announcement | key_required | | 200 (키 없음) |
+| gukmin_saenggakham | blocked | | |
+| idearo_ipmarket | blocked | | |
+| modu_idea | blocked | | |
+
+상태 뜻
+
+- **ok**: 실제로 불러와졌다. 파일은 행 수, 외부 서비스는 HTTP 응답을 확인했다.
+- **key_required**: 서비스는 살아 있으나 키가 아직 없다. 키가 오기 전에는 사람이 근거 URL을 직접 넣는 경로(공고·바뀐 것·흔적 입력)로 간다. 키가 없다는 사실을 그대로 기록하고 값을 지어내지 않는다.
+- **blocked**: 약관 또는 허용 도메인 밖이라 수집하지 않는다. 제공신청·협약 대상이다.
+
+키가 아직 없는 곳: K-Startup, NAVER, KIPRIS Plus, OpenAI, Anthropic, 국민권익위, 기업마당.
+
 ## 1. 확보 (로컬 파일)
 
 | 소스 | 건수 | 내용 | 이용조건 | 적재 |

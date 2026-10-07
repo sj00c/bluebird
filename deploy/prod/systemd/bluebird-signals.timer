@@ -1,0 +1,12 @@
+# 업무망 호스트. 매주 월요일 03:00 목록개방현황 내려받기(바뀐 것 신호).
+[Unit]
+Description=bluebird signals timer
+
+[Timer]
+OnCalendar=Mon *-*-* 03:00:00 Asia/Seoul
+RandomizedDelaySec=10m
+Persistent=true
+Unit=bluebird-job@signals.service
+
+[Install]
+WantedBy=timers.target

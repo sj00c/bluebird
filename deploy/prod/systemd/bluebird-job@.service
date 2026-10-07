@@ -1,10 +1,13 @@
-# 파이프라인 단계 1회 실행 (구역 공통 템플릿). 인스턴스 이름 = 단계 이름.
-#   z1-collect  : bluebird-job@collect.service
-#   z2-app      : bluebird-job@import-core.service, bluebird-job@publish.service
-#   z3-web      : bluebird-job@import-publish.service
-# 이미지 bluebird/pipeline:<버전>은 망연계로 반입 후 서명 검증하고 podman load로 등록한다.
+# 업무망 호스트(backend-jobs). 파이프라인 작업 1회 실행 템플릿. 인스턴스 이름 = 작업 이름.
+#   bluebird-job@ingest.service          : bluebird ingest
+#   bluebird-job@signals.service         : bluebird signals catalog-fetch --out-dir ...
+#   bluebird-job@publish.service         : bluebird publish
+#   bluebird-job@pull-objections.service : bluebird objections pull
+# 실행할 명령은 /etc/bluebird/<인스턴스>.env 의 BB_JOB_ARGS 로 정한다(deploy/prod/env.example).
+# 연결은 모두 이 호스트가 연다. 외부 조회는 egress 모듈을 거쳐 DMZ 포워드 프록시로만 나간다.
+# 이미지 bluebird/pipeline:<버전>은 기관 반입 절차(서명 검증)를 거친 뒤 podman load로 등록한다.
 [Unit]
-Description=bluebird pipeline stage %i
+Description=bluebird job %i
 Wants=network-online.target
 After=network-online.target
 
@@ -14,10 +17,11 @@ EnvironmentFile=/etc/bluebird/bluebird.env
 EnvironmentFile=/etc/bluebird/%i.env
 ExecStart=/usr/bin/podman run --rm --name bb-%i --network=host \
   --user 10001:10001 --read-only --tmpfs /tmp \
+  --env-file /etc/bluebird/bluebird.env \
   --env-file /etc/bluebird/%i.env \
   -v /srv/bluebird:/srv/bluebird:Z \
   -v /etc/bluebird/keys:/keys:ro,Z \
   -v /etc/bluebird/sources.toml:/config/sources.toml:ro,Z \
-  bluebird/pipeline:${BB_VERSION} %i
+  bluebird/pipeline:${BB_VERSION} $BB_JOB_ARGS
 TimeoutStartSec=6h
 SyslogIdentifier=bluebird-%i

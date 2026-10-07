@@ -1,6 +1,6 @@
-# Z2 처리 서버. 일 1회 06:00 공개 스냅샷 반출(수집 02:00 → 적재·처리 완료 후).
+# 업무망 호스트. 매일 06:00 승인분을 DMZ 공개용 DB로 밀어넣기(수집 02:00 처리가 끝난 뒤).
 [Unit]
-Description=bluebird publish snapshot (Z2)
+Description=bluebird publish timer
 
 [Timer]
 OnCalendar=*-*-* 06:00:00 Asia/Seoul

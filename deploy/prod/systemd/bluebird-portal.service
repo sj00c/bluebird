@@ -1,6 +1,7 @@
-# Z3 웹 서버. 포털(Node.js)은 루프백 3000에서만 수신, 외부는 nginx 443만 노출.
+# DMZ 호스트. 포털(Node.js)은 루프백 3000에서만 수신하고, 외부는 nginx 443만 노출한다.
+# 포털은 공개용 DB만 읽는다(bb_portal). 업무망으로 나가는 연결은 없다.
 [Unit]
-Description=bluebird portal (Z3)
+Description=bluebird portal (DMZ)
 Wants=network-online.target
 After=network-online.target
 

@@ -212,4 +212,14 @@ check "GET /api/v1/ideas/없는ID 404" "[[ \$(code /api/v1/ideas/ID-0000-none) =
 check "DELETE 메서드 405" "[[ \$(curl -s -o /dev/null -w '%{http_code}' -X DELETE http://localhost:$port/pool) == 405 ]]"
 check "보안 헤더(CSP)" "curl -sI http://localhost:$port/pool | grep -qi content-security-policy"
 check "서버 버전 미노출" "! curl -sI http://localhost:$port/pool | grep -qiE '^server: nginx/[0-9]'"
+
+echo "== KPI 현황표(G1–G13, bluebird kpi report)"
+p95f="$(ls -t .runtime/p95-*.txt 2>/dev/null | head -1)"
+p95="$( [[ -n $p95f ]] && python3 -c "import json,sys; print(json.load(open(sys.argv[1]))['p95_ms'])" "$p95f")"
+kpi_out=".runtime/kpi-$(date +%Y%m%d-%H%M%S).txt"
+dc --profile jobs run --rm -T backend-jobs kpi report ${p95:+--p95-ms "$p95"} > "$kpi_out" 2>/dev/null; kpi_rc=$?
+cat "$kpi_out" | sed 's/^/      /'
+check "kpi report 실행, fail 0(사람 대기·키 대기는 human_blocked·key_required로 표시)" "[[ $kpi_rc -eq 0 ]] && grep -q '^G13' $kpi_out"
+check "kpi: 자동 검증 항목 G1·G2·G9·G10·G11·G13 pass" \
+  "[[ \$(grep -E '^(G1|G2|G9|G10|G11|G13) ' $kpi_out | grep -c ' pass ') -eq 6 ]]"
 exit $fail

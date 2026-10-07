@@ -1,6 +1,6 @@
-# 파랑새(Bluebird) 배포 아키텍처 설계 v0.2 — 망분리 반영
+# 파랑새(Bluebird) 배포 아키텍처 설계 v1.0 — 최종 구조(DMZ·업무망)
 
-작성 2026-10-06. 입력: 예선 제출 기획서(`reference/parangsae-src/04_deck_build/output/submitted_proposal_prelim_capital_parangsae.pdf`), 인수인계 패키지(`reference/parangsae-src/`).
+갱신 2026-10-07. 입력: 예선 제출 기획서(`reference/parangsae-src/04_deck_build/output/submitted_proposal_prelim_capital_parangsae.pdf`), 인수인계 패키지(`reference/parangsae-src/`).
 
 ---
 
@@ -38,7 +38,7 @@
 2. **흔적 판정은 5클래스다.** 파일럿 검수본 기준 `realized / pivot / similar_unlinked / award_only / none`(6/4/3/14/23). 이와 별도로 원인 코드(P2)는 `realized`가 아닌 건에만 부여한다.
 3. **KIPRIS 벌크 TXT는 약관상 팀 내부 전용이다.** 공개 노출은 공공데이터포털 `15006010` 파일을 기준으로 한다.
 4. **Supabase·RAGFlow·Superset**(기획서 19, 21쪽)은 망분리 환경에서 쓸 수 없거나 불필요하다. 자체 PostgreSQL+pgvector로 대체한다(§2).
-5. **익명화와 흔적 검색이 충돌한다.** 흔적 검색에는 팀명이 필요한데, 기획서는 "적재 단계에서 삭제"로 약속했다. → 팀명은 수집존에서 질의 생성에만 쓰고 처리존·공개존에는 넘기지 않는다(§3.3). 약속을 지키면서 검색도 가능하다.
+5. **익명화와 흔적 검색이 충돌한다.** 흔적 검색에는 팀명이 필요한데, 기획서는 "적재 단계에서 삭제"로 약속했다. → 팀 이름과 사람 이름은 적재 때 지우고 익명 ID만 남긴다(§3.1). 흔적 검색은 아이템명으로 한다. 약속을 지키면서 검색도 가능하다.
 
 ---
 
@@ -54,192 +54,250 @@
 - **클라우드**: 민간 클라우드에 올리면 CSAP 인증 등급을 확인해야 한다. 모두의 AI 실험실 클라우드는 대회 시연용이고, 운영기관 이관 시 대상 인프라는 따로 정한다.
 - **상용 Frontier 모델 사용**: 진단 품질 때문에 OpenAI·Anthropic API를 쓴다. 외부로 보내는 자료는 N2SF 등급상 외부 반출이 허용된 것(O급, 또는 기관이 허용한 범위)만이며, 처리 서버가 보내기 전에 등급을 검사해 막는다. 경로는 DMZ ② 프록시 하나뿐이다.
 
-> 2026-10-06 변경: 인터넷망 수집 서버 + 망연계 구조와 내부 GPU(EXAONE) 계획을 접고, DMZ ②의 포워드 프록시를 통한 수집·상용 AI 호출로 바꿨다. 기준 도식은 `docs/diagrams/architecture.html`(PDF: `architecture.pdf`, 생성: `build.py`)이다. §2 이후와 `docs/DEPLOYMENT.md`, `deploy/`, `pipeline/`에는 아직 이전 구조(Z1 수집존, 망연계 번들, 내부 GPU)가 남아 있다.
+> 2026-10-07 최종 구조: 업무망은 밖에서 들어오는 연결을 받지 않는다. 업무망이 직접 연결을 열어 공개용 DB로 승인분을 밀어 넣고(한 방향), DMZ에 쌓인 이의 제기를 가져온 뒤 지운다. 인터넷으로 나가는 길은 DMZ 포워드 프록시 하나다. 기준 도식은 `docs/diagrams/architecture.html`(PDF: `architecture.pdf`)이다.
 
 ### 핵심 원칙
 
 1. **처리는 업무망에서, 노출은 DMZ ①에서, 외부 호출은 DMZ ② 프록시로만 한다.**
 2. **업무망에서 밖으로 나가는 길은 DMZ ② 프록시 하나다.** 허용 도메인(공공 데이터 API, 상용 AI API)만 열고, 외부 반출이 허용되지 않은 등급의 자료는 AI 호출에 넣지 않는다.
 3. **DMZ에는 공개 승인된 데이터만 반출한다.** 반출은 컬럼 허용목록 방식이고, 사람 승인이 반출 조건이다. 이것으로 기획서의 "최종 판정·공개는 담당자 확인"을 구조적으로 보장한다.
-4. **망 간 전송은 파일 번들 단위로 한다.** 서명, 해시, 행 수를 담은 manifest를 붙이고, 받는 쪽은 멱등 적재한다. 망연계 솔루션 종류와 관계없이 같은 형식을 쓴다.
+4. **연결은 업무망이 연다.** 업무망은 들어오는 연결이 0개다. 공개용 DB로 밀어 넣기(push)와 이의 제기 가져오기(pull)는 모두 업무망이 먼저 연결한다. DMZ에서 업무망으로 가는 연결은 전부 막는다.
 
 ---
 
 ## 2. 구역 구성
 
 ```
- ┌───────── Z1 인터넷 수집존 ─────────┐      ┌──────────────── Z2 내부 처리존 (인터넷 차단) ────────────────┐
- │ collector (Python)                  │      │ importer → PostgreSQL 16 + pgvector (core 스키마)            │
- │  - data.go.kr / 디지털융합플랫폼    │ ①──▶ │ worker: normalize · extract(P1) · embed · cluster            │
- │  - KIPRIS Plus · 법제처 · 정책브리핑│ 망연계│         · diagnose(P2) · score(P3) · match                  │
- │  - K-Startup · 기업마당             │ 단방향│ llm: vLLM + EXAONE (OpenAI 호환 API, 내부 전용)              │
- │  - 금융위 · 국세청 · NAVER API HUB  │      │ embedder: BGE-M3                                            │
- │ staging (원본 보관, 번들 생성)      │      │ console (Next.js): 검토·이중 코딩·κ·공개 승인               │
- │ egress: 허용목록 도메인만           │      │ publisher: 승인분만 허용목록 컬럼으로 번들                  │
- └─────────────────────────────────────┘      └───────────────┬────────────────────────▲────────────────┘
-                                                              ② 망연계 단방향         ③ 망연계 (텍스트만)
-                                              ┌───────────────▼────────────────────────┴────────────────┐
-                                              │ Z3 DMZ 공개존                                                  │
-                                              │ portal (Next.js): 풀·진단 카드·시의성·공고 매칭·통계          │
-                                              │ PostgreSQL + pgvector (publish 스키마, 읽기 전용 / inbox)     │
-                                              │ embedder: BGE-M3 (공고 자유 입력 매칭용)                      │
-                                              │ 알림 발송(메일 릴레이) · 구독 관리                            │
-                                              │ WAF / 리버스 프록시 (TLS)                                     │
-                                              └────────────────────────────────────────────────────────────────┘
+ 사용자 Zone                DMZ                                       업무망
+ (시민·참가자)     ┌─────────────────────────────┐          ┌────────────────────────────────────┐
+                   │ WAF → Nginx → portal        │          │ backend-jobs (python bluebird CLI) │
+ 브라우저 ───────▶ │            └▶ 공개용 DB ◀──┼── 밀어넣기 ─┤   수집·카드·진단·검토·공개          │
+                   │               (publish·meta │  (업무망이 연결) │ backend-api (FastAPI)              │
+                   │                ·inbox)  ────┼── 가져오고 삭제 ─▶ 콘솔 (Next.js) ← console-gw ← 관리자 PC │
+                   │                             │          │ core DB (PostgreSQL + pgvector)    │
+                   │ 포워드 프록시 (Squid) ◀─────┼── 외부 호출 ─┤                                    │
+                   └──────────┬──────────────────┘          └────────────────────────────────────┘
+                              ▼
+                   허용 도메인 + 상용 AI (인터넷)
 ```
 
-| 흐름 | 방향 | 내용 | 통제 |
+국민 요청은 DMZ에서 끝난다. 업무망은 밖에서 들어오는 연결을 하나도 받지 않는다. 업무망이 먼저 연결을 열고, 그 방향만 허용한다.
+
+| 구역 | 구성 | 하는 일 |
+|---|---|---|
+| 사용자 Zone | 시민·참가자 브라우저 | DMZ의 Nginx에만 접속한다(WAF 경유) |
+| DMZ | Nginx(WAF 뒤), portal, 공개용 DB, 포워드 프록시(Squid) | 공개 화면 서비스, 이의 제기 접수, 업무망의 외부 호출 중계 |
+| 업무망 | backend-jobs, backend-api, 콘솔, core DB | 수집, 카드, 진단, 검토·승인, 공개 반영. 인터넷 직접 연결 없음 |
+
+연결 방향 (모두 "출발 → 도착", 연결을 여는 쪽이 출발)
+
+| # | 출발 → 도착 | 내용 | 통제 |
 |---|---|---|---|
-| ① 수집 번들 | Z1 → Z2 | 원본 레코드, 검색 결과, API 응답(NDJSON), 공고 | manifest 서명·해시, 망연계 악성코드 검사, 스키마 검증 후 적재 |
-| ② 공개 스냅샷 | Z2 → Z3 | 승인된 아이디어·카드·진단·점수·근거·임베딩·공고·매칭·알림 | 컬럼 허용목록, 식별자 검사 테스트, 승인 상태 필터 |
-| ③ 이용자 제출 | Z3 → Z2 | 이의 제기·정정 요청(텍스트) | 텍스트 필드만, 길이 제한, 연락처는 Z3에 남기고 티켓 ID만 전달 |
+| ① | 사용자 → DMZ Nginx | 공개 화면 조회, 이의 제기 접수(POST) | WAF, TLS, GET/HEAD/POST만, IP별 요청 제한 |
+| ② | Nginx → portal → 공개용 DB | 조회(읽기), 이의 제기 INSERT | portal DB 계정 `bb_portal`: 읽기 + inbox INSERT만 |
+| ③ | 업무망 backend-jobs → 공개용 DB | 승인분 스냅샷 밀어넣기(push) | `bb_publisher`. 단방향. 허용 열만 |
+| ④ | 업무망 backend-jobs → 공개용 DB | 이의 제기 가져오기 후 삭제 | `bb_inbox_reader`. inbox만 읽고 지움 |
+| ⑤ | 업무망 backend-jobs → DMZ 포워드 프록시 | 공공 API·상용 AI 호출 | 도메인 허용목록, 모든 호출을 `core.egress_call`에 기록 |
+| ⑥ | 포워드 프록시 → 인터넷 | 허용 도메인만 | `.data.go.kr .law.go.kr .kipris.or.kr .k-startup.go.kr .bizinfo.go.kr` + 상용 AI·검색 API 호스트 |
+| ⑦ | 관리자 PC → console-gw | 검토 콘솔 | 127.0.0.1 또는 관리자 망에서만 |
+| ✕ | DMZ → 업무망 | 없음 | 전부 차단 |
 
-알림 구독자 정보(이메일, 관심 키워드)는 Z3 밖으로 나가지 않는다. Z2는 "신규 매칭/신규 개방 데이터" 이벤트만 스냅샷에 담고, Z3이 구독 조건과 맞춰 직접 발송한다.
+이용자가 낸 이의 제기는 DMZ inbox에 쌓이고, 업무망이 가져가 처리한 뒤 DMZ 쪽 사본을 지운다.
 
-### 2.1 시연용 단일 호스트 토폴로지
+### 2.1 시험 배포 토폴로지
 
-대회 시연(모두의 AI 실험실 클라우드)에서는 세 구역을 한 호스트의 docker 네트워크 3개로 분리한다.
+한 호스트의 docker 네트워크 여섯 개로 같은 구조를 재현한다(`deploy/test/compose.yaml`).
 
-- `z1_net`만 외부 egress를 허용한다. `z2_net`은 `internal: true`.
-- 망연계는 공유 볼륨의 `outbox/ → inbox/` 이동기(mover)로 대체한다. 번들 형식, 검증, 적재 코드는 운영과 동일하다.
-- 운영 이관 때 바뀌는 것은 mover를 실제 망연계 솔루션 연동으로 교체하는 부분과 호스트 배치뿐이다. 애플리케이션 코드는 그대로다.
+| 네트워크 | 붙은 것 | 비고 |
+|---|---|---|
+| `edge_net` | nginx | 호스트 포트 8080 공개 |
+| `dmz_net` | nginx, portal, publish-db | internal(외부 차단) |
+| `push_net` | backend-jobs, publish-db | internal. 연결은 backend-jobs가 연다 |
+| `biz_net` | backend-jobs, backend-api, core-db | internal. DMZ 컨테이너는 붙지 않는다 |
+| `egress_net` | backend-jobs, proxy | internal |
+| `inet_net` | proxy | 인터넷 |
+| `console_net` | console-gw, console, backend-api | internal |
+| `admin_net` | console-gw | 호스트 127.0.0.1:8090으로만 노출 |
 
 ---
 
-## 3. 구역별 상세
+## 3. 구성요소별 상세
 
-### 3.1 Z1 수집존 — `collector`
+### 3.1 backend-jobs (업무망, 배치)
 
-| 소스 어댑터 | 수집 방식 | 용도 |
-|---|---|---|
-| `datagokr_file` | 파일 다운로드, 해시가 바뀌면 재수집 | 수상작 시드(서울시 2종, KIPRIS 아이디어 DB 15006010, 과학관, 농식품부, 공공디자인), 개방데이터 목록(15133954), 목록 메타(15121937) |
-| `kstartup`, `bizinfo` | 일 1회 증분 | 공고(매칭), 후속 지원사업 선정 흔적 |
-| `law` | 공포일 기간으로 전량 수집 | 제도 정합성 |
-| `policy_news`, `press_release` | 기간으로 전량 수집 | 정책 수요 |
-| `kipris_patent` | 아이템 키워드·팀명 질의, 연계 출원번호 772건 상태 조회 | 특허·상표 흔적 |
-| `fsc_corp` → `nts_biz` | 팀명 → 법인 조회 → 사업자번호 상태 조회 | 법인·사업자 흔적 |
-| `websearch` (NAVER API HUB) | 질의 2~4개/건, 상위 8건 | 뉴스·웹 흔적 |
+`pipeline/` 이미지 하나로 `bluebird` 명령을 실행한다. 리스너가 없고, 호스트에서는 systemd 타이머가 부른다.
 
-- egress 허용목록: `apis.data.go.kr`, `www.data.go.kr`, `plus.kipris.or.kr`, `open.law.go.kr`, `www.law.go.kr`, `www.k-startup.go.kr`, `www.bizinfo.go.kr`, NAVER API HUB 도메인, 디지털융합플랫폼 도메인. 상용 LLM 도메인은 넣지 않는다.
-- API 키는 Z1에만 둔다.
-- 개인정보 최소수집: 과학관 수상작의 `수상자`, `지도교사`, `소속명` 같은 개인 성명·소속 컬럼은 **수집 시점에 버린다**. 번들에 들어가지 않는다.
-
-### 3.2 망 간 번들 형식
-
-```
-bundle-<zone>-<yyyymmddHHMMSS>-<seq>/
-  manifest.json   # bundle_id, source, created_at, files[{name, sha256, rows, schema_version}], prev_bundle_id
-  manifest.sig    # Ed25519 서명 (구역별 키)
-  <table>.ndjson.zst
-```
-
-받는 쪽 importer 처리 순서: 서명 검증 → 해시 검증 → 스키마 검증 → `bundle_log`에 기록 → 트랜잭션 적재. 같은 `bundle_id`는 무시한다(멱등). 실패한 번들은 `quarantine/`으로 옮긴다.
-
-### 3.3 팀명 처리 — 기획서의 "적재 단계 삭제"와 흔적 검색을 동시에 만족
-
-- 수상작 원본은 Z1이 직접 내려받으므로 팀명을 알고 있다. 흔적 질의는 **Z1이 자기 원본에서 직접 생성**한다(파일럿 `clean_team`·`masked`·`product_name` 규칙 이식). 개인 실명이나 마스킹된 팀명은 아이템명으로만 검색한다.
-- Z1은 번들을 만들기 전에 팀명을 `○○`로 치환한다. 대상은 원본 레코드, 검색 결과 제목·스니펫, API 응답 전체다. 각 레코드에는 아이디어 익명 ID만 붙인다.
-- 따라서 **Z2와 Z3에는 팀명이 존재하지 않는다.** 흔적 "판정"(동일 팀인지 여부)은 Z2의 LLM이 마스킹된 텍스트로 수행한다. 파일럿에서 팀명은 질의와 동일성 확인에 쓰였는데, Z1은 판정 전에 동일성 신호(`team_match: exact|partial|none`)를 계산해 함께 넘긴다.
-- 익명 ID는 Z1에서 `HMAC(secret_z1, source + source_key)` 기반으로 결정적으로 생성한다. 비밀키는 Z1에만 있다.
-
-### 3.4 Z2 내부 처리존
-
-| 컴포넌트 | 역할 |
+| 명령 | 하는 일 |
 |---|---|
-| `importer` | 번들 검증·적재, `bundle_log` |
-| `worker` | 단계별 CLI(`bluebird run <stage>`) + 스케줄러. 단계는 §4 |
-| `llm` | vLLM으로 EXAONE을 서빙하고 OpenAI 호환 API를 내부에만 연다. P1·P2·P3 모두 여기서 실행 |
-| `embedder` | BGE-M3 dense 1024차원. 내부 HTTP |
-| `console` | 검토자용 Next.js: 검증 큐, 2인 독립 코딩, κ 대시보드, 공개 승인, 이의 처리 |
-| `publisher` | 승인분 스냅샷 → 번들 ② |
+| `ingest` | seed 파일 → core 적재. 수상자 성명·소속·팀 이름은 적재 때 지우고 익명 ID(`ID-YYYY-xxxxxxxxxx`)만 남긴다 |
+| `cards` | 아이디어 카드 만들기. `card_kind` = `full`(상용 LLM이 본문을 읽음) / `local_extract`(로컬 규칙 추출) / `title_only`(제목만) |
+| `sources check` | 데이터 소스가 실제로 불러와지는지 점검(`core.source_check`) |
+| `signals catalog-fetch` / `catalog-import` | 공공데이터 목록개방현황 스냅샷 내려받기·가져오기 → 바뀐 것 신호 |
+| `trace` / `diagnose` / `changes` / `match` / `score` | 1 흔적 → 2 막힌 이유 → 3 바뀐 것 → 시의성 점수. 사람 입력 경로 포함 |
+| `review` / `top` / `funnel` | 검토·승인, 이번 주 Top 20, 깔때기 단계 보고 |
+| `announce` | 공고 등록(키가 없으면 사람이 실제 공고 URL·제목·기간을 입력) |
+| `publish` | 승인분 → DMZ 공개용 DB 교체(push) |
+| `objections pull` / `resolve` | DMZ inbox 이의 가져오기(가져온 행은 DMZ에서 삭제) / 처리 |
+| `coding sample`, `kappa` | κ용 표본 만들기, 일치도 계산 |
+| `eval goldset`, `verify top20` | 골드셋 회귀, 공개 Top 20이 전문가 승인과 같은지 확인 |
+| `kpi report` | G1–G13 현황표(사람 입력 대기 항목은 `human_blocked`) |
 
-- 상용 LLM 토큰(기획서 19쪽 "분류·채점")은 망분리 운영에서 쓸 수 없다. 시연 환경에서도 같은 구조를 유지하기 위해 처리존의 LLM 엔드포인트는 `LLM_BASE_URL` 하나로 고정한다. 품질 비교가 필요하면 골드셋 50건으로 EXAONE과 비교 실험만 따로 한다.
-- **확인 필요**: EXAONE 모델 라이선스의 공공 서비스 운영 허용 범위, GPU 사양(33B를 bf16으로 올리면 VRAM 약 70GB 필요, 양자화 시 감소).
+외부 HTTP는 `pipeline/bluebird/egress.py`만 한다. 다른 모듈은 직접 HTTP를 열 수 없다. egress는 허용 도메인을 확인하고, 호출마다 `core.egress_call`에 남기고, 외부로 보내도 되는 필드(`core.export_policy`)만 내보낸다.
 
-### 3.5 Z3 DMZ 공개존
+### 3.2 backend-api (업무망, FastAPI)
 
-- `portal`(Next.js): 읽기 전용 화면 + `/api/v1`. DB 계정은 `publish` 스키마 SELECT, `inbox` INSERT 권한만 가진다.
-- 공고 자유 입력 매칭("풀에서 찾기")은 요청 시점에 임베딩이 필요하다. 그래서 Z3에 `embedder`를 따로 둔다. 같은 모델, 같은 버전이어야 하며 스냅샷 manifest에 모델 해시를 넣어 검증한다.
-- 유사 아이디어 조회 1초 목표: `publish.idea_embedding`에 HNSW 인덱스, 약 3만 건 규모에서는 충분하다.
-- 이의 제기·정정 → `inbox.ticket` → 번들 ③으로 Z2 전달.
-- 공개 화면 하단에 데이터 기준일, 출처, 라이선스, "AI 판정 + 담당자 확인" 문구를 표시한다.
+`python -m bluebird.api`. 콘솔의 유일한 백엔드이고 core DB에는 최소 권한 역할 `bb_api`로 붙는다(마이그레이션 0008). 접근 토큰은 사람별로 발급하고, 서버에는 sha256 해시만 둔다(`console_users.json`). 역할:
+
+| 역할 | 할 수 있는 일 |
+|---|---|
+| `reviewer` | 최종 승인·반려(`review.round = final`), 이의 처리 |
+| `coder` | 2인 독립 코딩. 자기 코드만 보인다(맹검). 큐·상세는 볼 수 없다 |
+| `expert` | 전문가 승인 라운드(Top 20) |
+| `auditor` | 감사 라운드, 이의 열람 |
+
+### 3.3 콘솔 (업무망, web/console)
+
+관리자용 Next.js. 검토 큐, 아이디어 상세(승인·반려), 2인 독립 코딩, 이의 제기 처리 화면이 있다. 콘솔 앱은 internal 망에만 있어 외부로 연결하지 못하고, 앞단 `console-gw`(nginx)만 관리자 쪽에 열린다.
+
+### 3.4 core DB (업무망)
+
+PostgreSQL 16 + pgvector + pg_trgm. 스키마 `core`. 마이그레이션 0001–0009가 유일한 스키마 소유자다(§5).
+
+### 3.5 공개용 DB (DMZ, publish-db)
+
+PostgreSQL. 스키마 `publish`(승인분 사본), `meta`(템플릿·스냅샷 기록), `inbox`(이의 제기). 역할:
+
+| 역할 | 권한 |
+|---|---|
+| `migrator` (`bb_migrator`) | 스키마 변경 |
+| `bb_publisher` | 매 주기 `publish_next`를 만들어 이름 바꾸기로 교체 |
+| `bb_inbox_reader` | inbox 읽기·삭제만 |
+| `bb_portal` | publish 읽기 + inbox INSERT만 |
+
+슈퍼유저 `bluebird`는 원격 로그인이 안 된다. 갱신은 새 스키마를 만들어 이름을 바꾸는 방식이라 포털은 이전 스냅샷 또는 새 스냅샷만 본다.
+
+### 3.6 portal (DMZ, web/portal)
+
+Next.js standalone. 공개용 DB를 `bb_portal`로 읽기만 하고, 쓰기는 이의 제기 inbox INSERT 하나뿐이다. 업무망 연결 정보가 없다.
+
+### 3.7 Nginx (DMZ)
+
+WAF 뒤에서 TLS 종료, 보안 헤더, 메서드 제한(GET/HEAD/POST 외 405), 본문 64 KB 제한, 요청 제한(API·화면·이의 제기 따로)을 건다. 이의 제기 접수는 IP당 분당 5건이라 스팸이 inbox를 채워 업무망 pull을 밀어내지 못한다. WAF 뒤라서 실제 사용자 IP는 `X-Forwarded-For`로 받는다(`docs/DEPLOYMENT.md` §5).
+
+### 3.8 포워드 프록시 (DMZ, Squid)
+
+업무망의 외부 호출을 대신 보낸다. 허용 도메인은 `.data.go.kr .law.go.kr .kipris.or.kr .k-startup.go.kr .bizinfo.go.kr`와 상용 AI·검색 API 호스트(`openapi.naver.com`, `api.openai.com`, `api.anthropic.com`)다. 이 목록은 `egress.py`의 `ALLOWED_HOSTS`와 같아야 하고 `verify.sh`가 비교한다. 캐시 없음, 접근 로그는 감사 보존 대상이다.
+
+### 3.9 원칙 정리
+
+- 상용 LLM에는 N2SF상 외부 반출이 허용된 데이터만 보낸다. 보낼 수 없는 소스는 `local_extract` 또는 `title_only` 카드로 둔다.
+- 팀 이름·사람 이름은 저장하지 않는다(적재 때 익명화).
+- 모든 판정에는 근거 URL이 붙는다. 근거 없는 원인은 `U`, 근거 없는 시의성 항목은 점수 없음으로 둔다.
+- AI는 제안하고 사람이 승인한다(`review.round = final`). 승인 뒤 내용이 바뀌면 공개가 철회된다.
 
 ---
 
-## 4. 처리 단계 (Z2 worker)
+## 4. 처리 단계
 
-| 단계 | 입력 → 출력 | 주기 |
+```
+ingest → cards → (1 흔적 → 2 막힌 이유 → 3 바뀐 것 → 시의성) → 깔때기 s0–s6 → review → publish → objections pull
+```
+
+| 단계 | 입력 → 출력 | 주기(운영) |
 |---|---|---|
-| normalize | 수집 레코드 → `contest`, `idea` (수상등급 표기 정리, `<br />` 처리) | 번들 적재 시 |
-| extract (P1) | idea → `idea_card` | 신규·변경분 |
-| embed | idea_card → `idea_embedding` | 신규분 |
-| cluster | 전체 임베딩 → `cluster`, `idea_tag`(3축), `similar_group` | 주 1회. 이전 군집과 매칭해 ID를 승계해서 링크가 깨지지 않게 한다 |
-| trace-judge | 마스킹 흔적 결과 + `team_match` → `trace_check`(4종), `trace_verdict`(5클래스) | 흔적 번들 적재 시 |
-| diagnose (P2) | 카드 + 근거 → `diagnosis`(T·D·R·M·C·O·U) | `trace_verdict ≠ realized` |
-| score (P3) | 카드 + 개방목록 diff·법령·정책뉴스(임베딩 매칭으로 관련 항목 추림) → `timeliness` | 주 1회 + 데이터 개방 이벤트 |
-| match | 신규 공고 → 코사인 Top-50 → S 재확인 → Top-N | 공고 번들 적재 시 |
-| publish | 승인분 → 번들 ② | 일 1회 |
+| ingest | seed 파일 → `idea`(익명 ID, 팀 이름 없음) | 매일 02:00 |
+| cards | `idea` → `idea_card`(`card_kind`별) | ingest와 함께 |
+| signals | 목록개방현황 내려받기 → `catalog_snapshot`, `signal_dataset`, `condition_change` | 매주 월 03:00 |
+| trace / diagnose | 흔적 → `trace_check`, `trace_verdict`; 막힌 이유 → `diagnosis` + `x_evidence` | 사람·LLM 제안 후 검토 |
+| changes / match | 바뀐 것 → `condition_change`; 아이디어와 연결 → `change_match` | 신호·입력 때 |
+| score | 시의성 → `timeliness` (S, 판정 now/conditional/hold) | 주 1회 |
+| funnel | 아래 s0–s6 계산 | SQL 한 곳 |
+| top | 이번 주 재조명 → `weekly_top` 1–20 | 주 1회 |
+| review | 사람 승인(`review`), 공개 허용(`publication`) | 콘솔 |
+| publish | 승인분 → DMZ 공개용 DB (템플릿 v2) | 매일 06:00 |
+| objections pull | DMZ inbox → `core.objection` → DMZ에서 삭제 | 10분마다 |
 
-시의성 신호 수집이 Z2로부터의 질의 없이 가능한 이유: 법령·정책뉴스·개방목록은 기간 단위로 전량 수집하고, 아이디어와 관련된 항목은 Z2에서 임베딩·키워드로 고른다. 그래서 내부망에서 인터넷 방향의 흐름이 생기지 않는다.
+깔때기 단계는 `core.funnel_stage(as_of)` SQL 함수 하나가 계산한다. `bluebird funnel`도 같은 함수를 쓴다.
 
-LLM 출력 저장 규칙: `model`, `prompt_version`, `evidence_ids`를 항상 저장한다. 근거가 비어 있으면 원인은 `U`, 시의성 항목은 `null`(판단 불가)로 강제한다. DB CHECK와 코드 양쪽에서 막는다.
+| 단계 | 통과 조건 |
+|---|---|
+| s0 | 카드가 있다 |
+| s1 | 흔적 판정이 `none` 또는 `award_only`(지금 아무도 하고 있지 않다) |
+| s2 | 막힌 이유가 `U`가 아니고 근거가 있다(데이터 원인 `D`면 부족한 데이터가 적혀 있다) |
+| s3 | 원인과 종류가 맞는 "바뀐 것"이 연결되어 있다 |
+| s4 | 시의성 판정이 `now` 또는 `conditional` |
+| s5 | 사람 최종 승인과 카드·진단·시의성·바뀐 것 공개 허용이 모두 있다 |
+| s6 | 공개 가능 소스이고, DMZ에 실제로 반영된 스냅샷에 들어 있다 |
+
+공개 가능 여부는 소스별 `public_ok`로 정한다. 승인 뒤 반려·원인 변경·내용 변경이 있으면 공개 허용이 철회되어 s5에서 빠진다. 이의가 받아들여져 원본까지 공개를 멈춘 아이디어(`withheld_at`)는 깔때기·큐·Top에서 빠진다.
 
 ---
 
 ## 5. 데이터 모델
 
-**core (Z2)** — 단일 소유자 Alembic
+### 5.1 core (업무망) — 마이그레이션 `pipeline/bluebird/db/migrations/core/0001–0009`
 
-- `bundle_log(bundle_id, zone, source, received_at, status, rows)`
-- `source(id, name, license, url, layer, public_ok bool)` — KIPRIS 벌크는 `public_ok=false`
-- `contest(id, source_id, name, host_org, year)`
-- `idea(id, contest_id, year, award, title, body, used_data[], source_url)` — 팀명 없음, 원문 무변형
-- `idea_card(idea_id, title, problem, solution, target_user, required_data[], required_tech[], domain, year, source_url, model, prompt_version)` — P1, 기획서 필드 그대로
-- `idea_embedding(idea_id, model, vec vector(1024))`
-- `cluster`, `idea_cluster`, `idea_tag(axis∈{topic,tech,problem})`, `similar_group`, `similar_member`
-- `evidence(id, idea_id, kind, url, title, excerpt_masked, observed_at, collected_at, bundle_id)`
-- `trace_check(idea_id, item∈{news_web,corp_biz,ip,program}, result∈{found,none,unknown}, count, evidence_ids[])`
-- `trace_verdict(idea_id, status∈{realized,pivot,similar_unlinked,award_only,none}, confidence, reason, evidence_ids[], model, prompt_version)`
-- `diagnosis(idea_id, primary∈TDRMCOU, secondary, confidence, rationale, evidence_ids[], model, prompt_version)`
-- `timeliness(idea_id, as_of, tech, data, regulation, policy (각 0~5 또는 null), weights jsonb, s, verdict∈{now,conditional,hold}, resolve_condition, changes[≤3], evidence jsonb)`
-- `announcement(id, source, title, body, org, apply_from, apply_to, url, vec)`, `match(announcement_id, idea_id, similarity, s, verdict, rank)`
-- `review(id, target_type, target_id, reviewer, round∈{coder_a,coder_b,final}, decision, code, note, created_at)` — κ 계산 원천
-- `publication(idea_id, scope∈{pool,diagnosis,timeliness}, approved_by, approved_at, revoked_at)` — 반출 게이트
-- `ticket(id, idea_id, kind∈{objection,correction}, body, status, resolution)` — 번들 ③에서 적재
-- `pipeline_run(id, stage, started_at, finished_at, status, stats, error)`
-
-**publish (Z3)** — core의 부분집합. 허용목록 컬럼만 둔다. `publisher`가 허용목록에 없는 컬럼이 들어 있으면 실패하도록 테스트로 강제한다.
-
-**inbox (Z3)** — `ticket_submission`, `subscription`(Z3 전용, 반출하지 않음).
-
-공개 범위:
-
-| scope | 공개 조건 |
+| 묶음 | 표 |
 |---|---|
-| pool (카드·태그·군집·유사 묶음) | 출처가 `public_ok`이고 P1 스키마 검증을 통과 |
-| diagnosis (흔적·원인) | `review` final 승인 |
-| timeliness (S·판정·달라진 점) | `review` final 승인. 재발굴 후보 Top 20은 전문가 검토 기록까지 필요 |
+| 원천 | `source`, `ingest_run`, `contest`, `idea`(`retired_at` 0002, `withheld_at` 0007) |
+| 카드 | `idea_card`(`card_kind`, 본문 해시·`egress_call_id` 0003), `idea_embedding` |
+| 근거 | `evidence`, `x_evidence` |
+| 판정 | `trace_check`, `trace_verdict`(`external_search` 0009), `diagnosis`, `timeliness` |
+| 바뀐 것 | `catalog_snapshot`, `signal_dataset`, `announcement`, `condition_change`(`origin` 0004), `cause_change_kind`, `change_match`(`match_eligible` 함수 0006) |
+| 선정·공개 | `weekly_top`, `review`, `publication`(승인 뒤 변경 시 철회 0005), `publish_snapshot`, `export_policy` |
+| 이의·코딩 | `objection`(0007), `coding_sample` |
+| 감사·운영 | `egress_call`, `source_check`, `pipeline_run` |
+| 깔때기 | `core.funnel_stage(as_of)` 함수(0004), `core.revival_candidate` 뷰 |
 
-승인되지 않은 진단은 공개 화면에 "검증 대기"로만 표시하고 내용은 보여주지 않는다.
+주요 규칙(DB 제약으로 강제): 카드가 `full`이면 LLM이 만들고 그 호출의 감사 행과 연결(0003), 바뀐 것 종류는 `dataset_opened`(자동 신호)·`announcement`(API 또는 사람)·`law_effective`·`policy_news`·`tech`(사람만)로 제한(0004), 종류가 원인과 안 맞으면 매칭 생성 거부(0004).
+
+### 5.2 publish (DMZ) — 템플릿 v2 `pipeline/bluebird/publish_template/v2.sql`
+
+| 스키마 | 표 |
+|---|---|
+| `publish` | `source`, `idea`, `evidence`, `diagnosis`, `change`, `timeliness`, `weekly_top`, `announcement`, `announcement_match` |
+| `meta` | `publish_template`(등록된 템플릿 체크섬), `snapshot_log` |
+| `inbox` | `objection`(포털 INSERT, 업무망 pull 후 삭제. `uid` 0002로 중복 판정) |
+
+`publish`에는 템플릿에 있는 열만 나간다. 제목·본문 검색용 `pg_trgm` 인덱스가 걸려 있다. 템플릿을 바꾸려면 새 버전 파일을 만들고 migrator가 등록한다.
+
+### 5.3 공개 범위
+
+| 범위 | 조건 |
+|---|---|
+| 카드 | 소스 `public_ok` + 공개 허용 |
+| 진단 | 근거 있음 + 사람 최종 승인 |
+| 시의성·바뀐 것 | 사람 최종 승인 + 공개 허용. Top 20은 전문가 승인까지 |
+
+승인되지 않은 진단은 공개 화면에 내용을 보이지 않는다.
 
 ---
 
 ## 6. 화면
 
-**portal (Z3)** — 목업 기준
+### 6.1 portal (사용자 Zone → DMZ)
 
 | 경로 | 내용 |
 |---|---|
-| `/pool` | 목록·필터(군집, 연도, 도메인, 원인, S) |
-| `/ideas/[id]` | 진단 카드(mock_a): 태그, 흔적 확인표, 원인, 시의성 4막대, 달라진 점, 관련 공고, 근거 링크(새 탭), 이의 제기 |
-| `/timeliness` | 재조명 후보(S≥4.0, 승인분) |
-| `/matching` | 공고 선택 또는 자유 입력 → Top-N (mock_b) |
-| `/stats` | 풀 현황, 원인 분포(검증 완료 건 기준), 기관별 분포(주최기관 모드) |
-| `/api/v1/*` | `ideas`, `ideas/{id}`, `ideas/{id}/similar`, `announcements`, `match`, `stats`, `tickets` |
+| `/` | 이번 주 재조명: `weekly_top` 1–20위 |
+| `/explore` | 주제·공고 넣기: 공고 제목이나 주제를 넣으면 비슷한 아이디어(`pg_trgm`) |
+| `/ideas/[id]` | 아이디어 카드: 원본 · 막힌 이유 · 바뀐 것 · 지금 하려면 · 근거 · 이의 제기 |
+| `/pool` | 공개된 아이디어 목록 |
+| `/api/v1/ideas`, `/api/v1/ideas/[id]` | 목록·상세 |
+| `/api/v1/explore` | 주제·공고 유사 검색 |
+| `/api/v1/objections` | 이의 제기 접수(POST) |
 
-**console (Z2)** — 검증 큐, 2인 독립 코딩(서로의 판정을 볼 수 없음), κ 현황(목표 0.7), 공개 승인, 이의 처리, 파이프라인 실행 현황.
+### 6.2 콘솔 (업무망, 관리자)
 
-portal과 console은 별도 앱으로 빌드한다. 하나의 앱에 플래그를 두면 DMZ 이미지에 검토 기능 코드가 섞여 반출되기 때문이다. 화면 컴포넌트만 공유 패키지로 둔다.
+| 경로 | 내용 |
+|---|---|
+| `/` | 검토 큐 |
+| `/ideas/[id]` | 아이디어 상세, 승인·반려 |
+| `/coding` | 2인 독립 코딩(서로의 코드 맹검) |
+| `/objections` | 이의 제기 처리(수용 시 원본 공개 중단 선택) |
+| `/login` | 토큰 로그인 |
+
+portal과 콘솔은 별도 앱·이미지로 만든다. 검토 기능 코드가 DMZ 이미지에 섞이지 않게 하기 위해서다.
 
 ---
 
@@ -247,56 +305,73 @@ portal과 console은 별도 앱으로 빌드한다. 하나의 앱에 플래그�
 
 ```
 bluebird/
-  pipeline/                  # Python 3.12, uv — 구역 공용 CLI `bluebird`
+  pipeline/                 # Python 3.12, `bluebird` CLI + backend-api
     bluebird/
-      bundle.py              # manifest·서명·검증·이동 (Z1/Z2/Z3 공용)
-      collector/             # Z1: 소스 어댑터, 팀명 마스킹·익명 ID
-      db/migrations/{core,publish}/  # SQL 마이그레이션(스키마 유일 소유자)
-      stages.py              # collect, import-core, publish, import-publish (+ 예정 단계)
-      cli.py
+      cli.py, ingest.py, cards.py, llm.py, anonymize.py
+      sources.py, sources_check.py, signals/     # 소스 어댑터, 점검, 목록개방현황
+      funnel.py, score.py, announce.py, wording.py
+      publish.py, publish_template/{v1,v2}.sql    # 공개용 DB 반영
+      objections.py, api.py                       # 이의·코딩, FastAPI
+      egress.py                                   # 외부 HTTP는 여기만
+      db/migrations/{core,publish}/               # 스키마 유일 소유자
     tests/
-    Dockerfile
-  web/portal/                # Z3 공개 포털 (Next.js standalone)
+  web/
+    portal/                 # DMZ 공개 포털 (Next.js standalone)
+    console/                # 업무망 관리자 콘솔 (Next.js)
   deploy/
-    nginx/                   # 시험·운영 공통 nginx 스니펫
-    test/                    # 단일 호스트 3구역 재현(compose, init/run-cycle/verify)
-    prod/                    # nginx TLS, PostgreSQL, systemd, 방화벽표, env 예시
-  docs/
-  reference/                 # 인수인계 원본 (커밋 제외)
+    test/                   # 단일 호스트 재현: compose.yaml, init.sh, run-cycle.sh, verify.sh, p95.sh, proxy/squid.conf
+    prod/                   # nginx, postgres(pg_hba), systemd, firewall, env.example
+    nginx/                  # 시험·운영 공통 nginx 스니펫
+  docs/                     # ARCHITECTURE, DEPLOYMENT, SOURCES, diagrams/
+  reference/                # 인수인계 원본 (커밋 제외)
 ```
-
-LLM 클라이언트·프롬프트(P1~P3), 검토 콘솔(`web/console`)은 해당 단계를 구현할 때 같은 구조에 추가한다. 파이프라인 이미지 1개를 구역별 명령으로 나눠 쓰고, 포털은 별도 이미지다. 내부망 반입은 이미지 tar + 서명 방식으로 한다(빌드는 인터넷망 CI에서). 구현·배포 상세는 `docs/DEPLOYMENT.md`.
 
 ---
 
-## 8. 품질·보안 검증 항목
+## 8. 품질·보안 검증
 
-- 골드셋 50건 회귀: 프롬프트나 모델을 바꿀 때 5클래스 일치율과 혼동행렬을 리포트한다.
-- κ: 표본 100건 2인 독립 코딩. `review` 테이블로 계산한다.
-- 반출 테스트: publish 번들에 허용목록 밖 컬럼이 없는지, 팀명 사전과 일치하는 문자열이 없는지 확인한다.
-- 마스킹 테스트: Z1 번들 전체에서 원본 팀명이 남아 있지 않은지 확인한다.
-- egress 테스트: Z2 컨테이너에서 외부 연결이 실패하는지 확인한다(시연 토폴로지).
-- 근거 링크 100%: 공개된 진단·점수의 `evidence_ids`가 비어 있지 않은지 DB CHECK로 강제한다.
+목표는 G1–G13이다. 현황은 `bluebird kpi report`가 표로 보여주고, 사람 입력을 기다리는 항목은 `human_blocked`로 표시한다. 통제·화면 검증은 `deploy/test/verify.sh`가 한다.
+
+| 목표 | 내용 |
+|---|---|
+| G1 | 모든 아이디어에 구조화 카드, `card_kind`별 건수 보고 |
+| G2 | 공개용 DB의 공개 카드 수 = 공개 가능 소스의 아이디어 수 |
+| G3 | κ: 표본 100건 2인 독립 코딩 ≥0.7 (`bluebird kappa`) |
+| G4 | 골드셋 50건 5클래스 회귀 (`bluebird eval goldset`) |
+| G5 | 이번 주 Top 20 전부 전문가 승인 (`bluebird verify top20`) |
+| G6 | 관측된 새 데이터 기반 "바뀐 것" 승인·공개 건수 |
+| G7 | 실제 공고 1건에 대한 매칭 표시 |
+| G8 | 주제·공고 유사 검색 응답 속도(`deploy/test/p95.sh`) |
+| G9 | 공개된 진단·바뀐 것·시의성마다 근거 1개 이상 |
+| G10 | 반출 통제: 허용 열 밖 0, egress 밖 HTTP 0, 성명 일치 0 |
+| G11 | 이의 제기 왕복: 접수 → pull → DMZ 삭제 → 처리 → 반영 |
+| G12 | "바뀐 것" 무작위 20건 맹검 점검 정밀도 |
+| G13 | `sources check` 결과(키 없는 소스 포함) |
+
+`verify.sh`가 보는 것: 망 구성(DMZ·업무망 컨테이너의 외부 연결, 프록시 허용목록과 `egress.py` 일치), 공개용 DB 역할 권한, 반출 통제와 데이터 수, 원본·카드·소스 점검, 깔때기 단계, 콘솔 보안(토큰 없으면 401, 헤더, 최소 권한 DB 계정), 이의 제기 왕복, 공개 화면.
 
 ---
 
 ## 9. 일정 (본선 12월 중순)
 
-| 기간 | 결과물 |
+| 날짜 | 내용 |
 |---|---|
-| 10/6~10/12 | API 키 확보(NAVER API HUB, data.go.kr, KIPRIS Plus, 법제처). 번들 형식, core 스키마, 시연 토폴로지, collector(수상작·KIPRIS 파일) → importer → normalize |
-| 10/13~10/26 | P1 카드, 임베딩, 군집. portal `/pool`·`/ideas/[id]` 실데이터 연결 (기획서 1단계 만회) |
-| 10/27~11/9 | 흔적 수집(2층 전수), trace-judge, P2, 골드셋 회귀, console 검증 큐 |
-| 11/10~11/23 | P3 시의성, 공고 매칭, publish 번들, `/matching`·`/stats` |
-| 11/24~12/1 | κ 측정, Top 20 전문가 검토, 이의 제기 흐름, 알림 |
-| 12월 | 시연 데이터 고정, 발표 수치를 DB 실측값으로 교체, 아키텍처 그림 갱신(RAGFlow·Superset·Supabase 제거, 3구역 표기) |
+| 10/2 – 12/1 | 멘토링 기간. 의견을 시의성 가중치 등에 반영 |
+| 10/12, 10/19 | 목록개방현황 스냅샷. 갱신 주기와 "바뀐 것" 목표치 판단 근거 |
+| 10/26 | KIPRIS 약관·N2SF 회신 결정. 결과에 따라 KIPRIS 26,434건 공개 범위와 외부 LLM 사용 범위 확정 |
+| 11/2 | E7: 추가 목표(stretch) 착수 여부 결정 |
+| 11/24 – 11/30 | Top 20 전문가 검토, 바뀐 것 정밀도 점검, 반출·망 테스트 |
+| 12월 중순 | 본선. 발표 수치는 DB 실측값으로 교체, 아키텍처 그림 갱신 |
 
 ---
 
-## 10. 결정 필요 항목
+## 10. 결정 필요 항목 (사람이 해야 해서 `human_blocked`)
 
-1. 운영 주체와 망분리 체계: 운영기관 보안담당과 N2SF 등급(O/S)과 망연계 솔루션 종류를 확정한다. 본선 시연은 §2.1 토폴로지로 진행한다.
-2. LLM 호스팅: 처리존 GPU 사양, EXAONE 라이선스의 공공 서비스 운영 허용 여부.
-3. 웹검색 공급자: NAVER API HUB 가입 가능 여부.
-4. KIPRIS 공개 범위: data.go.kr 15006010 파일의 실제 컬럼과 이용조건을 확인한다(벌크와의 차이).
-5. 시의성 가중치: 초기 0.25 균등값을 멘토링 의견으로 조정한다(기획서 14쪽).
+1. **API 키**: K-Startup, NAVER, KIPRIS Plus, OpenAI, Anthropic, 국민권익위(권익위), 기업마당은 아직 없다. 키가 오기 전에는 `key_required`로 기록하고 사람이 입력하는 경로를 쓴다(`docs/SOURCES.md` 실측 점검).
+2. **KIPRIS 약관·N2SF 등급** (10/26): 공개 범위와 외부 LLM에 보낼 수 있는 데이터를 정한다. 운영기관 보안담당과 확정.
+3. **상용 LLM 무보존·학습 미사용 설정 확인**: 키를 쓰기 전에 확인한다.
+4. **κ 코더 2인 지정**: 표본 100건 독립 코딩.
+5. **Top 20 전문가 검토자 지정**.
+6. **맹검 점검자(auditor) 지정**: 바뀐 것 정밀도 20건.
+7. **LLM 예산 상한 승인**.
+8. **시의성 가중치**: 초기 0.25 균등값을 멘토링 의견으로 조정.

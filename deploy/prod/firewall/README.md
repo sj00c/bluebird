@@ -1,31 +1,41 @@
 # 방화벽 정책표 (운영 예시 대역)
 
+원칙: **업무망으로 들어오는 연결은 없다.** 모든 연결은 업무망이 연다. DMZ에서 업무망으로 새로 여는 연결은 전부 막는다.
+
 | 구역 | 서버 | 예시 IP |
 |---|---|---|
-| Z1 인터넷 수집존 | z1-collect | 203.0.113.0/28 대역 내부 (인터넷망 업무 세그먼트) |
-| 망연계 | 망연계 솔루션(송·수신 에이전트) | 기관 표준 |
-| Z2 내부 처리존 | z2-app 10.20.10.11 · z2-db 10.20.10.21 · z2-gpu 10.20.10.41 · z2-backup 10.20.10.31 | 10.20.10.0/24 |
-| Z3 DMZ | z3-web 172.16.30.11 · z3-db 172.16.30.21 | 172.16.30.0/24 |
+| 사용자 Zone | 국민 PC·모바일 (앞단에 WAF) | 인터넷 |
+| DMZ | dmz-web(Nginx·포털) 172.16.30.11 · dmz-db(공개용 DB) 172.16.30.21 · dmz-proxy(포워드 프록시) 172.16.30.31 | 172.16.30.0/24 |
+| 업무망 | biz-app(백엔드 작업·백엔드 API·콘솔·console-gw) 10.20.10.11 · biz-db(내부 DB) 10.20.10.21 · biz-backup 10.20.10.31 | 10.20.10.0/24 |
+| 관리자 단말 | 업무망 관리자 PC | 기관 표준 |
 
-| # | 출발 | 도착 | 포트 | 용도 |
+## 4겹 통제
+
+| 겹 | 출발 | 도착 | 포트 | 용도 |
 |---|---|---|---|---|
-| F1 | 인터넷 | z3-web | 443/tcp (80→443 리다이렉트) | 공개 포털 |
-| F2 | z3-web | z3-db | 5432/tcp | importer·portal |
-| F3 | z1-collect | 허용 도메인(data.go.kr, plus.kipris.or.kr, open.law.go.kr, k-startup.go.kr, bizinfo.go.kr, NAVER API HUB, 디지털융합플랫폼) | 443/tcp | 수집 (프록시 경유 + 도메인 허용목록) |
-| F4 | z2-app | z2-db | 5432/tcp | worker·console |
-| F5 | z2-app | z2-gpu | 8000/tcp | LLM(vLLM)·임베딩 |
-| F6 | 운영자 PC(업무망) | z2-app | 443/tcp | console(검토 화면) |
-| F7 | 관리망 | 전 서버 | 22/tcp | 관리 (접근통제 솔루션 경유) |
-| — | z2-* | 인터넷 | 전체 | **차단** |
-| — | z3-* | z2-* | 전체 | **차단** (망연계로만) |
-| — | z2-* | z3-* | 전체 | **차단** (망연계로만) |
-| — | z1-collect | z2-*, z3-* | 전체 | **차단** (망연계로만) |
-| — | z3-web | 인터넷 | 전체 | **차단** (응답 외 신규 아웃바운드 없음) |
+| ① | 사용자 → WAF | dmz-web (Nginx) | 443/tcp (80→443 리다이렉트) | 공개 포털. 이 길만 열려 있다 |
+| ② | biz-app (업무망) | dmz-db | 5432/tcp | 공개본 밀어넣기(`bb_publisher`), 이의 가져오기·삭제(`bb_inbox_reader`). 업무망이 연다 |
+| ③ | biz-app (업무망) | dmz-proxy | 3128/tcp | 외부 조회. 프록시가 허용 도메인(`.data.go.kr .law.go.kr .kipris.or.kr .k-startup.go.kr .bizinfo.go.kr` 등)의 443/tcp로만 나간다 |
+| ④ | 관리자 PC | biz-app console-gw | 443/tcp | 관리자 콘솔. 이 길만 열려 있다 |
 
-망연계 경로(파일 단방향)
+보조 규칙
 
-| 경로 | 송신 폴더 | 수신 폴더 | 허용 파일 |
+| 출발 | 도착 | 포트 | 용도 |
 |---|---|---|---|
-| L1 Z1→Z2 | z1-collect:/srv/bluebird/xfer/out-to-z2 | z2-app:/srv/bluebird/xfer/in-from-z1 | `z1-collect-*.tar` |
-| L2 Z2→Z3 | z2-app:/srv/bluebird/xfer/out-to-z3 | z3-web:/srv/bluebird/xfer/in-from-z2 | `z2-publish-*.tar` |
-| L3 Z3→Z2 | z3-web:/srv/bluebird/xfer/out-to-z2 | z2-app:/srv/bluebird/xfer/in-from-z3 | `z3-ticket-*.tar` (이의 제기 구현 시) |
+| dmz-web | dmz-db | 5432/tcp | 포털 읽기·이의 접수(`bb_portal`) |
+| biz-app | biz-db | 5432/tcp | core DB (`bluebird`, `bb_api`) |
+| biz-backup | biz-db | 5432/tcp | 백업·감사 조회(`bluebird_ro`) |
+| 관리망 | 전 서버 | 22/tcp | 관리 (접근통제 솔루션 경유) |
+
+차단
+
+| 출발 | 도착 | 비고 |
+|---|---|---|
+| DMZ 전체 | 업무망 전체 | **전부 차단.** 업무망이 먼저 연 연결의 응답만 허용 |
+| 인터넷 | 업무망 전체 | 차단 |
+| 업무망 | 인터넷 | 차단. 프록시(③)로만 나간다 |
+| dmz-web · dmz-db | 인터넷 | 차단 (응답 외 신규 아웃바운드 없음) |
+| 사용자 Zone | dmz-db · dmz-proxy · 업무망 | 차단 |
+| 관리자 PC | dmz-* | 차단 (콘솔만 사용) |
+
+프록시 로그와 core DB의 `core.egress_call`로 모든 외부 호출을 감사한다.
