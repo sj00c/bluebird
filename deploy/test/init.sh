@@ -17,25 +17,26 @@ if [[ ! -f "$rt/secrets/anon_secret" ]]; then
 fi
 chmod 600 "$rt/secrets/anon_secret"
 
-# 콘솔 접근 토큰(시험용): 사람별 토큰 원문은 .runtime/secrets/console_tokens(관리자에게 전달),
-# backend-api에는 sha256만 담은 console_users.json을 준다.
-if [[ ! -f "$rt/secrets/console_users.json" ]]; then
-  : > "$rt/secrets/console_tokens"; chmod 600 "$rt/secrets/console_tokens"
+# 콘솔 접근 토큰(시험용): 사람별 토큰 원문은 .runtime/console_tokens(어떤 컨테이너에도 마운트하지 않음, 관리자에게 전달),
+# backend-api에는 sha256만 담은 .runtime/console/console_users.json을 준다.
+mkdir -p "$rt/console"
+if [[ ! -f "$rt/console/console_users.json" ]]; then
+  : > "$rt/console_tokens"; chmod 600 "$rt/console_tokens"
   json="{"
   for spec in "reviewer1:reviewer" "coder_a1:coder" "coder_b1:coder" "expert1:expert" "auditor1:auditor"; do
     who="${spec%%:*}"; role="${spec#*:}"; tok="$(openssl rand -hex 24)"
-    echo "$who $tok" >> "$rt/secrets/console_tokens"
+    echo "$who $tok" >> "$rt/console_tokens"
     h="$(printf '%s' "$tok" | shasum -a 256 | cut -d' ' -f1)"
     json+="\"$h\":{\"user\":\"$who\",\"roles\":[\"$role\"]},"
   done
-  echo "${json%,}}" > "$rt/secrets/console_users.json"
-  echo "[init] console tokens created (.runtime/secrets/console_tokens)"
+  echo "${json%,}}" > "$rt/console/console_users.json"
+  echo "[init] console tokens created (.runtime/console_tokens)"
 fi
 
 # .env: 없는 값만 추가한다(기존 비밀번호 유지).
 touch "$here/.env"; chmod 600 "$here/.env"
 add_env() { grep -q "^$1=" "$here/.env" || echo "$1=$2" >> "$here/.env"; }
-for v in CORE_DB_PASSWORD PUBLISH_DB_PASSWORD MIGRATOR_DB_PASSWORD PUBLISHER_DB_PASSWORD INBOX_DB_PASSWORD \
+for v in CORE_DB_PASSWORD API_DB_PASSWORD PUBLISH_DB_PASSWORD MIGRATOR_DB_PASSWORD PUBLISHER_DB_PASSWORD INBOX_DB_PASSWORD \
          PORTAL_DB_PASSWORD; do
   add_env "$v" "$(openssl rand -hex 16)"
 done
@@ -66,5 +67,6 @@ fi
 
 # 컨테이너는 uid 10001로 실행된다. 시험 환경 한정으로 읽기 권한을 맞춘다.
 chmod -R a+rX "$rt/seed"
-chmod 755 "$rt/secrets"; chmod 644 "$rt/secrets/anon_secret" "$rt/secrets/console_users.json"
+chmod 755 "$rt/secrets"; chmod 644 "$rt/secrets/anon_secret"
+chmod 755 "$rt/console"; chmod 644 "$rt/console/console_users.json"
 echo "[init] done: $rt"

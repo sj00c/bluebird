@@ -2,9 +2,10 @@
 
 인증: Authorization: Bearer <token>. 토큰 → 사람·역할은 BB_API_USERS(JSON 파일 경로)
     {"<sha256(token) hex>": {"user": "kim", "roles": ["reviewer", "coder"]}, ...}
-토큰 원문은 서버에 두지 않는다(해시만). 역할: reviewer(최종 승인·반려·이의 처리), coder(2인 독립 코딩),
-expert(전문가 승인 라운드), auditor(감사 라운드).
-맹검: coder_a/coder_b 코드는 어떤 응답에도 다른 사람에게 나가지 않는다(자기 코드만).
+토큰 원문은 서버에 두지 않는다(해시만). 파일을 바꾸면 backend-api를 다시 시작해야 반영된다(토큰 회수 포함).
+역할: reviewer(최종 승인·반려·이의 처리), coder(2인 독립 코딩), expert(전문가 승인 라운드), auditor(감사 라운드).
+맹검: coder_a/coder_b 코드는 어떤 응답에도 다른 사람에게 나가지 않는다(자기 코드만). 코더만인 사람은 큐·상세를 볼 수
+없다(시스템 예측 원인·검토 기록을 보고 코딩하면 κ가 부풀려진다). 이의 본문(개인정보일 수 있음)은 reviewer·auditor만.
 """
 
 from __future__ import annotations
@@ -16,11 +17,14 @@ import os
 from functools import lru_cache
 from typing import Annotated, Literal
 
-from fastapi import Depends, FastAPI, Header, HTTPException, Query
-from pydantic import BaseModel, Field
+import psycopg
+from fastapi import Depends, FastAPI, Header, HTTPException, Path, Query
+from pydantic import BaseModel, ConfigDict, Field
 
 from . import db, funnel, objections, wording
 
+ROLES = frozenset({"reviewer", "coder", "expert", "auditor"})
+STAFF = ("reviewer", "expert", "auditor")
 STAGES = ("s0", "s1", "s2", "s3", "s4", "s5", "s6")
 ROUND_ROLE = {"final": "reviewer", "expert": "expert", "audit": "auditor"}
 
@@ -44,6 +48,8 @@ def _users() -> dict[str, dict]:
     for h, u in users.items():
         if len(h) != 64 or not isinstance(u.get("user"), str) or not isinstance(u.get("roles"), list):
             raise RuntimeError("BB_API_USERS: keys are sha256 hex, values {user, roles[]}")
+        if not u["roles"] or not set(u["roles"]) <= ROLES:
+            raise RuntimeError(f"BB_API_USERS: {u['user']} roles must be a non-empty subset of {sorted(ROLES)}")
     return users
 
 
@@ -62,15 +68,16 @@ def current_user(authorization: Annotated[str | None, Header()] = None) -> User:
     raise HTTPException(401, "unknown token")
 
 
-def need(role: str):
+def need(*roles: str):
     def dep(u: Annotated[User, Depends(current_user)]) -> User:
-        if role not in u.roles:
-            raise HTTPException(403, f"role {role} required")
+        if not set(roles) & set(u.roles):
+            raise HTTPException(403, f"role {'|'.join(roles)} required")
         return u
     return dep
 
 
 Me = Annotated[User, Depends(current_user)]
+Staff = Annotated[User, Depends(need(*STAFF))]
 
 
 def _rows(cur) -> list[dict]:
@@ -95,7 +102,7 @@ def me(u: Me) -> User:
 
 
 @app.get("/api/queue")
-def queue(u: Me, stage: Literal["s2", "s3", "s4", "s5", "s6"] = "s4",
+def queue(u: Staff, stage: Literal["s2", "s3", "s4", "s5", "s6"] = "s4",
           limit: Annotated[int, Query(ge=1, le=500)] = 50) -> dict:
     nxt = STAGES[STAGES.index(stage) + 1] if stage != "s6" else None
     with db.connect(_dsn()) as conn:
@@ -116,7 +123,7 @@ def queue(u: Me, stage: Literal["s2", "s3", "s4", "s5", "s6"] = "s4",
 
 
 @app.get("/api/ideas/{idea_id}")
-def idea_detail(idea_id: str, u: Me) -> dict:
+def idea_detail(idea_id: str, u: Staff) -> dict:
     with db.connect(_dsn()) as conn:
         snap = _snap(conn)
         idea = _rows(conn.execute(
@@ -169,13 +176,14 @@ def idea_detail(idea_id: str, u: Me) -> dict:
 # ----------------------------------------------------------------------------- 승인
 
 class ReviewIn(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True)
     round: Literal["final", "expert", "audit"]
     decision: Literal["approve", "reject"]
     note: str | None = Field(default=None, max_length=2000)
 
 
 @app.post("/api/ideas/{idea_id}/review")
-def review(idea_id: str, body: ReviewIn, u: Me) -> dict:
+def review(idea_id: str, body: ReviewIn, u: Staff) -> dict:
     role = ROUND_ROLE[body.round]
     if role not in u.roles:
         raise HTTPException(403, f"role {role} required for round {body.round}")
@@ -190,7 +198,7 @@ def review(idea_id: str, body: ReviewIn, u: Me) -> dict:
             funnel.reject(dsn=_dsn(), idea_id=idea_id, by=u.user, note=note)
         else:
             with db.connect(_dsn()) as conn:
-                funnel._idea(conn, idea_id)
+                funnel._live_idea(conn, idea_id)
                 conn.execute("INSERT INTO core.review (target_type, target_id, reviewer, round, decision, note)"
                              " VALUES ('idea',%s,%s,%s,%s,%s)", (idea_id, u.user, body.round, body.decision, note))
                 conn.commit()
@@ -230,15 +238,15 @@ def code(idea_id: str, body: CodeIn, u: Annotated[User, Depends(need("coder"))])
         objections.code(dsn=_dsn(), idea_id=idea_id, reviewer=u.user, code_=body.code, note=body.note)
     except KeyError as e:
         raise HTTPException(404, str(e)) from e
-    except PermissionError as e:
-        raise HTTPException(409, str(e)) from e
+    except (PermissionError, psycopg.errors.UniqueViolation, psycopg.errors.RaiseException) as e:
+        raise HTTPException(409, "coder slot conflict: " + str(e).splitlines()[0]) from e
     return {"ok": True}
 
 
 # ----------------------------------------------------------------------------- 이의 처리
 
 @app.get("/api/objections")
-def list_objections(u: Me, status: Literal["open", "accepted", "rejected"] = "open") -> dict:
+def list_objections(u: Annotated[User, Depends(need("reviewer", "auditor"))], status: Literal["open", "accepted", "rejected"] = "open") -> dict:
     with db.connect(_dsn()) as conn:
         items = _rows(conn.execute(
             """SELECT o.id, o.idea_id, i.title, o.kind, o.body, o.status, o.submitted_at, o.pulled_at, o.resolution,
@@ -249,13 +257,14 @@ def list_objections(u: Me, status: Literal["open", "accepted", "rejected"] = "op
 
 
 class ResolveIn(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True)
     decision: Literal["accepted", "rejected"]
     resolution: str = Field(min_length=1, max_length=2000)
     withhold: bool = False
 
 
 @app.post("/api/objections/{objection_id}/resolve")
-def resolve(objection_id: int, body: ResolveIn, u: Annotated[User, Depends(need("reviewer"))]) -> dict:
+def resolve(objection_id: Annotated[int, Path(ge=1, le=2**63 - 1)], body: ResolveIn, u: Annotated[User, Depends(need("reviewer"))]) -> dict:
     try:
         objections.resolve(dsn=_dsn(), objection_id=objection_id, decision=body.decision,
                            resolution=body.resolution, by=u.user, withhold=body.withhold)

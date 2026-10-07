@@ -1,6 +1,6 @@
 import "server-only";
 import { cookies } from "next/headers";
-import { redirect } from "next/navigation";
+import { notFound, redirect } from "next/navigation";
 
 export const TOKEN_COOKIE = "bb_console_token";
 
@@ -28,10 +28,12 @@ async function raw(path: string, init?: RequestInit): Promise<Raw> {
   return { ok: res.ok, status: res.status, data, detail };
 }
 
-/** 성공 시 JSON 반환. 401은 로그인으로 이동, 그 외 오류는 detail 메시지로 던진다. */
+/** 성공 시 JSON 반환. 401은 로그인, 403은 권한 안내, 404는 없음 화면. 그 외 오류는 detail 메시지로 던진다. */
 export async function api<T = unknown>(path: string, init?: RequestInit): Promise<T> {
   const r = await raw(path, init);
-  if (r.status === 401) redirect("/login");
+  if (r.status === 401) redirect("/login?error=" + encodeURIComponent("로그인이 필요합니다."));
+  if (r.status === 403) redirect("/forbidden");
+  if (r.status === 404) notFound();
   if (!r.ok) throw new Error(r.detail);
   return r.data as T;
 }

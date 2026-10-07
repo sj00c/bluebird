@@ -531,11 +531,21 @@ def score_set(*, dsn: str, idea_id: str, scores: dict[str, int | None], evidence
 
 # ----------------------------------------------------------------------------- 5 검토·승인
 
+def _live_idea(conn, idea_id: str) -> None:
+    """승인 대상: 퇴역하지 않았고, 이의 수용으로 원본 공개를 멈추지(withheld) 않은 아이디어."""
+    row = conn.execute("SELECT withheld_at FROM core.idea WHERE id=%s AND retired_at IS NULL", (idea_id,)).fetchone()
+    if row is None:
+        raise KeyError(f"no live idea {idea_id}")
+    if row[0] is not None:
+        raise ValueError(f"{idea_id} is withheld since {row[0]:%Y-%m-%d} (objection); it cannot be approved")
+
+
 def approve(*, dsn: str, idea_id: str, by: str, note: str | None = None) -> dict:
     """최종 승인: 4단계까지 통과한 아이디어만. review(final) + publication(card·diagnosis·timeliness) +
     매칭된 바뀐 것(status=approved, publication change). 원인 근거가 없거나 S가 hold면 거부."""
     wording.check(note)
     with db.connect(dsn) as conn:
+        _live_idea(conn, idea_id)
         snap = conn.execute("SELECT max(id) FROM core.catalog_snapshot").fetchone()[0]
         row = conn.execute("SELECT s0, s1, s2, s3, s4 FROM core.funnel_stage(%s) WHERE idea_id=%s",
                            (snap, idea_id)).fetchone()
@@ -567,7 +577,10 @@ def approve(*, dsn: str, idea_id: str, by: str, note: str | None = None) -> dict
 
 def reject(*, dsn: str, idea_id: str, by: str, note: str) -> None:
     """반려: 아이디어·바뀐 것 공개를 모두 철회하고, 승인된 매칭은 후보로, weekly_top에서 뺀다."""
+    wording.check(note)
     with db.connect(dsn) as conn:
+        if conn.execute("SELECT 1 FROM core.idea WHERE id=%s AND retired_at IS NULL", (idea_id,)).fetchone() is None:
+            raise KeyError(f"no live idea {idea_id}")
         conn.execute("INSERT INTO core.review (target_type, target_id, reviewer, round, decision, note)"
                      " VALUES ('idea',%s,%s,'final','reject',%s)", (idea_id, by, note))
         conn.execute("SELECT core.revoke_idea(%s)", (idea_id,))

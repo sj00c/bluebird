@@ -10,6 +10,7 @@ from __future__ import annotations
 import random
 import re
 from datetime import datetime
+from uuid import UUID
 
 from . import db, wording
 
@@ -22,8 +23,8 @@ _CTRL = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]")
 
 def validate(row: tuple) -> tuple[dict | None, str | None]:
     """DMZ에서 온 행은 믿지 않는다: DB CHECK와 같은 규칙을 다시 검사하고 제어문자를 지운다."""
-    dmz_id, idea_id, kind, body, submitted_at = row
-    if not isinstance(dmz_id, int) or not isinstance(submitted_at, datetime):
+    dmz_id, dmz_uid, idea_id, kind, body, submitted_at = row
+    if not isinstance(dmz_id, int) or not isinstance(dmz_uid, UUID) or not isinstance(submitted_at, datetime):
         return None, "bad id/time"
     if not isinstance(idea_id, str) or not ID_RE.match(idea_id):
         return None, "bad idea_id"
@@ -34,16 +35,16 @@ def validate(row: tuple) -> tuple[dict | None, str | None]:
     body = _CTRL.sub("", body).strip()
     if not 1 <= len(body) <= MAX_BODY:
         return None, "bad body length"
-    return {"dmz_id": dmz_id, "idea_id": idea_id, "kind": kind, "body": body, "submitted_at": submitted_at}, None
+    return {"dmz_id": dmz_id, "dmz_uid": dmz_uid, "idea_id": idea_id, "kind": kind, "body": body, "submitted_at": submitted_at}, None
 
 
 def pull(*, dsn: str, inbox_dsn: str, limit: int = PULL_LIMIT) -> dict:
     """inbox에서 최대 limit건을 읽어 검증·저장한 뒤, 읽은 행만 DMZ에서 지운다(core 커밋 뒤). 다시 돌려도 안전하다."""
-    stats = {"read": 0, "stored": 0, "duplicate": 0, "invalid": 0, "unknown_idea": 0, "deleted": 0}
+    stats = {"read": 0, "stored": 0, "duplicate": 0, "invalid": 0, "unknown_idea": 0, "deleted": 0, "backlog": 0}
     with db.pipeline_run(dsn, "objections-pull") as run:
         with db.connect(inbox_dsn) as dmz:
             rows = dmz.execute(
-                "SELECT id, idea_id, kind, left(body, %s), submitted_at FROM inbox.objection ORDER BY id LIMIT %s",
+                "SELECT id, uid, idea_id, kind, left(body, %s), submitted_at FROM inbox.objection ORDER BY id LIMIT %s",
                 (MAX_BODY + 1, limit)).fetchall()
             dmz.rollback()
         stats["read"] = len(rows)
@@ -62,15 +63,18 @@ def pull(*, dsn: str, inbox_dsn: str, limit: int = PULL_LIMIT) -> dict:
                     stats["unknown_idea"] += 1
                     continue
                 n = core.execute(
-                    """INSERT INTO core.objection (dmz_id, idea_id, kind, body, submitted_at)
-                       VALUES (%(dmz_id)s,%(idea_id)s,%(kind)s,%(body)s,%(submitted_at)s)
-                       ON CONFLICT (dmz_id) DO NOTHING""", obj).rowcount
+                    """INSERT INTO core.objection (dmz_id, dmz_uid, idea_id, kind, body, submitted_at)
+                       VALUES (%(dmz_id)s,%(dmz_uid)s,%(idea_id)s,%(kind)s,%(body)s,%(submitted_at)s)
+                       ON CONFLICT (dmz_uid) DO NOTHING""", obj).rowcount
                 stats["stored" if n else "duplicate"] += 1
             core.commit()
         with db.connect(inbox_dsn) as dmz:
             stats["deleted"] = dmz.execute("DELETE FROM inbox.objection WHERE id = ANY(%s)",
                                            ([r[0] for r in rows],)).rowcount
             dmz.commit()
+            # 상한 때문에 남은 건수(다음 주기). 계속 쌓이면 스팸·처리 지연 신호다.
+            stats["backlog"] = dmz.execute("SELECT count(*) FROM inbox.objection").fetchone()[0]
+            dmz.rollback()
         run.update(stats)
     print(f"[objections] pull {stats}")
     return stats
@@ -156,8 +160,9 @@ def code(*, dsn: str, idea_id: str, reviewer: str, code_: str, note: str | None 
     if code_ not in ("T", "D", "R", "M", "C", "O", "U"):
         raise ValueError("code must be one of T D R M C O U")
     with db.connect(dsn) as conn:
+        # 표본 행을 잠가 같은 아이디어의 슬롯 배정을 줄 세운다(동시 첫 코드도 409로 끝난다).
         q = "SELECT 1 FROM core.coding_sample WHERE idea_id=%s" + (" AND sample_id=%s" if sample_id else "")
-        if conn.execute(q, (idea_id, sample_id) if sample_id else (idea_id,)).fetchone() is None:
+        if conn.execute(q + " FOR UPDATE", (idea_id, sample_id) if sample_id else (idea_id,)).fetchone() is None:
             raise KeyError(f"{idea_id} is not in a coding sample")
         slots = dict(conn.execute(
             """SELECT round, reviewer FROM core.review WHERE target_type='idea' AND target_id=%s

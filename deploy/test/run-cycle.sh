@@ -9,6 +9,9 @@ job() { dc --profile jobs run --rm backend-jobs "$@"; }
 dc build -q backend-jobs portal console
 dc up -d --wait core-db publish-db proxy
 job migrate --target core
+# backend-api 전용 역할(0008)에 로그인 비밀번호를 준다(.env API_DB_PASSWORD).
+dc exec -T core-db psql -U bluebird -d bluebird_core -v ON_ERROR_STOP=1 -q \
+  -c "ALTER ROLE bb_api LOGIN PASSWORD '$(grep ^API_DB_PASSWORD= .env | cut -d= -f2)'"
 job migrate --target publish
 
 job ingest "$@"
@@ -22,5 +25,5 @@ job objections pull
 job publish
 
 dc up -d --wait portal nginx
-dc up -d --wait --force-recreate backend-api console
+dc up -d --wait --force-recreate backend-api console console-gw
 echo "[cycle] done. http://localhost:$(grep BB_HTTP_PORT .env | cut -d= -f2)/pool  console: http://127.0.0.1:$(grep BB_CONSOLE_PORT .env | cut -d= -f2)"

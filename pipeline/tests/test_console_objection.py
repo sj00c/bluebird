@@ -166,7 +166,7 @@ def test_objection_round_trip(client, fresh):
             c.execute("INSERT INTO inbox.objection (idea_id, kind, body) VALUES (%s,%s,%s)", (idea, kind, body))
         c.commit()
     st = objections.pull(dsn=fresh, inbox_dsn=_inbox_dsn(pub), limit=2)  # 상한: 2건만
-    assert (st["read"], st["stored"], st["unknown_idea"], st["deleted"]) == (2, 1, 1, 2)
+    assert (st["read"], st["stored"], st["unknown_idea"], st["deleted"], st["backlog"]) == (2, 1, 1, 2, 1)
     st = objections.pull(dsn=fresh, inbox_dsn=_inbox_dsn(pub))
     assert (st["read"], st["stored"], st["deleted"]) == (1, 1, 1)
     with psycopg.connect(pub) as c:
@@ -195,13 +195,93 @@ def test_objection_round_trip(client, fresh):
     d = client.get(f"/api/ideas/{IID}", headers=H("rev")).json()
     assert d["stage"]["s5"] is False and d["idea"]["withheld_at"] is not None
     assert [o["status"] for o in d["objections"]] == ["accepted", "rejected"]
+    # 공개 중단된 아이디어는 깔때기·큐에서 빠지고, 다시 승인할 수 없다
+    assert client.get("/api/queue?stage=s2", headers=H("rev")).json()["counts"]["s0"] == 0
+    r = client.post(f"/api/ideas/{IID}/review", headers=H("rev"), json={"round": "final", "decision": "approve"})
+    assert r.status_code == 409 and "withheld" in r.json()["detail"]
+    assert client.post(f"/api/ideas/{IID}/review", headers=H("exp"),
+                       json={"round": "expert", "decision": "approve"}).status_code == 409
+
+
+def test_pull_survives_publish_db_rebuild(client, fresh):
+    """공개용 DB를 다시 만들어 DMZ id가 1부터 다시 시작해도 새 이의를 중복으로 버리지 않는다(uuid로 판정)."""
+    _to_stage4(fresh)
+    client.post(f"/api/ideas/{IID}/review", headers=H("rev"), json={"round": "final", "decision": "approve"})
+    for n in (1, 2):
+        pub = _pub_db()
+        publish.push(core_dsn=fresh, publish_dsn=pub)
+        with psycopg.connect(pub) as c:
+            c.execute("INSERT INTO inbox.objection (idea_id, kind, body) VALUES (%s,'fact',%s)", (IID, f"이의 {n}"))
+            c.commit()
+        st = objections.pull(dsn=fresh, inbox_dsn=pub)
+        assert (st["stored"], st["duplicate"]) == (1, 0)
+    with psycopg.connect(fresh) as c:
+        assert c.execute("SELECT array_agg(dmz_id ORDER BY id) FROM core.objection").fetchone()[0] == [1, 1]
+
+
+def test_coder_only_cannot_see_predictions_or_objections(client, fresh):
+    _to_stage4(fresh)
+    for path in ("/api/queue?stage=s4", f"/api/ideas/{IID}", "/api/objections"):
+        assert client.get(path, headers=H("ca")).status_code == 403, path
+    assert client.post(f"/api/ideas/{IID}/review", headers=H("ca"),
+                       json={"round": "final", "decision": "approve"}).status_code == 403
+    assert client.get("/api/objections", headers=H("exp")).status_code == 403
+    # 공백뿐인 처리 내용은 422, 범위 밖 id는 422
+    assert client.post("/api/objections/1/resolve", headers=H("rev"),
+                       json={"decision": "rejected", "resolution": "   "}).status_code == 422
+    assert client.post(f"/api/objections/{2**63}/resolve", headers=H("rev"),
+                       json={"decision": "rejected", "resolution": "x"}).status_code == 422
+    # 없는 아이디어 반려는 기록을 남기지 않고 404
+    assert client.post("/api/ideas/ID-2019-bbbbbbbbbb/review", headers=H("rev"),
+                       json={"round": "final", "decision": "reject", "note": "x"}).status_code == 404
+    with psycopg.connect(fresh) as c:
+        assert c.execute("SELECT count(*) FROM core.review WHERE target_id='ID-2019-bbbbbbbbbb'").fetchone()[0] == 0
+
+
+def test_api_works_as_least_privilege_role(fresh, tmp_path, monkeypatch):
+    """backend-api는 bb_api 역할로 승인·반려·이의 처리·코딩을 할 수 있고, DDL·원본 수정은 못 한다."""
+    from fastapi.testclient import TestClient
+
+    from bluebird import api
+    _to_stage4(fresh)
+    with psycopg.connect(DSN, autocommit=True) as c:
+        c.execute("ALTER ROLE bb_api LOGIN PASSWORD 'apitest'")
+    api_dsn = fresh.replace("postgres:t@", "bb_api:apitest@")
+    users = {hashlib.sha256(t.encode()).hexdigest(): {"user": u, "roles": r} for t, (u, r) in TOKENS.items()}
+    (tmp_path / "u.json").write_text(json.dumps(users))
+    monkeypatch.setenv("BB_API_USERS", str(tmp_path / "u.json"))
+    monkeypatch.setenv("BB_DSN", api_dsn)
+    api._users.cache_clear()
+    cl = TestClient(api.app)
+    assert cl.post(f"/api/ideas/{IID}/review", headers=H("rev"), json={"round": "final", "decision": "approve"}
+                   ).status_code == 200
+    assert cl.post(f"/api/ideas/{IID}/review", headers=H("rev"),
+                   json={"round": "final", "decision": "reject", "note": "재검토"}).status_code == 200
+    with psycopg.connect(fresh) as c:
+        c.execute("INSERT INTO core.coding_sample VALUES ('k',%s,'s',1)", (IID,))
+        c.execute("INSERT INTO core.objection (dmz_id, idea_id, kind, body, submitted_at) VALUES (1,%s,'privacy','b',now())",
+                  (IID,))
+        c.commit()
+    assert cl.post(f"/api/coding/{IID}", headers=H("ca"), json={"code": "R"}).status_code == 200
+    oid = cl.get("/api/objections", headers=H("rev")).json()["items"][0]["id"]
+    assert cl.post(f"/api/objections/{oid}/resolve", headers=H("rev"),
+                   json={"decision": "accepted", "resolution": "내림", "withhold": True}).status_code == 200
+    api._users.cache_clear()
+    with psycopg.connect(api_dsn) as c:
+        for sql in ("CREATE TABLE core.x (a int)", "UPDATE core.idea SET title='x'", "DELETE FROM core.review",
+                    "SELECT 1 FROM core.egress_call"):
+            with pytest.raises(psycopg.errors.InsufficientPrivilege):
+                c.execute(sql)
+            c.rollback()
 
 
 def test_pull_validation():
     from datetime import UTC, datetime
-    now = datetime.now(UTC)
-    assert objections.validate((1, IID, "fact", " a\x00b ", now))[0]["body"] == "ab"
-    assert objections.validate((1, "ID-19-x", "fact", "a", now))[1] == "bad idea_id"
-    assert objections.validate((1, IID, "spam", "a", now))[1] == "bad kind"
-    assert objections.validate((1, IID, "fact", "\x01", now))[1] == "bad body length"
-    assert objections.validate((1, IID, "fact", "a" * 2001, now))[1] == "bad body length"
+    from uuid import uuid4
+    now, u = datetime.now(UTC), uuid4()
+    assert objections.validate((1, u, IID, "fact", " a\x00b ", now))[0]["body"] == "ab"
+    assert objections.validate((1, "x", IID, "fact", "a", now))[1] == "bad id/time"
+    assert objections.validate((1, u, "ID-19-x", "fact", "a", now))[1] == "bad idea_id"
+    assert objections.validate((1, u, IID, "spam", "a", now))[1] == "bad kind"
+    assert objections.validate((1, u, IID, "fact", "\x01", now))[1] == "bad body length"
+    assert objections.validate((1, u, IID, "fact", "a" * 2001, now))[1] == "bad body length"

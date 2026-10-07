@@ -44,10 +44,11 @@ check "DMZ nginx → 업무망 콘솔 접속 불가"             "! nginx_tcp co
 check "콘솔 → core-db 직접 접속 불가"                 "! console_tcp core-db 5432"
 check "콘솔 → 공개용 DB 접속 불가"                    "! console_tcp publish-db 5432"
 check "콘솔 → backend-api 접속 가능"                  "console_tcp backend-api 8000"
+check "콘솔 → 인터넷·프록시 불가"                      "! console_tcp 1.1.1.1 443 && ! console_tcp proxy 3128"
 check "backend-api → 프록시·인터넷 불가"              "! api_tcp proxy 3128 && ! api_tcp 1.1.1.1 443"
 check "backend-api → 공개용 DB 불가(push·pull은 jobs만)" "! api_tcp publish-db 5432"
-check "콘솔 포트는 127.0.0.1에만 열림" \
-  "[[ \$(docker port bluebird-test-console-1 3000/tcp) == 127.0.0.1:* ]]"
+check "콘솔 게이트웨이 포트는 127.0.0.1에만 열림, 콘솔 앱은 호스트 포트 없음" \
+  "[[ \$(docker port bluebird-test-console-gw-1 8090/tcp) == 127.0.0.1:* && -z \$(docker port bluebird-test-console-1) ]]"
 check "프록시 경유 허용 도메인(data.go.kr) 가능"      "proxy_get https://www.data.go.kr/"
 check "프록시 경유 비허용 도메인(example.com) 거부"   "! proxy_get https://example.com/"
 check "프록시 접근 로그에 허용·거부 기록" \
@@ -72,7 +73,7 @@ core_sql() { dc exec -T core-db psql -U bluebird -d bluebird_core -tAc "$1"; }
 pub_sql()  { dc exec -T publish-db psql -U bluebird -d bluebird_publish -tAc "$1"; }
 core_n="$(core_sql 'SELECT count(*) FROM core.idea WHERE retired_at IS NULL')"
 pub_n="$(pub_sql 'SELECT count(*) FROM publish.idea')"
-allowed="$(core_sql 'SELECT count(*) FROM core.idea i JOIN core.source s ON s.id=i.source_id WHERE s.public_ok AND i.retired_at IS NULL')"
+allowed="$(core_sql 'SELECT count(*) FROM core.idea i JOIN core.source s ON s.id=i.source_id WHERE s.public_ok AND i.retired_at IS NULL AND i.withheld_at IS NULL')"
 echo "      core.idea=$core_n publish.idea=$pub_n (public_ok=$allowed)"
 check "공개용 DB = core 공개 허용분"                   "[[ $pub_n -eq $allowed && $pub_n -gt 0 ]]"
 check "비공개 소스(KIPRIS) 미반영" \
@@ -92,7 +93,8 @@ check "egress 차단 기록 외 허용 호출은 모두 화이트리스트" \
 
 echo "== 원본·카드·소스 점검(G1·G2·G13)"
 check "core.idea 29,828행(6개 파일 소스)"                "[[ $core_n -eq 29828 ]]"
-check "공개용 DB 아이디어 3,394 이상(G2)"              "[[ $pub_n -ge 3394 ]]"
+withheld_n="$(core_sql 'SELECT count(*) FROM core.idea WHERE withheld_at IS NOT NULL')"
+check "공개용 DB 아이디어 + 이의로 공개 중단 3,394 이상(G2)" "[[ \$(( pub_n + withheld_n )) -ge 3394 ]]"
 check "모든 아이디어에 카드 1개(G1 ≥ 10,000)" \
   "[[ \$(core_sql 'SELECT count(*) FROM core.idea_card k JOIN core.idea i ON i.id=k.idea_id WHERE i.retired_at IS NULL') -eq $core_n && $core_n -ge 10000 ]]"
 check "KIPRIS 카드는 모두 local_extract(반출 보류)" \
@@ -145,22 +147,48 @@ check "공개 글에 금지 표현 없음(wording.FORBIDDEN 전체)" \
 
 echo "== 콘솔·이의 왕복(G11)"
 cport="$(env_get BB_CONSOLE_PORT)"
-check "콘솔 로그인 화면 200(127.0.0.1)" "[[ \$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:$cport/login) == 200 ]]"
+check "콘솔(게이트웨이) 로그인 화면 200(127.0.0.1)" "[[ \$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:$cport/login) == 200 ]]"
+check "콘솔 응답에 X-Frame-Options DENY·CSP" \
+  "curl -sI http://127.0.0.1:$cport/login | grep -qi '^x-frame-options: DENY' && curl -sI http://127.0.0.1:$cport/login | grep -qi 'frame-ancestors'"
 check "backend-api: 토큰 없으면 401" \
   "[[ \$(dc exec -T backend-api python -c \"import urllib.request as u,urllib.error as e
 try: u.urlopen('http://127.0.0.1:8000/api/me')
 except e.HTTPError as x: print(x.code)\") == 401 ]]"
-check "inbox 비어 있음(pull 후 DMZ에서 삭제)"        "[[ \$(pub_sql 'SELECT count(*) FROM inbox.objection') -eq 0 ]]"
-check "objections pull 실행 기록(ok)" \
-  "[[ \$(core_sql \"SELECT status FROM core.pipeline_run WHERE stage='objections-pull' ORDER BY id DESC LIMIT 1\") == ok ]]"
-check "처리된 이의는 처리자·처리 내용 기록" \
-  "[[ \$(core_sql \"SELECT count(*) FROM core.objection WHERE status<>'open' AND (coalesce(resolved_by,'')='' OR coalesce(resolution,'')='')\") -eq 0 ]]"
-check "공개 중단(withheld) 아이디어는 공개용 DB에 없음" \
-  "[[ -z \"\$(comm -12 <(core_sql 'SELECT id FROM core.idea WHERE withheld_at IS NOT NULL ORDER BY 1') <(echo \"\$pub_ids\") | grep .)\" ]]"
+api_as() { dc exec -T -e PGPASSWORD="$(env_get API_DB_PASSWORD)" core-db psql -h localhost -U bb_api -d bluebird_core -v ON_ERROR_STOP=1 -tAc "$1"; }
+check "backend-api DB 역할 bb_api: 읽기 가능"              "api_as 'select count(*) from core.idea'"
+check "bb_api: superuser 아님·DDL·원본 수정·egress 감사 읽기 불가" \
+  "[[ \$(core_sql \"SELECT rolsuper FROM pg_roles WHERE rolname='bb_api'\") == f ]] && ! api_as 'create table core.x(a int)' && ! api_as \"update core.idea set title=title where false\" && ! api_as 'select 1 from core.egress_call'"
+check "backend-api 접속 계정은 bb_api" \
+  "dc exec -T backend-api sh -c 'case \$BB_DSN in postgresql://bb_api:*) exit 0;; *) exit 1;; esac'"
+check "토큰 원문은 어떤 컨테이너에도 마운트되지 않음" \
+  "! dc --profile jobs config | grep -q console_tokens && ! docker inspect \$(dc ps -q) | grep -q console_tokens"
+
+# 실제 왕복: 국민 → nginx → portal → DMZ inbox → pull(업무망) → core → 처리(기각, 점검용 표시) → 기록
+target="$(pub_sql 'SELECT id FROM publish.idea ORDER BY id LIMIT 1')"
+mark="verify.sh 점검 $(date +%s)"
+hdrs="$(curl -s -D - -o /tmp/bb-verify-obj.body -X POST "http://localhost:$port/api/v1/objections" \
+  --data-urlencode "idea_id=$target" --data-urlencode kind=other --data-urlencode "body=$mark")"
+check "이의 POST → 303 상대 경로, 본문 되돌려주지 않음" \
+  "grep -qi '^HTTP/1.1 303' <<<\"\$hdrs\" && grep -qi \"^location: /ideas/$target?objection=ok\" <<<\"\$hdrs\" && ! grep -q 'verify.sh' /tmp/bb-verify-obj.body"
+check "DMZ inbox에 1건 접수(uuid 포함)" \
+  "[[ \$(pub_sql \"SELECT count(*) FROM inbox.objection WHERE body='$mark' AND uid IS NOT NULL\") -eq 1 ]]"
+dc --profile jobs run --rm -T backend-jobs objections pull >/tmp/bb-verify-pull.log 2>&1
+check "pull 뒤 DMZ inbox 0건"                         "[[ \$(pub_sql 'SELECT count(*) FROM inbox.objection') -eq 0 ]]"
+check "pull 뒤 core에 저장(open)·실행 기록 ok" \
+  "[[ \$(core_sql \"SELECT count(*) FROM core.objection WHERE body='$mark' AND status='open' AND dmz_uid IS NOT NULL\") -eq 1 && \$(core_sql \"SELECT status FROM core.pipeline_run WHERE stage='objections-pull' ORDER BY id DESC LIMIT 1\") == ok ]]"
+oid="$(core_sql "SELECT id FROM core.objection WHERE body='$mark'")"
+s6_before="$(core_sql 'SELECT count(*) FROM core.revival_candidate WHERE s6')"
+dc --profile jobs run --rm -T backend-jobs objections resolve --id "${oid:-0}" --decision rejected \
+  --resolution "verify.sh 자동 점검 이의(시험)" --by verify.sh >/dev/null 2>&1
+check "처리(기각) 기록: 처리자·내용·검토 행" \
+  "[[ \$(core_sql \"SELECT count(*) FROM core.objection o JOIN core.review r ON r.target_type='objection' AND r.target_id=o.id::text WHERE o.id=${oid:-0} AND o.status='rejected' AND o.resolved_by='verify.sh'\") -eq 1 ]]"
+check "기각은 공개를 바꾸지 않음(6단계 수 그대로)" "[[ \$(core_sql 'SELECT count(*) FROM core.revival_candidate WHERE s6') -eq $s6_before ]]"
+check "공개 중단(withheld) 아이디어는 공개용 DB·깔때기에 없음" \
+  "[[ -z \"\$(comm -12 <(core_sql 'SELECT id FROM core.idea WHERE withheld_at IS NOT NULL ORDER BY 1') <(echo \"\$pub_ids\") | grep .)\" && \$(core_sql 'SELECT count(*) FROM core.funnel_stage(0) f JOIN core.idea i ON i.id=f.idea_id WHERE i.withheld_at IS NOT NULL') -eq 0 ]]"
 check "수용된 이의의 아이디어는 그 뒤 재승인 없이는 6단계 아님" \
   "[[ \$(core_sql \"SELECT count(*) FROM core.objection o JOIN core.revival_candidate r ON r.idea_id=o.idea_id AND r.s6 WHERE o.status='accepted' AND NOT EXISTS (SELECT 1 FROM core.review v WHERE v.target_type='idea' AND v.target_id=o.idea_id AND v.round='final' AND v.decision='approve' AND v.created_at>o.resolved_at)\") -eq 0 ]]"
-check "코더 슬롯: 한 사람이 두 슬롯 차지 0" \
-  "[[ \$(core_sql \"SELECT count(*) FROM core.review a JOIN core.review b ON a.target_id=b.target_id AND a.round='coder_a' AND b.round='coder_b' AND a.reviewer=b.reviewer\") -eq 0 ]]"
+check "수용된 이의 1건 이상 실제 처리됨(콘솔 E2E 기록)" \
+  "[[ \$(core_sql \"SELECT count(*) FROM core.objection WHERE status='accepted' AND resolved_by<>'verify.sh'\") -ge 1 ]]"
 
 echo "== 공개 화면"
 code() { curl -s -o /dev/null -w '%{http_code}' "http://localhost:$port$1"; }

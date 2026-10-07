@@ -67,7 +67,7 @@ z1-collect ──L1 망연계(파일)──▶ z2-app(importer/worker/publisher)
 | DB | 위치 | 스키마 | 계정 | 권한 |
 |---|---|---|---|---|
 | `bluebird_core` | z2-db | `core` | `bluebird` | 소유자(마이그레이션·적재·처리) |
-| | | | `bluebird_console` (예정) | 검토 테이블 쓰기 |
+| | | | `bb_api` (backend-api, 마이그레이션 0008) | core 읽기 + 검토·공개 승인·이의 처리 열만 쓰기, NOSUPERUSER |
 | | | | `bluebird_ro` | 백업·감사 조회 |
 | `bluebird_publish` | z3-db | `publish` | `bluebird` | 소유자(스냅샷 교체) |
 | | | | `bluebird_portal` | SELECT 전용 |
