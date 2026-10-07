@@ -545,11 +545,8 @@ def approve(*, dsn: str, idea_id: str, by: str, note: str | None = None) -> dict
         if failed:
             raise ValueError(f"{idea_id} has not passed {failed[0]} (stage flags {row})")
         mids = [r[0] for r in conn.execute(
-            """SELECT m.id FROM core.change_match m JOIN core.condition_change c ON c.id = m.change_id
-                 JOIN core.diagnosis d ON d.idea_id = m.idea_id
-                 JOIN core.cause_change_kind ck ON ck.cause = d."primary" AND ck.kind = c.kind
-                WHERE m.idea_id=%s AND m.llm_verdict IN ('yes','partial','human') AND m.status <> 'rejected'""",
-            (idea_id,))]
+            "SELECT m.id FROM core.change_match m WHERE m.idea_id=%s AND core.match_eligible(m.id, %s)",
+            (idea_id, snap))]
         conn.execute("INSERT INTO core.review (target_type, target_id, reviewer, round, decision, note)"
                      " VALUES ('idea',%s,%s,'final','approve',%s)", (idea_id, by, note))
         for scope in ("card", "diagnosis", "timeliness"):

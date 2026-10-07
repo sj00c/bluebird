@@ -55,10 +55,8 @@ _IDEA_LIVE = """(SELECT count(DISTINCT pi.scope) FROM core.publication pi
         WHERE pi.target_type = 'idea' AND pi.target_id = {idea} AND pi.revoked_at IS NULL
           AND pi.scope IN ('card', 'diagnosis', 'timeliness')) = 3
         AND {idea} IN (SELECT idea_id FROM pg_temp.stage5)"""
-# 매칭 m이 지금 원인과 맞고, 아이디어 공개가 살아 있음
-_LIVE_FIT = ("""EXISTS (SELECT 1 FROM core.diagnosis dd JOIN core.cause_change_kind ck ON ck.cause = dd."primary"
-                 WHERE dd.idea_id = m.idea_id
-                   AND ck.kind = (SELECT kind FROM core.condition_change WHERE id = m.change_id))
+# 매칭 m이 지금도 3단계를 채우고(core.match_eligible), 아이디어 공개가 살아 있음
+_LIVE_FIT = ("""core.match_eligible(m.id, coalesce((SELECT max(id) FROM core.catalog_snapshot), -1))
         AND """ + _IDEA_LIVE.format(idea="m.idea_id"))
 
 QUERIES: dict[str, tuple[tuple[str, ...], str]] = {

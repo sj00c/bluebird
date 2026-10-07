@@ -466,3 +466,72 @@ def test_cards_llm_path_fallback_and_full_check(fresh, tmp_path, monkeypatch):
     with psycopg.connect(fresh) as c:
         assert c.execute("SELECT card_kind, extractor, missing_data FROM core.idea_card"
                          " WHERE idea_id='ID-2019-aaaaaaaaaa'").fetchone() == ("title_only", "rule", [])
+
+
+def test_only_eligible_matches_are_approved_and_published(fresh):
+    """적격 매칭 하나 + 미래 날짜 매칭 하나: 승인·공개되는 것은 적격 매칭뿐."""
+    from bluebird import funnel
+
+    with psycopg.connect(fresh) as c:
+        _seed_idea(c)
+        c.execute("UPDATE core.source SET public_ok = true WHERE id='s'")
+        c.execute("INSERT INTO core.catalog_snapshot VALUES (0,'2026-10-06','f','x',0,0)")
+        c.commit()
+    iid = "ID-2019-aaaaaaaaaa"
+    funnel.trace_manual(dsn=fresh, idea_id=iid, result="none", status=None, url=None, note="없음", by="t")
+    funnel.diagnose_set(dsn=fresh, idea_id=iid, cause="M", rationale="정책", evidence=[("https://a.kr/m", "정책")],
+                        by="t")
+    ok = funnel.change_add(dsn=fresh, kind="policy_news", url="https://a.kr/now", title="시행된 정책",
+                           occurred_at=date(2026, 1, 1), by="t")
+    later = funnel.change_add(dsn=fresh, kind="policy_news", url="https://a.kr/later", title="예정 정책",
+                              occurred_at=date(2099, 1, 1), by="t")
+    for cid in (ok, later):
+        funnel.match_set(dsn=fresh, change_id=cid, idea_id=iid, verdict="human", what_changed=["정책"],
+                         how_now="신청 가능", by="t")
+    funnel.score_set(dsn=fresh, idea_id=iid, scores={"policy": 4, "tech": 4},
+                     evidence={"policy": "https://a.kr/now", "tech": "https://a.kr/t"}, by="t")
+    assert len(funnel.approve(dsn=fresh, idea_id=iid, by="t")["changes"]) == 1
+    pub = _pub_db()
+    publish.push(core_dsn=fresh, publish_dsn=pub)
+    with psycopg.connect(pub) as c:
+        assert [r[0] for r in c.execute("SELECT url FROM publish.change")] == ["https://a.kr/now"]
+    # 승인된 뒤 강제로 미래 매칭까지 approved로 바꿔도 공개되지 않는다
+    with psycopg.connect(fresh) as c:
+        c.execute("UPDATE core.change_match SET status='approved' WHERE change_id=%s", (later,))
+        c.execute("INSERT INTO core.publication (target_type, target_id, scope, approved_by)"
+                  " SELECT 'change_match', id::text, 'change', 't' FROM core.change_match WHERE change_id=%s", (later,))
+        c.commit()
+    publish.push(core_dsn=fresh, publish_dsn=pub)
+    with psycopg.connect(pub) as c:
+        assert [r[0] for r in c.execute("SELECT url FROM publish.change")] == ["https://a.kr/now"]
+
+
+def test_manual_announcement_path_reaches_stage3(fresh):
+    """키 없는 공고 경로(G7 대체): 사람이 K-Startup URL을 넣으면 egress로 열어 fetched, 원인 C 아이디어와 매칭 → 3단계."""
+    import httpx
+
+    from bluebird import announce, funnel
+    from bluebird.egress import Egress, Policy, db_recorder
+
+    with psycopg.connect(fresh) as c:
+        _seed_idea(c)
+        c.execute("INSERT INTO core.catalog_snapshot VALUES (0,'2026-10-06','f','x',0,0)")
+        c.commit()
+        pol = Policy.load(c)
+    eg = Egress(policy=pol, recorder=db_recorder(fresh), proxy="",
+                transport=httpx.MockTransport(lambda req: httpx.Response(200, text="<html>공고</html>")))
+    aid = announce.add(dsn=fresh, url="https://www.k-startup.go.kr/web/contents/bizpbanc-ongoing.do?pbancSn=176001",
+                       title="2026 예비창업패키지", org="창업진흥원", apply_from=date(2026, 3, 1),
+                       apply_to=date(2026, 3, 31), summary=None, by="t", egress=eg)
+    iid = "ID-2019-aaaaaaaaaa"
+    funnel.trace_manual(dsn=fresh, idea_id=iid, result="none", status=None, url=None, note="없음", by="t")
+    funnel.diagnose_set(dsn=fresh, idea_id=iid, cause="C", rationale="사업화 자금", evidence=[("https://a.kr/c", "자금")],
+                        by="t")
+    with psycopg.connect(fresh) as c:
+        st = c.execute("SELECT verify_status, egress_call_id IS NOT NULL FROM core.condition_change WHERE ref_id=%s",
+                       (aid,)).fetchone()
+    assert st == ("fetched", True)
+    funnel.match_set(dsn=fresh, change_id=f"announcement:{aid}", idea_id=iid, verdict="human",
+                     what_changed=["예비창업 지원"], how_now="예비창업패키지에 신청할 수 있다", by="t")
+    with psycopg.connect(fresh) as c:
+        assert c.execute("SELECT s3 FROM core.revival_candidate WHERE idea_id=%s", (iid,)).fetchone()[0] is True

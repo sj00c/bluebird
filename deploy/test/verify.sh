@@ -124,8 +124,9 @@ check "사람이 넣은 바뀐 것은 입력자 기록" \
   "[[ \$(core_sql \"SELECT count(*) FROM core.condition_change WHERE origin='human' AND coalesce(added_by,'')=''\") -eq 0 ]]"
 check "공개 S는 now/conditional만" \
   "[[ \$(pub_sql \"SELECT count(*) FROM publish.timeliness WHERE verdict NOT IN ('now','conditional')\") -eq 0 ]]"
-check "공개 글에 금지 표현 없음(그때 없던 등)" \
-  "! pub_sql \"SELECT rationale FROM publish.diagnosis UNION ALL SELECT title||' '||coalesce(how_now,'')||' '||array_to_string(what_changed,' ') FROM publish.change UNION ALL SELECT coalesce(excerpt,'') FROM publish.evidence\" | grep -qE '그때 없던|당시 없었던|당시 미개방이던|그 당시 존재하지 않'"
+own_text="$(pub_sql "SELECT rationale FROM publish.diagnosis UNION ALL SELECT coalesce(how_now,'')||' '||array_to_string(what_changed,' ') FROM publish.change UNION ALL SELECT coalesce(resolve_condition,'') FROM publish.timeliness UNION ALL SELECT coalesce(problem,'')||' '||coalesce(solution,'') FROM publish.idea WHERE problem IS NOT NULL OR solution IS NOT NULL")"
+check "공개 글에 금지 표현 없음(wording.FORBIDDEN 전체)" \
+  "printf '%s' \"\$own_text\" | ( cd ../../pipeline && uv run --quiet python -c 'import sys; from bluebird import wording; sys.exit(1 if wording.find(sys.stdin.read()) else 0)' )"
 
 echo "== 공개 화면"
 code() { curl -s -o /dev/null -w '%{http_code}' "http://localhost:$port$1"; }

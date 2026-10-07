@@ -12,6 +12,8 @@ import os
 import re
 from datetime import date
 
+from psycopg.types.json import Jsonb
+
 from . import db, wording
 from .egress import Egress
 
@@ -56,17 +58,25 @@ def parse_kstartup(payload: dict) -> tuple[list[dict], int]:
     return out, len(raw)
 
 
-def _upsert(conn, a: dict, origin: str, by: str | None) -> None:
+def _upsert(conn, a: dict, origin: str, by: str | None, verify: tuple[str, dict | None, int | None] | None = None) -> None:
+    """verify = (verify_status, verify_detail, egress_call_id). API 적재는 API 응답 자체가 확인이라 None."""
+    status, detail, call_id = verify or (None, None, None)
     conn.execute(
         """INSERT INTO core.announcement (id, source, title, summary, org, apply_from, apply_to, url)
            VALUES (%(id)s,%(source)s,%(title)s,%(summary)s,%(org)s,%(apply_from)s,%(apply_to)s,%(url)s)
            ON CONFLICT (id) DO UPDATE SET title=EXCLUDED.title, summary=EXCLUDED.summary, org=EXCLUDED.org,
              apply_from=EXCLUDED.apply_from, apply_to=EXCLUDED.apply_to, url=EXCLUDED.url, loaded_at=now()""", a)
     conn.execute(
-        """INSERT INTO core.condition_change (id, kind, ref_id, occurred_at, url, title, origin, added_by)
-           VALUES (%s,'announcement',%s,%s,%s,%s,%s,%s)
-           ON CONFLICT (kind, ref_id) DO UPDATE SET title=EXCLUDED.title, url=EXCLUDED.url""",
-        (f"announcement:{a['id']}", a["id"], a["apply_from"], a["url"], a["title"], origin, by))
+        """INSERT INTO core.condition_change (id, kind, ref_id, occurred_at, url, title, origin, added_by,
+             verify_status, verify_detail, egress_call_id)
+           VALUES (%s,'announcement',%s,%s,%s,%s,%s,%s,%s,%s,%s)
+           ON CONFLICT (kind, ref_id) DO UPDATE SET title=EXCLUDED.title, url=EXCLUDED.url,
+             occurred_at=EXCLUDED.occurred_at, verify_status=coalesce(EXCLUDED.verify_status,
+             core.condition_change.verify_status), verify_detail=coalesce(EXCLUDED.verify_detail,
+             core.condition_change.verify_detail), egress_call_id=coalesce(EXCLUDED.egress_call_id,
+             core.condition_change.egress_call_id)""",
+        (f"announcement:{a['id']}", a["id"], a["apply_from"], a["url"], a["title"], origin, by, status,
+         Jsonb(detail) if detail else None, call_id))
 
 
 def fetch(*, dsn: str, pages: int = 3, per_page: int = 100, egress: Egress | None = None) -> dict:
@@ -110,14 +120,16 @@ def add(*, dsn: str, url: str, title: str, org: str | None, apply_from: date | N
     if apply_from is None:
         raise ValueError("--apply-from(접수 시작일)이 필요하다: 바뀐 것의 날짜로 쓴다")
     wording.check(title, summary)
+    verify: tuple[str, dict | None, int | None] = ("attested", None, None)
     if egress is not None:
         r = egress.get("collect", url, path_template="/web/contents/bizpbanc")
         if r.status != 200:
             raise ValueError(f"{url} returned HTTP {r.status}")
+        verify = ("fetched", {"http_status": r.status, "bytes": len(r.content)}, r.egress_call_id)
     sn = url.rstrip("/").split("pbancSn=")[-1].split("&")[0] if "pbancSn=" in url else url
     a = {"id": f"kstartup:{sn}", "source": "manual", "title": title, "summary": summary, "org": org,
          "apply_from": apply_from, "apply_to": apply_to, "url": url}
     with db.connect(dsn) as conn:
-        _upsert(conn, a, "human", by)
+        _upsert(conn, a, "human", by, verify)
         conn.commit()
     return a["id"]
