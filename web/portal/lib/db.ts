@@ -1,7 +1,7 @@
 import "server-only";
 import { Pool } from "pg";
 
-// DMZ 공개용 DB. bb_portal 계정: publish 읽기 + inbox 이의 INSERT만.
+// 공개 DB. bb_portal 계정: publish 읽기 + inbox 이의 INSERT만.
 const globalForPool = globalThis as unknown as { bbPool?: Pool };
 
 export const pool =

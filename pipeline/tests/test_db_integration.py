@@ -344,7 +344,7 @@ def test_funnel_end_to_end_human_path(fresh, tmp_path):
                          (iid,)).fetchone()[0] == 1  # 이전 원인(R)의 근거는 떨어졌다
 
 def test_s6_needs_applied_snapshot_and_future_change_does_not_pass(fresh):
-    """push가 DMZ에 반영되지 않으면(applied_at 없음) 6단계가 아니다. 시행일이 미래인 바뀐 것은 3단계를 통과하지 않는다."""
+    """push가 공개 DB에 반영되지 않으면(applied_at 없음) 6단계가 아니다. 시행일이 미래인 바뀐 것은 3단계를 통과하지 않는다."""
     from bluebird import funnel
 
     with psycopg.connect(fresh) as c:

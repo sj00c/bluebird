@@ -1,6 +1,6 @@
 """bluebird CLI. 경로·DSN은 인자 또는 환경변수(BB_*)로 받는다.
 
-업무망 backend-jobs가 실행한다. 외부 호출은 egress 모듈을 거쳐 DMZ 프록시로만 나간다.
+처리 작업(./demo.sh job …)이 실행한다. 외부 호출은 egress 모듈(허용 호스트·기록)로만 나간다.
 """
 
 from __future__ import annotations
@@ -59,7 +59,7 @@ def main(argv: list[str] | None = None) -> int:
     chk.add_argument("--seed-dir", type=Path, default=_p("BB_SEED_DIR"))
     chk.add_argument("--secret", type=Path, default=_p("BB_ANON_SECRET"))
 
-    pb = sub.add_parser("publish", help="승인분 → DMZ 공개용 DB 교체(push)")
+    pb = sub.add_parser("publish", help="승인분 → 공개 DB 교체(push)")
     pb.add_argument("--dsn", default=_env("BB_DSN"))
     pb.add_argument("--publish-dsn", default=_env("BB_PUBLISH_DSN"))
 
@@ -75,9 +75,9 @@ def main(argv: list[str] | None = None) -> int:
     cf.add_argument("--no-import", action="store_true")
     cf.add_argument("--taken-at", type=date.fromisoformat, default=None, help="기본: 오늘(KST)")
 
-    ob = sub.add_parser("objections", help="이의 제기(G11): DMZ inbox pull, 처리")
+    ob = sub.add_parser("objections", help="이의 제기(G11): 공개 DB 접수함 pull, 처리")
     obs = ob.add_subparsers(dest="sub", required=True)
-    x = obs.add_parser("pull", help="inbox → core.objection(검증·상한) 후 DMZ에서 삭제")
+    x = obs.add_parser("pull", help="접수함 → core.objection(검증·상한) 후 접수함에서 삭제")
     x.add_argument("--dsn", default=_env("BB_DSN"))
     x.add_argument("--inbox-dsn", default=_env("BB_INBOX_DSN"))
     x.add_argument("--limit", type=int, default=objections.PULL_LIMIT)
@@ -122,11 +122,11 @@ def main(argv: list[str] | None = None) -> int:
     x.add_argument("--dsn", default=_env("BB_DSN"))
     x.add_argument("--publish-dsn", default=_env("BB_PUBLISH_DSN"))
     x.add_argument("--inbox-dsn", default=_env("BB_INBOX_DSN"))
-    x.add_argument("--p95-ms", type=float, help="deploy/test/p95.sh 결과")
+    x.add_argument("--p95-ms", type=float, help="deploy/local/p95.sh 결과")
     x.add_argument("--week", type=date.fromisoformat)
     x.add_argument("--top-target", type=int, default=kpi.TOP_TARGET, help="G5 목표(E3 승인 시 조정)")
     x.add_argument("--kappa-sample", help="G3 기준 표본 id(없으면 100건 이상 중 최근)")
-    # G10 성명 일치 대조: 원본 파일·익명화 키(업무망 backend에만 있음). 없으면 G10은 진행 중으로 남는다.
+    # G10 성명 일치 대조: 원본 파일·익명화 키(처리 작업에만 있음). 없으면 G10은 진행 중으로 남는다.
     x.add_argument("--config", type=Path, default=_p("BB_SOURCES"))
     x.add_argument("--seed-dir", type=Path, default=_p("BB_SEED_DIR"))
     x.add_argument("--secret", type=Path, default=_p("BB_ANON_SECRET"))

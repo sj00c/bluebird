@@ -1,6 +1,6 @@
-"""업무망의 유일한 외부 출구(계획 §3.5, 원칙 3).
+"""처리 작업의 유일한 외부 출구(계획 §3.5, 원칙 3).
 
-- HTTP 클라이언트는 이 모듈이 하나만 소유한다(trust_env=False, 프록시는 BLUEBIRD_EGRESS_PROXY만).
+- HTTP 클라이언트는 이 모듈이 하나만 소유한다(trust_env=False, 프록시는 BLUEBIRD_EGRESS_PROXY를 줄 때만).
   다른 모듈은 httpx·requests·urllib·socket·LLM SDK를 import하지 않는다(tests/test_no_direct_http.py).
 - 요청 본문은 이 모듈이 직접 만든다. 호출자는 "어느 소스의 어떤 필드"를 넘기고, 이 모듈이 반출 정책
   (source.export_grade + core.export_policy)을 검사한 뒤 본문을 직렬화한다. LLM도 SDK 없이 REST로 부른다.
@@ -26,7 +26,7 @@ from . import db
 
 PURPOSES = ("collect", "signal", "trace", "llm", "source_check")
 
-# DMZ 프록시 화이트리스트와 같은 목록(deploy/test/proxy/squid.conf). 둘 다 바꾼다.
+# 외부 호출 허용 호스트. 목록 밖 호출은 차단하고 core.egress_call에 기록한다.
 ALLOWED_HOSTS = (
     "data.go.kr", "law.go.kr", "kipris.or.kr", "k-startup.go.kr", "bizinfo.go.kr",
     "openapi.naver.com", "api.openai.com", "api.anthropic.com",

@@ -5,7 +5,7 @@ import { logout } from "./actions";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "파랑새 관리자 콘솔 (업무망 전용)",
+  title: "파랑새 관리자 콘솔",
   robots: { index: false, follow: false },
 };
 
@@ -19,7 +19,7 @@ export default async function RootLayout({ children }: { children: React.ReactNo
     <html lang="ko">
       <body>
         <header className="top">
-          <Link href="/" className="logo">파랑새 관리자 콘솔 (업무망 전용)</Link>
+          <Link href="/" className="logo">파랑새 관리자 콘솔</Link>
           {me && <nav>
             {isStaff && <Link href="/">검토 대기</Link>}
             {me.roles.includes("coder") && <Link href="/coding">2인 코딩</Link>}

@@ -11,7 +11,7 @@ from bluebird.egress import Egress, Policy
 def test_card_kind_is_what_p1_received():
     assert card_kind(False, False) == "title_only"
     assert card_kind(True, True) == "full"
-    assert card_kind(True, False) == "local_extract"  # 규칙(업무망 안)만 → full 아님
+    assert card_kind(True, False) == "local_extract"  # 규칙만 → full 아님
 
 
 def test_llm_card_keeps_only_excerpts_found_in_body(monkeypatch):

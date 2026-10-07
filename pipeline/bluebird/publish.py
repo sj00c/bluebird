@@ -1,4 +1,4 @@
-"""업무망 → DMZ 공개용 DB 한 방향 반영(push). 연결은 항상 업무망(backend-jobs)이 연다.
+"""원본 DB → 공개 DB 한 방향 반영(push). 처리 작업만 공개 DB에 쓴다.
 
 절차(계획 §3.8)
 1. core에서 승인·공개 허용분만 모은다(열 허용목록 = 템플릿).
@@ -226,7 +226,7 @@ def columns(table: str) -> tuple[str, ...]:
     return EVIDENCE_COLUMNS if table == "evidence" else QUERIES[table][0]
 
 
-# ---------------------------------------------------------------- DMZ 쪽 교체
+# ---------------------------------------------------------------- 공개 DB 쪽 교체
 def _drop_prev(conn, attempts: int = 5) -> None:
     for i in range(attempts):
         try:
@@ -292,7 +292,7 @@ def push(*, core_dsn: str, publish_dsn: str, version: str = TEMPLATE_VERSION) ->
             )
             pub.commit()
             _drop_prev(pub)
-        # DMZ 커밋이 끝난 뒤에만 반영 완료로 기록(단계 6은 이 기록과 revived_ids를 본다)
+        # 공개 DB 커밋이 끝난 뒤에만 반영 완료로 기록(단계 6은 이 기록과 revived_ids를 본다)
         changed = {r[1] for r in data["change"]} | {r[1] for r in data["announcement_match"]}  # 둘 다 idea_id
         revived = sorted({r[0] for r in data["diagnosis"]} & {r[0] for r in data["timeliness"]} & changed)
         with db.connect(core_dsn) as core:

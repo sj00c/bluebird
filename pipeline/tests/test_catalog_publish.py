@@ -29,7 +29,7 @@ def _template_columns() -> dict[str, list[str]]:
 
 
 def test_publish_columns_match_template():
-    """DMZ로 나가는 열 = 템플릿 열(허용목록). 템플릿에 없는 열을 보내거나 빠뜨리지 않는다."""
+    """공개 DB로 나가는 열 = 템플릿 열(허용목록). 템플릿에 없는 열을 보내거나 빠뜨리지 않는다."""
     tpl = _template_columns()
     assert set(tpl) == set(publish.ORDER)
     for t in publish.ORDER:

@@ -1,6 +1,6 @@
 """파랑새 시스템 구성도 → architecture.html + architecture.pdf
 
-참고 양식: 연구동행시스템 구성도(붙임2). 문구·좌표를 고친 뒤 `python3 docs/diagrams/build.py`.
+로컬 데모(내 PC · Docker) 구성도. 문구·좌표를 고친 뒤 `python3 docs/diagrams/build.py`.
 """
 import subprocess
 from html import escape
@@ -15,8 +15,6 @@ W, H = 1600, 880
 ZONE_STROKE = "#34508a"
 ZONE_LABEL = "#d0312d"
 FILL_ZONE = "#eef1f8"
-FILL_INT = "#fdf1ea"
-FILL_LINK = "#f3f4f6"
 GRAY = "#6b7280"
 STEP = "#1f8a4c"
 NEW = "#2e5aa8"
@@ -52,15 +50,9 @@ def zone(x, y, w, h, label, fill):
     zones.append(t(x + 20, y + 28, label, 14, ZONE_LABEL, weight=600))
 
 
-def tag(x, y, kind):
-    color, text = NEW, "신규"
-    parts.append(f'<rect x="{x}" y="{y}" width="40" height="18" rx="9" fill="{color}"/>')
-    parts.append(t(x + 20, y + 13, text, 11, "#ffffff", "middle", 600))
-
-
 def card(x, y, w, h, kind, headers, body):
-    """kind: new(신규) / plain(태그 없음)."""
-    stroke = f'stroke="{NEW}" stroke-width="1.6"' if kind == "new" else f'stroke="{GRAY}" stroke-width="1"'
+    """kind: own(우리 구성요소, 파란 테두리) / plain(외부, 회색 테두리)."""
+    stroke = f'stroke="{NEW}" stroke-width="1.6"' if kind == "own" else f'stroke="{GRAY}" stroke-width="1"'
     fill = "#ffffff"
     parts.append(f'<rect x="{x}" y="{y}" width="{w}" height="{h}" rx="8" fill="{fill}" {stroke} filter="url(#shadow)"/>')
     hy = y + 16
@@ -71,8 +63,6 @@ def card(x, y, w, h, kind, headers, body):
         hy += 36
     for i, line in enumerate(body):
         parts.append(t(x + w // 2, hy + 20 + i * 20, line, 12, "#4b5563", "middle"))
-    if kind == "new":
-        tag(x - 8, y - 10, kind)
 
 
 def arrow(d, color=GRAY, both=False, dashed=False):
@@ -111,90 +101,55 @@ def note(x, y, w, h, title, body, numbered=False):
             parts.append(t(x + 16, yy, "- " + line, 12))
 
 
-def subnet(x, y, w, h, text):
-    """업무망 안쪽의 별도 구간(콘솔망·관리망). 점선 파란 상자."""
-    zones.append(f'<rect x="{x}" y="{y}" width="{w}" height="{h}" rx="12" fill="none" '
-                 f'stroke="{NEW}" stroke-width="1.2" stroke-dasharray="6,4"/>')
-    zones.append(t(x + 16, y + 20, text, 12, NEW, weight=600))
+# ---------------- 틀 ----------------
+zone(32, 96, 1536, 500, "내 PC (Docker)", FILL_ZONE)
+zone(860, 130, 300, 430, "PostgreSQL (한 개)", "#ffffff")
 
+# ---------------- 브라우저 ----------------
+parts.append(icon("laptop", 70, 150, 48, "#1f2937"))
+parts.append(t(94, 222, "브라우저", 14, "#111827", "middle", 600))
+parts.append(t(94, 240, "(시민)", 11, GRAY, "middle"))
+parts.append(icon("user", 70, 396, 48, "#1f2937"))
+parts.append(t(94, 468, "브라우저", 14, "#111827", "middle", 600))
+parts.append(t(94, 486, "(관리자)", 11, GRAY, "middle"))
 
-# ---------------- 구역 ----------------
-zone(32, 96, 144, 392, "사용자 Zone", FILL_ZONE)
-zone(208, 96, 384, 392, "DMZ Zone (서비스)", FILL_ZONE)
-zone(640, 96, 928, 480, "내부 서버 (업무망)", FILL_INT)
-zone(640, 616, 352, 192, "DMZ Zone (외부 연계)", FILL_LINK)
-zone(1040, 616, 528, 192, "외부 Zone", FILL_ZONE)
-subnet(1024, 108, 528, 168, "콘솔망 (콘솔 · API만 연결, 외부 연결 없음)")
-subnet(1328, 316, 224, 150, "관리망")
-
-# ---------------- 사용자 ----------------
-parts.append(icon("laptop", 80, 160, 48, "#1f2937"))
-parts.append(t(104, 232, "국민", 14, "#111827", "middle", 600))
-parts.append(t(104, 250, "(일반 이용자)", 11, GRAY, "middle"))
-
-# ---------------- DMZ (서비스) ----------------
-card(256, 136, 288, 88, "new", [("server", "Nginx (WAF 뒤)")], ["SSL 암호화 · 요청 검사"])
-card(256, 256, 288, 88, "new", [("server", "포털 (Next.js)")], ["화면 · 조회 · 이의 접수"])
-card(256, 384, 288, 88, "new", [("database", "공개용 DB")], ["승인된 자료 · 이의 접수함"])
-
-# ---------------- 내부 서버 ----------------
-card(688, 128, 272, 136, "plain", [("shield", "공개 · 반출 정책")],
-     ["담당자 승인 전에는 비공개", "팀명 · 개인정보 삭제", "외부 AI에는 반출 허용 자료만"])
-card(688, 320, 272, 128, "new", [("server", "백엔드 작업 (Python)")], ["수집 · AI 진단 · 점수 · 깔때기", "공개본 밀어넣기 · 이의 가져오기"])
-card(1040, 144, 256, 120, "new", [("server", "백엔드 API (FastAPI)")], ["토큰 확인 · 역할별 권한", "내부 DB만 사용"])
-card(1344, 144, 192, 120, "new", [("server", "관리자 콘솔")], ["검토 · 승인 · 2인 코딩", "이의 처리"])
-card(1040, 320, 256, 128, "new", [("database", "내부 DB (PostgreSQL)")], ["아이디어 · 진단 카드", "근거 URL · 승인 이력"])
-parts.append(icon("user", 1416, 350, 48, "#1f2937"))
-parts.append(t(1440, 416, "관리자 PC", 14, "#111827", "middle", 600))
-parts.append(t(1440, 434, "(업무망 내부)", 11, GRAY, "middle"))
-
-# ---------------- DMZ (외부 연계) · 외부 ----------------
-card(672, 664, 288, 112, "new", [("shield", "DMZ 포워드 프록시")], ["허용 도메인만 · 모든 호출 기록"])
-card(1072, 664, 464, 112, "plain", [("internet", "외부 API")],
-     ["공공데이터포털 · 법제처 · KIPRIS 등", "OpenAI · Anthropic (허용 자료만)"])
+# ---------------- 구성요소 ----------------
+card(240, 130, 260, 88, "own", [("server", "포털 (Next.js)")], ["화면 · 조회 · 이의 접수"])
+card(240, 380, 260, 88, "own", [("server", "콘솔 (Next.js)")], ["검토 · 승인 · 이의 처리"])
+card(560, 380, 240, 88, "own", [("server", "백엔드 API (FastAPI)")], ["토큰 확인 · 역할별 권한"])
+card(876, 180, 268, 96, "own", [("database", "공개 DB")], ["승인된 자료 · 이의 접수함"])
+card(876, 420, 268, 96, "own", [("database", "원본 DB")], ["아이디어 · 진단 카드 · 근거 URL"])
+card(1370, 250, 180, 190, "own", [("server", "처리 작업")], ["적재 · 카드 · 판정", "공개 · 이의 가져오기"])
+card(900, 650, 650, 130, "plain", [("internet", "외부 공공 · 상용 API")],
+     ["공공데이터포털 · 법제처 · KIPRIS", "네이버 · K-Startup · LLM", "접속 키는 .env 파일에 보관"])
 
 # ---------------- 흐름 ----------------
-arrow("M 140,180 H 252", NEW)                       # ① 국민 → WAF → Nginx
-step(196, 180, 1)
-label(196, 160, "HTTPS · WAF", "middle", "#374151", FILL_ZONE)
-arrow("M 400,224 V 252", NEW)
-label(412, 243, "요청 전달", "start", NEW, FILL_ZONE)
-arrow("M 400,344 V 380", NEW, both=True)            # ② 포털 ↔ 공개용 DB
-step(400, 362, 2, "조회 · 이의 접수 (DMZ 안)", "right", bg=FILL_ZONE)
-arrow("M 684,392 H 548")                            # ③ 업무망 → 공개용 DB (밀어넣기)
-step(616, 392, 3, "공개본 밀어넣기", bg=FILL_ZONE)
-arrow("M 548,444 H 684")                            # ④ 업무망이 연결해 이의를 가져오고 삭제
-step(616, 444, 4, "이의 가져오기·삭제", bg=FILL_ZONE)
-label(656, 480, "연결은 항상 업무망이 연다", "start", "#374151", FILL_INT)
-lines_.append(f'<line x1="824" y1="264" x2="824" y2="320" stroke="{GRAY}" stroke-width="1.2" stroke-dasharray="2,3"/>')
-arrow("M 964,384 H 1036", GRAY, both=True)          # 작업 ↔ 내부 DB
-label(1000, 368, "저장 · 조회", "middle", "#374151", FILL_INT)
-arrow("M 1168,264 V 316", GRAY, both=True)          # API ↔ 내부 DB
-arrow("M 1340,204 H 1300", NEW)                     # 콘솔 → API
-arrow("M 880,452 V 660", GRAY, both=True)           # ⑤ 작업 ↔ 프록시
-step(880, 528, 5, "외부 조회 (수집 · AI 분석)", "right", bg=FILL_INT)
-arrow("M 964,720 H 1068", GRAY, both=True)          # 프록시 ↔ 외부 API
-arrow("M 1440,346 V 268", NEW)                      # ⑥ 관리자 PC → 콘솔
-step(1440, 300, 6, "콘솔 접속", "right", bg=FILL_INT)
+arrow("M 150,178 H 236", NEW)                       # ① 시민 → 포털
+step(193, 178, 1)
+arrow("M 500,200 H 872", NEW, both=True)            # ② 포털 ↔ 공개 DB
+step(580, 200, 2)
+label(730, 190, "읽기 · 이의 접수", "middle", NEW, FILL_ZONE)
+arrow("M 150,424 H 236", NEW)                       # ⑤ 관리자 → 콘솔
+step(193, 424, 5)
+arrow("M 500,424 H 556", NEW)                       # 콘솔 → API
+arrow("M 804,448 H 872", GRAY, both=True)           # API ↔ 원본 DB
+arrow("M 1366,430 H 1148", GRAY, both=True)         # 처리 작업 ↔ 원본 DB
+label(1257, 412, "읽기 · 쓰기", "middle", "#374151", FILL_ZONE)
+arrow("M 1366,270 H 1148", GRAY, both=True)         # ④ 처리 작업 → 공개 DB
+step(1257, 270, 4)
+label(1257, 252, "승인분 반영 · 이의 가져오기", "middle", "#374151", FILL_ZONE)
+arrow("M 1460,440 V 646", GRAY)                     # ③ 처리 작업 → 외부 API
+step(1460, 540, 3)
+label(1448, 506, "허용 목록 · 기록", "end", "#374151", FILL_ZONE)
 
 # ---------------- 설명 ----------------
-note(32, 512, 560, 138, "<DMZ Zone>", [
-    "국민 요청은 DMZ 안에서 끝남 (업무망으로 들어오지 않음)",
-    "포털은 공개용 DB만 읽고, 이의 제기는 접수함에만 넣음",
-    "업무망으로 들어오는 연결은 0 — 연결은 항상 업무망이 엶",
-    "DMZ에서 업무망으로 거는 연결은 모두 차단",
-])
-note(32, 666, 560, 180, "<처리 흐름>", [
-    "국민이 WAF를 거쳐 Nginx로 접속 (HTTPS)",
-    "포털은 DMZ의 공개용 DB만 조회 · 이의 접수",
-    "승인된 자료를 업무망이 공개용 DB로 밀어넣음 (한 방향)",
-    "업무망이 접수함의 이의를 가져오고 DMZ에서 삭제",
-    "외부 조회 · AI 분석은 업무망 → DMZ 포워드 프록시",
-    "관리자 PC는 관리망에서 콘솔망의 콘솔로만 접속",
+note(32, 626, 800, 190, "<처리 흐름>", [
+    "시민은 브라우저로 포털을 보고 이의를 냅니다.",
+    "포털은 공개 DB만 읽습니다. 원본 DB는 볼 수 없습니다.",
+    "처리 작업이 외부 API에서 자료를 모아 원본 DB에 저장합니다.",
+    "담당자가 승인한 것만 공개 DB로 옮기고, 이의를 가져옵니다.",
+    "관리자는 콘솔에서 검토 · 승인합니다. 콘솔은 API만 부릅니다.",
 ], numbered=True)
-
-# 범례
-tag(1496, 44, "new"); parts.append(t(1544, 57, "신규", 12))
 
 symbols = "\n".join(
     f'<symbol id="i-{k}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" '
@@ -210,7 +165,7 @@ def marker(mid, color):
 
 svg = f"""<svg viewBox="0 0 {W} {H}" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="bb-title bb-desc" font-family="'Pretendard', 'Noto Sans KR', 'Apple SD Gothic Neo', sans-serif">
 <title id="bb-title">파랑새 시스템 구성도</title>
-<desc id="bb-desc">국민은 WAF를 거쳐 DMZ의 Nginx로 접속하고, 포털은 같은 DMZ의 공개용 DB만 조회하며 이의는 접수함에만 넣으므로 국민 요청은 DMZ 안에서 끝난다. 업무망으로 들어오는 연결은 없고, 업무망의 백엔드 작업이 승인된 자료를 공개용 DB로 밀어넣고 접수함의 이의를 가져온 뒤 지운다. 자료 수집과 AI 분석은 DMZ 포워드 프록시를 거쳐 허용 도메인의 외부 API만 조회한다. 관리자는 관리망의 PC에서 콘솔망의 관리자 콘솔로만 접속해 검토·승인·2인 코딩·이의 처리를 한다.</desc>
+<desc id="bb-desc">내 PC의 Docker 안에서 모두 돌아간다. 시민은 브라우저로 포털을 보고, 포털은 PostgreSQL의 공개 DB만 읽으며 이의를 접수함에 넣는다. 관리자는 브라우저로 콘솔에 접속하고, 콘솔은 백엔드 API만 부르며 API는 원본 DB를 쓴다. 처리 작업은 허용 목록에 있는 외부 공공·상용 API(공공데이터포털, 법제처, KIPRIS, 네이버, K-Startup, LLM)에서 자료를 모아 원본 DB에 저장하고, 승인된 자료만 공개 DB로 옮기며 이의를 가져온다. 외부 API 키는 .env 파일에 둔다.</desc>
 <defs>
 <filter id="shadow" x="-10%" y="-10%" width="120%" height="130%"><feDropShadow dx="0" dy="1" stdDeviation="2" flood-color="#000" flood-opacity="0.16"/></filter>
 {marker("a", GRAY)}{marker("a-new", NEW)}

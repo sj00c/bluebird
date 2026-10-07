@@ -151,7 +151,7 @@ def test_coding_sample_is_stratified_and_reproducible(fresh):
 
 
 def _inbox_dsn(pub):
-    return pub  # 테스트는 superuser로 같은 DB에 접속(권한 분리는 deploy/test/verify.sh가 확인)
+    return pub  # 테스트는 superuser로 같은 DB에 접속(권한 분리는 deploy/local/verify.sh가 확인)
 
 
 def test_objection_round_trip(client, fresh):
@@ -204,7 +204,7 @@ def test_objection_round_trip(client, fresh):
 
 
 def test_pull_survives_publish_db_rebuild(client, fresh):
-    """공개용 DB를 다시 만들어 DMZ id가 1부터 다시 시작해도 새 이의를 중복으로 버리지 않는다(uuid로 판정)."""
+    """공개용 DB를 다시 만들어 접수함 id가 1부터 다시 시작해도 새 이의를 중복으로 버리지 않는다(uuid로 판정)."""
     _to_stage4(fresh)
     client.post(f"/api/ideas/{IID}/review", headers=H("rev"), json={"round": "final", "decision": "approve"})
     for n in (1, 2):

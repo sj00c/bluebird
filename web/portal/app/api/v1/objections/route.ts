@@ -29,7 +29,7 @@ export async function POST(req: Request) {
   } catch {
     return respond(isJson, ideaId, 400, "bad_request");
   }
-  // 업무망 pull과 같은 규칙: 제어문자(탭·줄바꿈 제외)는 지운 뒤 길이를 잰다. 코드포인트 기준 1..2000.
+  // 이의 가져오기(objections pull)와 같은 규칙: 제어문자(탭·줄바꿈 제외)는 지운 뒤 길이를 잰다. 코드포인트 기준 1..2000.
   body = body.replace(/[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]/g, "").trim();
   if (!ID_RE.test(ideaId)) return respond(isJson, "", 400, "bad_request");
   if (!(OBJECTION_KINDS as readonly string[]).includes(kind) || [...body].length < 1 || [...body].length > 2000) {

@@ -1,4 +1,4 @@
-"""backend-api: 관리자 콘솔 전용 FastAPI(업무망 안에서만). 외부 호출 없음(egress도 쓰지 않는다).
+"""backend-api: 관리자 콘솔 전용 FastAPI. 외부 호출 없음(egress도 쓰지 않는다).
 
 인증: Authorization: Bearer <token>. 토큰 → 사람·역할은 BB_API_USERS(JSON 파일 경로)
     {"<sha256(token) hex>": {"user": "kim", "roles": ["reviewer", "coder"]}, ...}

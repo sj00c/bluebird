@@ -1,8 +1,8 @@
 """이의 제기 왕복(G11)과 2인 독립 코딩 표본.
 
-이의: 국민 → portal → DMZ inbox.objection(INSERT만) → backend-jobs가 pull(건수·크기 상한, 검증) →
-core.objection 저장 → DMZ에서 삭제 → 콘솔에서 사람이 처리 → 수용이면 공개 철회(필요하면 원본까지 공개 중단) →
-다음 publish 주기에 반영. 연결은 항상 업무망이 연다.
+이의: 국민 → 포털 → 공개 DB inbox.objection(INSERT만) → 처리 작업이 pull(건수·크기 상한, 검증) →
+core.objection 저장 → 접수함에서 삭제 → 콘솔에서 사람이 처리 → 수용이면 공개 철회(필요하면 원본까지 공개 중단) →
+다음 publish 주기에 반영. 포털은 원본 DB에 접속하지 않는다.
 """
 
 from __future__ import annotations
@@ -17,12 +17,12 @@ from . import db, wording
 KINDS = ("fact", "cause", "change", "privacy", "other")
 ID_RE = re.compile(r"^ID-[0-9]{4}-[0-9a-f]{10}$")
 MAX_BODY = 2000
-PULL_LIMIT = 200  # 한 번에 가져오는 건수 상한(DMZ가 넘겨도 나머지는 다음 주기)
+PULL_LIMIT = 200  # 한 번에 가져오는 건수 상한(접수함이 넘쳐도 나머지는 다음 주기)
 CTRL = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]")
 
 
 def validate(row: tuple) -> tuple[dict | None, str | None]:
-    """DMZ에서 온 행은 믿지 않는다: DB CHECK와 같은 규칙을 다시 검사하고 제어문자를 지운다."""
+    """공개 DB 접수함에서 온 행은 믿지 않는다: DB CHECK와 같은 규칙을 다시 검사하고 제어문자를 지운다."""
     dmz_id, dmz_uid, idea_id, kind, body, submitted_at = row
     if not isinstance(dmz_id, int) or not isinstance(dmz_uid, UUID) or not isinstance(submitted_at, datetime):
         return None, "bad id/time"
@@ -39,7 +39,7 @@ def validate(row: tuple) -> tuple[dict | None, str | None]:
 
 
 def pull(*, dsn: str, inbox_dsn: str, limit: int = PULL_LIMIT) -> dict:
-    """inbox에서 최대 limit건을 읽어 검증·저장한 뒤, 읽은 행만 DMZ에서 지운다(core 커밋 뒤). 다시 돌려도 안전하다."""
+    """inbox에서 최대 limit건을 읽어 검증·저장한 뒤, 읽은 행만 접수함에서 지운다(core 커밋 뒤). 다시 돌려도 안전하다."""
     stats = {"read": 0, "stored": 0, "duplicate": 0, "invalid": 0, "unknown_idea": 0, "deleted": 0, "backlog": 0}
     with db.pipeline_run(dsn, "objections-pull") as run:
         with db.connect(inbox_dsn) as dmz:
@@ -64,7 +64,7 @@ def pull(*, dsn: str, inbox_dsn: str, limit: int = PULL_LIMIT) -> dict:
                     continue
                 if core.execute("SELECT 1 FROM core.objection WHERE dmz_uid IS NULL AND dmz_id=%s AND submitted_at=%s",
                                 (obj["dmz_id"], obj["submitted_at"])).fetchone():
-                    stats["duplicate"] += 1  # uid 도입 전에 가져왔지만 DMZ에서 지우기 전에 끊긴 행
+                    stats["duplicate"] += 1  # uid 도입 전에 가져왔지만 접수함에서 지우기 전에 끊긴 행
                     continue
                 n = core.execute(
                     """INSERT INTO core.objection (dmz_id, dmz_uid, idea_id, kind, body, submitted_at)

@@ -2,13 +2,14 @@
 /data/
 /parangsae-src.zip
 .env
+!.env.example
 *.env.local
 __pycache__/
 .venv/
 .pytest_cache/
 node_modules/
 .next/
-/deploy/test/.runtime/
+/.runtime/
 *.tsbuildinfo
 next-env.d.ts
 /.gjc/

@@ -390,7 +390,7 @@ def report(*, dsn: str, publish_dsn: str, inbox_dsn: str | None = None, p95_ms: 
         rows.append(_row("G7", "공고 매칭 데모", g7, f"공고 1건당 최대 승인 매칭 {demo}", "≥3 (K-Startup 공고)"))
 
         rows.append(_row("G8", "검색 속도(pg_trgm)", PROGRESS if p95_ms is None else (PASS if p95_ms < 300 else FAIL),
-                         "미측정(deploy/test/p95.sh)" if p95_ms is None else f"p95 {p95_ms}ms", "p95 < 300ms"))
+                         "미측정(deploy/local/p95.sh)" if p95_ms is None else f"p95 {p95_ms}ms", "p95 < 300ms"))
 
         a9 = audit_g9(conn)
         rows.append(_row("G9", "근거 무결성", PASS if not any(a9.values()) else FAIL,
@@ -412,8 +412,8 @@ def report(*, dsn: str, publish_dsn: str, inbox_dsn: str | None = None, p95_ms: 
             with db.connect(inbox_dsn) as ic:
                 inbox = ic.execute("SELECT count(*) FROM inbox.objection").fetchone()[0]
         g11 = PASS if ob[1] >= 1 and inbox == 0 else (PROGRESS if inbox is None or ob[1] == 0 else FAIL)
-        rows.append(_row("G11", "이의 제기", g11, f"가져옴 {ob[0]}, 처리 {ob[1]}, DMZ 남은 {inbox}",
-                         "제출→pull→DMZ 삭제→처리→반영 ≥1"))
+        rows.append(_row("G11", "이의 제기", g11, f"가져옴 {ob[0]}, 처리 {ob[1]}, 접수함 남은 {inbox}",
+                         "제출→pull→접수함 삭제→처리→반영 ≥1"))
 
         audit = conn.execute(
             """SELECT count(*), count(*) FILTER (WHERE decision='approve') FROM core.review

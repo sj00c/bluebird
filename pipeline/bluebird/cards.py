@@ -2,7 +2,7 @@
 
 card_kind는 "P1이 실제로 무엇을 받았나"로 정한다(계획 §3.6).
 - full          : 본문이 egress를 거쳐 외부 LLM(P1)에 전송되어 만든 카드. export_grade=O 소스 + LLM 키가 있을 때만.
-- local_extract : 본문을 업무망 안에서만 규칙으로 추출한 카드(KIPRIS 약관 대기, 또는 LLM 키 없음).
+- local_extract : 본문을 외부 호출 없이 규칙으로 추출한 카드(KIPRIS 약관 대기, 또는 LLM 키 없음).
 - title_only    : 본문이 없는 소스(제목·활용 데이터만).
 LLM 응답의 missing_data는 본문 안에 실제로 있는 문장(excerpt)만 받아들인다 — 위치(char_span)를 본문에서 다시 찾는다.
 missing_data는 본문이 스스로 밝힌 부족·미개방 데이터 문장만 담는다(D 원인·D 신호의 아이디어 쪽 키).

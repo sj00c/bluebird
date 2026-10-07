@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 # 화면2(주제·공고 넣기) pg_trgm 조회 p95 측정(G8 must 대체: < 300 ms).
-# nginx → portal → 공개용 DB 전 구간을 잰다. nginx bb_api(10 r/s) 안에서 초당 5건으로 보낸다.
-# 사용: deploy/test/p95.sh [반복 수=8]  결과: .runtime/p95-<날짜>.txt
+# 포털 → 공개 DB 전 구간을 잰다. 초당 5건으로 보낸다.
+# 사용: deploy/local/p95.sh [반복 수=8]  결과: .runtime/p95-<날짜>.txt
 set -euo pipefail
-cd "$(dirname "$0")"
-port="$(grep ^BB_HTTP_PORT= .env | cut -d= -f2)"
+cd "$(dirname "$0")/../.."
+port="$(grep ^BB_PORTAL_PORT= .env | cut -d= -f2)"
 rounds="${1:-8}"
 out=".runtime/p95-$(date +%Y%m%d-%H%M%S).txt"
 python3 - "$port" "$rounds" "$out" <<'PY'
@@ -34,7 +34,7 @@ p = lambda k: lat[min(len(lat) - 1, int(round(k / 100 * len(lat) + 0.5)) - 1)]
 res = {"requests": len(lat), "errors": errors, "p50_ms": round(p(50), 1), "p95_ms": round(p(95), 1),
        "p99_ms": round(p(99), 1), "max_ms": round(lat[-1], 1), "mean_hits": round(statistics.mean(hits), 1),
        "target_ms": 300, "pass": errors == 0 and p(95) < 300,
-       "measured_at": time.strftime("%Y-%m-%d %H:%M:%S %z"), "path": "nginx→portal→publish-db (/api/v1/explore)"}
+       "measured_at": time.strftime("%Y-%m-%d %H:%M:%S %z"), "path": "portal→publish DB (/api/v1/explore)"}
 print(json.dumps(res, ensure_ascii=False))
 open(out, "w").write(json.dumps(res, ensure_ascii=False, indent=1) + "\n")
 sys.exit(0 if res["pass"] else 1)

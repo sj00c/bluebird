@@ -1,0 +1,93 @@
+# 파랑새 로컬 데모: DB 1개(원본·공개 DB 2개) + 백엔드 API + 포털 + 콘솔. 처리 작업은 명령으로 실행한다.
+#   팀원 테스트 : ./demo.sh init && ./demo.sh cycle      (전부 Docker)
+#   개발        : ./demo.sh up db  후 uv run / npm run dev (README.md)
+# 키·비밀번호는 .env 하나(.env.example 참고). 런타임 파일(원본 seed·익명화 키·콘솔 토큰)은 .runtime/.
+name: bluebird
+
+volumes:
+  db: {}
+  signals: {}
+
+x-backend-env: &backend-env
+  BB_DSN: postgresql://bluebird:${DB_PASSWORD:?run ./demo.sh init}@db:5432/bluebird_core
+  BB_PUBLISH_DSN: postgresql://bb_publisher:${DB_PASSWORD}@db:5432/bluebird_publish
+  BB_PUBLISH_MIGRATOR_DSN: postgresql://bb_migrator:${DB_PASSWORD}@db:5432/bluebird_publish
+  BB_INBOX_DSN: postgresql://bb_inbox_reader:${DB_PASSWORD}@db:5432/bluebird_publish
+  BB_SOURCES: /config/sources.toml
+  BB_SEED_DIR: /seed
+  BB_SIGNAL_DIR: /signals
+  BB_ANON_SECRET: /secrets/anon_secret
+  BB_LLM_PROVIDER: ${BB_LLM_PROVIDER:-}
+  BB_LLM_MODEL: ${BB_LLM_MODEL:-}
+  OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+  ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+  DATA_GO_KR_KEY: ${DATA_GO_KR_KEY:-}
+  NAVER_CLIENT_ID: ${NAVER_CLIENT_ID:-}
+  NAVER_CLIENT_SECRET: ${NAVER_CLIENT_SECRET:-}
+  KIPRIS_PLUS_KEY: ${KIPRIS_PLUS_KEY:-}
+  LAW_OC: ${LAW_OC:-}
+  BIZINFO_KEY: ${BIZINFO_KEY:-}
+
+services:
+  db:
+    image: pgvector/pgvector:pg16
+    environment:
+      POSTGRES_DB: bluebird_core
+      POSTGRES_USER: bluebird
+      POSTGRES_PASSWORD: ${DB_PASSWORD:?run ./demo.sh init}
+    ports: ["127.0.0.1:${BB_DB_PORT:-54329}:5432"]
+    volumes:
+      - db:/var/lib/postgresql/data
+      - ./deploy/local/initdb:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U bluebird -d bluebird_core && psql -U bluebird -d bluebird_publish -c 'select 1' -q"]
+      interval: 3s
+      retries: 30
+
+  # 처리 작업(적재·카드·신호·공개·이의 가져오기 등). 리스너 없음. ./demo.sh job <명령>
+  jobs:
+    image: bluebird/pipeline:dev
+    build: ./pipeline
+    profiles: ["jobs"]
+    depends_on: { db: { condition: service_healthy } }
+    environment: *backend-env
+    volumes:
+      - ./deploy/local/sources.toml:/config/sources.toml:ro
+      - ./.runtime/seed:/seed:ro
+      - ./.runtime/secrets:/secrets:ro
+      - signals:/signals
+
+  api:
+    image: bluebird/pipeline:dev
+    build: ./pipeline
+    entrypoint: ["python", "-m", "bluebird.api"]
+    depends_on: { db: { condition: service_healthy } }
+    environment:
+      BB_DSN: postgresql://bb_api:${DB_PASSWORD}@db:5432/bluebird_core
+      BB_API_USERS: /secrets/console_users.json
+    ports: ["127.0.0.1:${BB_API_PORT:-8000}:8000"]
+    volumes:
+      - ./.runtime/console/console_users.json:/secrets/console_users.json:ro
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request as u; u.urlopen('http://127.0.0.1:8000/healthz')"]
+      interval: 3s
+      retries: 30
+    restart: unless-stopped
+
+  portal:
+    image: bluebird/portal:dev
+    build: ./web/portal
+    depends_on: { db: { condition: service_healthy } }
+    environment:
+      PORTAL_DATABASE_URL: postgresql://bb_portal:${DB_PASSWORD}@db:5432/bluebird_publish
+    ports: ["127.0.0.1:${BB_PORTAL_PORT:-3000}:3000"]
+    restart: unless-stopped
+
+  console:
+    image: bluebird/console:dev
+    build: ./web/console
+    depends_on: { api: { condition: service_healthy } }
+    environment:
+      BB_API_URL: http://api:8000
+    ports: ["127.0.0.1:${BB_CONSOLE_PORT:-3001}:3000"]
+    restart: unless-stopped
