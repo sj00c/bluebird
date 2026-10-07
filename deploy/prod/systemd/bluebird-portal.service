@@ -1,0 +1,18 @@
+# Z3 웹 서버. 포털(Node.js)은 루프백 3000에서만 수신, 외부는 nginx 443만 노출.
+[Unit]
+Description=bluebird portal (Z3)
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+EnvironmentFile=/etc/bluebird/bluebird.env
+ExecStart=/usr/bin/podman run --rm --name bb-portal \
+  -p 127.0.0.1:3000:3000 --user 10001:10001 --read-only --tmpfs /tmp \
+  --env-file /etc/bluebird/portal.env \
+  bluebird/portal:${BB_VERSION}
+ExecStop=/usr/bin/podman stop -t 10 bb-portal
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

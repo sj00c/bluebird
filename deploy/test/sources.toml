@@ -1,0 +1,22 @@
+# 수집존 파일 소스 목록. file은 seed 디렉터리 기준 상대경로. 파일이 없으면 건너뛴다.
+# public_ok=false 소스는 처리존까지만 들어가고 공개존으로 반출되지 않는다.
+
+[[source]]
+id = "gov_startup_prelim_awards"
+adapter = "awards_csv"
+file = "awards_master_2013_2024.csv"
+name = "범정부 공공데이터 활용 창업경진대회 예선기관 수상작(2013~2024)"
+license = "공공데이터포털 개방 데이터 (이용조건 재확인 필요)"
+url = ""
+layer = 2
+public_ok = true
+
+[[source]]
+id = "kipris_contest_idea_bulk"
+adapter = "kipris_idea_master"
+file = "kipris_idea_master.csv"
+name = "KIPRIS Plus 공모전 아이디어 벌크(1979~2014)"
+license = "KIPRIS Plus 이용약관 — 팀 내부 분석 전용, 공개 불가"
+url = "https://plus.kipris.or.kr"
+layer = 1
+public_ok = false

@@ -1,0 +1,11 @@
+# Z2 처리 서버. 일 1회 06:00 공개 스냅샷 반출(수집 02:00 → 적재·처리 완료 후).
+[Unit]
+Description=bluebird publish snapshot (Z2)
+
+[Timer]
+OnCalendar=*-*-* 06:00:00 Asia/Seoul
+Persistent=true
+Unit=bluebird-job@publish.service
+
+[Install]
+WantedBy=timers.target

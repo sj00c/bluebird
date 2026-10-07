@@ -1,0 +1,11 @@
+# Z3 웹 서버. 망연계 수신함을 15분마다 확인해 공개 스냅샷 교체.
+[Unit]
+Description=bluebird import publish snapshot (Z3)
+
+[Timer]
+OnCalendar=*:00/15
+Persistent=true
+Unit=bluebird-job@import-publish.service
+
+[Install]
+WantedBy=timers.target

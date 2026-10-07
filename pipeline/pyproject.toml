@@ -1,0 +1,29 @@
+[project]
+name = "bluebird"
+version = "0.1.0"
+description = "파랑새 데이터 파이프라인 (수집존·처리존·공개존 번들 전송)"
+requires-python = ">=3.11"
+dependencies = [
+    "cryptography>=43",
+    "psycopg[binary]>=3.2",
+]
+
+[project.scripts]
+bluebird = "bluebird.cli:main"
+
+[dependency-groups]
+dev = ["pytest>=8", "ruff>=0.6"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["bluebird"]
+
+[tool.ruff]
+line-length = 110
+target-version = "py311"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

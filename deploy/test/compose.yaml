@@ -1,0 +1,144 @@
+# 파랑새 시험 배포 — 단일 호스트에서 3구역(Z1 수집 / Z2 처리 / Z3 공개) 망분리를 재현한다.
+#
+# - z1_net만 외부 통신 가능. z2_net·z3_net은 internal(게이트웨이 없음).
+# - 망연계는 mover-12(Z1→Z2), mover-23(Z2→Z3) 컨테이너가 대신한다. 네트워크 없이 양쪽 디렉터리만 마운트한다.
+# - 외부 노출은 edge(nginx) 한 곳. nginx는 edge_net과 z3_net에만 붙는다.
+# 운영 배포는 docs/DEPLOYMENT.md 참고. 애플리케이션 이미지·번들 형식은 동일하다.
+
+name: bluebird-test
+
+x-pipeline: &pipeline
+  image: bluebird/pipeline:${BB_VERSION:-dev}
+  pull_policy: never
+  restart: "no"
+  profiles: ["jobs"]
+
+networks:
+  z1_net: {}
+  z2_net: { internal: true }
+  z3_net: { internal: true }
+  edge_net: {}
+
+volumes:
+  core_db: {}
+  publish_db: {}
+
+services:
+  # ------------------------------------------------------------------ Z2 처리존
+  core-db:
+    image: pgvector/pgvector:pg16
+    networks: [z2_net]
+    environment:
+      POSTGRES_DB: bluebird_core
+      POSTGRES_USER: bluebird
+      POSTGRES_PASSWORD: ${CORE_DB_PASSWORD:?set in .env}
+    volumes: [core_db:/var/lib/postgresql/data]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U bluebird -d bluebird_core"]
+      interval: 5s
+      retries: 20
+
+  worker:
+    <<: *pipeline
+    build: ../../pipeline   # 같은 이미지를 collector·mover·importer가 공유한다
+    networks: [z2_net]
+    depends_on: { core-db: { condition: service_healthy } }
+    environment:
+      BB_DSN: postgresql://bluebird:${CORE_DB_PASSWORD}@core-db:5432/bluebird_core
+      BB_INBOX: /xfer/in-from-z1
+      BB_DONE_DIR: /xfer/done
+      BB_QUARANTINE_DIR: /xfer/quarantine
+      BB_PEER_PUBKEY: /keys/z1.pub
+      BB_OUTBOX: /xfer/out-to-z3
+      BB_SIGN_KEY: /keys/z2.key
+    volumes:
+      - ./.runtime/keys/z2:/keys:ro
+      - ./.runtime/xfer/z2:/xfer
+
+  # ------------------------------------------------------------------ Z1 수집존
+  collector:
+    <<: *pipeline
+    networks: [z1_net]
+    environment:
+      BB_SOURCES: /config/sources.toml
+      BB_SEED_DIR: /seed
+      BB_STATE_DIR: /state
+      BB_OUTBOX: /xfer/out-to-z2
+      BB_SIGN_KEY: /keys/z1.key
+      BB_ANON_SECRET: /keys/z1.anon_secret
+    volumes:
+      - ./sources.toml:/config/sources.toml:ro
+      - ./.runtime/seed:/seed:ro
+      - ./.runtime/state/z1:/state
+      - ./.runtime/keys/z1:/keys:ro
+      - ./.runtime/xfer/z1:/xfer
+
+  # ------------------------------------------------------------------ 망연계(시험용 대체)
+  mover-12:
+    <<: *pipeline
+    network_mode: none
+    command: ["move", "--src", "/a/out-to-z2", "--dst", "/b/in-from-z1"]
+    volumes:
+      - ./.runtime/xfer/z1:/a
+      - ./.runtime/xfer/z2:/b
+
+  mover-23:
+    <<: *pipeline
+    network_mode: none
+    command: ["move", "--src", "/a/out-to-z3", "--dst", "/b/in-from-z2"]
+    volumes:
+      - ./.runtime/xfer/z2:/a
+      - ./.runtime/xfer/z3:/b
+
+  # ------------------------------------------------------------------ Z3 공개존(DMZ)
+  publish-db:
+    image: pgvector/pgvector:pg16
+    networks: [z3_net]
+    environment:
+      POSTGRES_DB: bluebird_publish
+      POSTGRES_USER: bluebird
+      POSTGRES_PASSWORD: ${PUBLISH_DB_PASSWORD:?set in .env}
+      PORTAL_DB_PASSWORD: ${PORTAL_DB_PASSWORD:?set in .env}
+    volumes:
+      - publish_db:/var/lib/postgresql/data
+      - ./initdb/publish:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U bluebird -d bluebird_publish"]
+      interval: 5s
+      retries: 20
+
+  importer:
+    <<: *pipeline
+    networks: [z3_net]
+    depends_on: { publish-db: { condition: service_healthy } }
+    environment:
+      BB_DSN: postgresql://bluebird:${PUBLISH_DB_PASSWORD}@publish-db:5432/bluebird_publish
+      BB_INBOX: /xfer/in-from-z2
+      BB_DONE_DIR: /xfer/done
+      BB_QUARANTINE_DIR: /xfer/quarantine
+      BB_PEER_PUBKEY: /keys/z2.pub
+    volumes:
+      - ./.runtime/keys/z3:/keys:ro
+      - ./.runtime/xfer/z3:/xfer
+
+  portal:
+    image: bluebird/portal:${BB_VERSION:-dev}
+    build: ../../web/portal
+    networks: [z3_net]
+    depends_on: { publish-db: { condition: service_healthy } }
+    environment:
+      PORTAL_DATABASE_URL: postgresql://bluebird_portal:${PORTAL_DB_PASSWORD}@publish-db:5432/bluebird_publish
+    read_only: true
+    tmpfs: [/tmp]
+    restart: unless-stopped
+
+  nginx:
+    image: nginx:1.28-alpine
+    networks: [z3_net, edge_net]
+    depends_on: [portal]
+    ports: ["${BB_HTTP_PORT:-8080}:8080"]
+    volumes:
+      - ../nginx/bluebird-common.conf:/etc/nginx/snippets/bluebird-common.conf:ro
+      - ../nginx/bluebird-proxy.conf:/etc/nginx/snippets/bluebird-proxy.conf:ro
+      - ./nginx.conf:/etc/nginx/conf.d/default.conf:ro
+    restart: unless-stopped

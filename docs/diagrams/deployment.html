@@ -1,0 +1,219 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>파랑새 운영 배포 구성</title>
+  <link href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=Geist:wght@400;500;600&family=Geist+Mono:wght@400;500;600&family=Noto+Sans+KR:wght@400;500;600&family=Noto+Serif+KR:wght@400;500&display=swap" rel="stylesheet">
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    :root {
+      --color-paper:   #f5f5f5;
+      --color-ink:     #2d3142;
+      --color-muted:   #4f5d75;
+      --color-accent:  #eb6c36;
+      --font-sans:     'Geist', 'Noto Sans KR', system-ui, sans-serif;
+      --font-serif:    'Instrument Serif', 'Noto Serif KR', serif;
+      --font-mono:     'Geist Mono', ui-monospace, monospace;
+    }
+    body { font-family: var(--font-sans); background: var(--color-paper); color: var(--color-ink);
+           min-height: 100vh; display: flex; align-items: center; justify-content: center; padding: 3rem 2rem; }
+    .frame { max-width: 1440px; width: 100%; }
+    .eyebrow { font-family: var(--font-mono); font-size: 0.66rem; font-weight: 500; letter-spacing: 0.18em;
+               text-transform: uppercase; color: var(--color-muted); margin-bottom: 0.5rem; }
+    h1 { font-family: var(--font-serif); font-size: clamp(1.5rem, 2.4vw + 0.75rem, 2rem); font-weight: 400;
+         letter-spacing: -0.02em; line-height: 1.15; margin-bottom: 0.5rem; }
+    .sub { color: var(--color-muted); font-size: 0.9rem; margin-bottom: 1.5rem; }
+    svg { width: 100%; min-width: 1100px; display: block; }
+    .colophon { font-family: var(--font-mono); font-size: 0.66rem; color: var(--color-muted);
+                border-top: 1px solid rgba(45,49,66,0.12); margin-top: 1.5rem; padding-top: 0.75rem; }
+  </style>
+</head>
+<body>
+  <div class="frame">
+    <p class="eyebrow">Deployment · Bluebird · 운영 행정망</p>
+    <h1>파랑새 운영 배포 구성</h1>
+    <p class="sub">전 서버 Rocky Linux 9 · Podman + systemd timer. 시험 환경은 같은 이미지를 docker compose 단일 호스트(3네트워크)로 재현한다.</p>
+
+    <svg viewBox="0 0 1440 640" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="bb-deploy-title bb-deploy-desc">
+      <title id="bb-deploy-title">파랑새 운영 배포 구성</title>
+      <desc id="bb-deploy-desc">인터넷 수집존 1대, 내부 처리존 3대(처리·DB·GPU), DMZ 공개존 2대(웹·DB)에 배치된 소프트웨어와 버전, 그리고 서버 사이의 프로토콜·포트와 망연계 경로를 보여준다.</desc>
+      <defs>
+        <marker id="arrow" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#4f5d75"/></marker>
+        <marker id="arrow-accent" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#eb6c36"/></marker>
+        <marker id="arrow-link" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#2e5aa8"/></marker>
+        <!-- Icons: Tabler Icons (MIT) -->
+        <symbol id="i-users" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M5 7a4 4 0 1 0 8 0a4 4 0 1 0 -8 0"/><path d="M3 21v-2a4 4 0 0 1 4 -4h4a4 4 0 0 1 4 4v2"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/><path d="M21 21v-2a4 4 0 0 0 -3 -3.85"/></symbol>
+        <symbol id="i-internet" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 1 0 18 0a9 9 0 0 0 -18 0"/><path d="M3.6 9h16.8"/><path d="M3.6 15h16.8"/><path d="M11.5 3a17 17 0 0 0 0 18"/><path d="M12.5 3a17 17 0 0 1 0 18"/></symbol>
+        <symbol id="i-firewall" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M4 6a2 2 0 0 1 2 -2h12a2 2 0 0 1 2 2v12a2 2 0 0 1 -2 2h-12a2 2 0 0 1 -2 -2l0 -12"/><path d="M4 8h16"/><path d="M20 12h-16"/><path d="M4 16h16"/><path d="M9 4v4"/><path d="M14 8v4"/><path d="M8 12v4"/><path d="M16 12v4"/><path d="M11 16v4"/></symbol>
+        <symbol id="i-server" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7a3 3 0 0 1 3 -3h12a3 3 0 0 1 3 3v2a3 3 0 0 1 -3 3h-12a3 3 0 0 1 -3 -3"/><path d="M3 15a3 3 0 0 1 3 -3h12a3 3 0 0 1 3 3v2a3 3 0 0 1 -3 3h-12a3 3 0 0 1 -3 -3l0 -2"/><path d="M7 8l0 .01"/><path d="M7 16l0 .01"/></symbol>
+        <symbol id="i-database" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M4 6a8 3 0 1 0 16 0a8 3 0 1 0 -16 0"/><path d="M4 6v6a8 3 0 0 0 16 0v-6"/><path d="M4 12v6a8 3 0 0 0 16 0v-6"/></symbol>
+        <symbol id="i-file" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M14 3v4a1 1 0 0 0 1 1h4"/><path d="M17 21h-10a2 2 0 0 1 -2 -2v-14a2 2 0 0 1 2 -2h7l5 5v11a2 2 0 0 1 -2 2"/></symbol>
+        <symbol id="i-cube" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M21 16.008v-8.018a1.98 1.98 0 0 0 -1 -1.717l-7 -4.008a2.016 2.016 0 0 0 -2 0l-7 4.008c-.619 .355 -1 1.01 -1 1.718v8.018c0 .709 .381 1.363 1 1.717l7 4.008a2.016 2.016 0 0 0 2 0l7 -4.008c.619 -.355 1 -1.01 1 -1.718"/><path d="M12 22v-10"/><path d="M12 12l8.73 -5.04"/><path d="M3.27 6.96l8.73 5.04"/></symbol>
+        <symbol id="i-desktop" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M3 5a1 1 0 0 1 1 -1h16a1 1 0 0 1 1 1v10a1 1 0 0 1 -1 1h-16a1 1 0 0 1 -1 -1v-10"/><path d="M7 20h10"/><path d="M9 16v4"/><path d="M15 16v4"/></symbol>
+        <symbol id="i-lock" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M5 13a2 2 0 0 1 2 -2h10a2 2 0 0 1 2 2v6a2 2 0 0 1 -2 2h-10a2 2 0 0 1 -2 -2v-6"/><path d="M11 16a1 1 0 1 0 2 0a1 1 0 0 0 -2 0"/><path d="M8 11v-4a4 4 0 1 1 8 0v4"/></symbol>
+      </defs>
+
+      <rect width="100%" height="100%" fill="#f5f5f5"/>
+
+      <!-- ===== Zones ===== -->
+      <rect x="32" y="112" width="288" height="320" rx="8" fill="rgba(45,49,66,0.02)" stroke="rgba(45,49,66,0.20)" stroke-width="0.8" stroke-dasharray="4,4"/>
+      <rect x="44" y="108" width="156" height="12" rx="2" fill="#f5f5f5"/>
+      <text x="48" y="117" fill="#4f5d75" font-size="8" font-family="'Geist Mono', 'Noto Sans KR', monospace" letter-spacing="0.12em">Z1 · 인터넷망 · 수집존</text>
+
+      <rect x="400" y="112" width="576" height="400" rx="8" fill="rgba(45,49,66,0.02)" stroke="rgba(45,49,66,0.20)" stroke-width="0.8" stroke-dasharray="4,4"/>
+      <rect x="412" y="108" width="220" height="12" rx="2" fill="#f5f5f5"/>
+      <text x="416" y="117" fill="#4f5d75" font-size="8" font-family="'Geist Mono', 'Noto Sans KR', monospace" letter-spacing="0.12em">Z2 · 업무망 · 처리존 · 10.20.10.0/24</text>
+
+      <rect x="1056" y="112" width="288" height="400" rx="8" fill="rgba(45,49,66,0.02)" stroke="rgba(45,49,66,0.20)" stroke-width="0.8" stroke-dasharray="4,4"/>
+      <rect x="1068" y="108" width="196" height="12" rx="2" fill="#f5f5f5"/>
+      <text x="1072" y="117" fill="#4f5d75" font-size="8" font-family="'Geist Mono', 'Noto Sans KR', monospace" letter-spacing="0.12em">Z3 · DMZ · 공개존 · 172.16.30.0/24</text>
+
+      <!-- External target (text only, outside zones) -->
+      <use href="#i-internet" x="168" y="28" width="16" height="16" color="#2e5aa8"/>
+      <text x="176" y="60" fill="#2e5aa8" font-size="9" font-family="'Geist Mono', 'Noto Sans KR', monospace" text-anchor="middle">공공 API · 허용 도메인 (프록시 경유)</text>
+      <use href="#i-users" x="1384" y="212" width="16" height="16" color="#2e5aa8"/>
+      <text x="1392" y="244" fill="#2e5aa8" font-size="9" font-family="'Geist Mono', 'Noto Sans KR', monospace" text-anchor="middle">이용자</text>
+      <text x="1392" y="258" fill="#7a8399" font-size="8" font-family="'Geist Mono', 'Noto Sans KR', monospace" text-anchor="middle">WAF 경유</text>
+
+      <!-- ===== Network paths ===== -->
+      <!-- D1 z1-collect → external -->
+      <line x1="176" y1="152" x2="176" y2="72" stroke="#2e5aa8" stroke-width="1.2" marker-end="url(#arrow-link)"/>
+      <!-- D2 L1 z1 → z2-app (async file) -->
+      <line x1="288" y1="208" x2="432" y2="208" stroke="#2e5aa8" stroke-width="1.2" stroke-dasharray="5,4" marker-end="url(#arrow-link)"/>
+      <!-- D3 z2-app → z2-db -->
+      <line x1="544" y1="280" x2="544" y2="376" stroke="#4f5d75" stroke-width="1.2" marker-end="url(#arrow)"/>
+      <!-- D4 z2-app → z2-gpu (planned) -->
+      <line x1="656" y1="208" x2="720" y2="208" stroke="#4f5d75" stroke-width="1" stroke-dasharray="4,3" marker-end="url(#arrow)"/>
+      <!-- D5 L2 z2-app → z3-web (focal, approved export) -->
+      <path d="M 624,280 V 312 Q 624,320 632,320 H 1016 Q 1024,320 1024,312 V 216 Q 1024,208 1032,208 H 1088" fill="none" stroke="#eb6c36" stroke-width="1.4" stroke-dasharray="5,4" marker-end="url(#arrow-accent)"/>
+      <!-- D6 z3-web → z3-db -->
+      <line x1="1200" y1="304" x2="1200" y2="376" stroke="#4f5d75" stroke-width="1.2" marker-end="url(#arrow)"/>
+      <!-- D7 users → z3-web -->
+      <line x1="1440" y1="208" x2="1316" y2="208" stroke="#2e5aa8" stroke-width="1.2" marker-end="url(#arrow-link)"/>
+
+      <!-- ===== Path labels ===== -->
+      <rect x="184" y="100" width="64" height="12" rx="2" fill="#f5f5f5"/>
+      <text x="188" y="109" fill="#2e5aa8" font-size="8" font-family="'Geist Mono', monospace" letter-spacing="0.06em">HTTPS:443</text>
+
+      <rect x="304" y="184" width="112" height="12" rx="2" fill="#f5f5f5"/>
+      <text x="360" y="193" fill="#2e5aa8" font-size="8" font-family="'Geist Mono', 'Noto Sans KR', monospace" text-anchor="middle" letter-spacing="0.06em">L1 망연계 · 파일</text>
+
+      <rect x="552" y="320" width="64" height="12" rx="2" fill="#f5f5f5"/>
+      <text x="556" y="329" fill="#7a8399" font-size="8" font-family="'Geist Mono', monospace" letter-spacing="0.06em">TLS:5432</text>
+
+      <rect x="660" y="184" width="56" height="12" rx="2" fill="#f5f5f5"/>
+      <text x="688" y="193" fill="#7a8399" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.06em">HTTP:8000</text>
+
+      <rect x="760" y="300" width="128" height="12" rx="2" fill="#f5f5f5"/>
+      <text x="824" y="309" fill="#eb6c36" font-size="8" font-family="'Geist Mono', 'Noto Sans KR', monospace" text-anchor="middle" letter-spacing="0.06em">L2 망연계 · 승인분</text>
+
+      <rect x="1208" y="336" width="64" height="12" rx="2" fill="#f5f5f5"/>
+      <text x="1212" y="345" fill="#7a8399" font-size="8" font-family="'Geist Mono', monospace" letter-spacing="0.06em">TLS:5432</text>
+
+      <rect x="1324" y="184" width="64" height="12" rx="2" fill="#f5f5f5"/>
+      <text x="1356" y="193" fill="#2e5aa8" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.06em">HTTPS:443</text>
+
+      <!-- ===== Nodes ===== -->
+      <!-- z1-collect -->
+      <rect x="64" y="152" width="224" height="104" rx="6" fill="#f5f5f5"/>
+      <rect x="64" y="152" width="224" height="104" rx="6" fill="#ffffff" stroke="#2d3142" stroke-width="1"/>
+      <use href="#i-server" x="72" y="156" width="16" height="16" color="#2d3142"/>
+      <text x="104" y="168" fill="#2d3142" font-size="12" font-weight="600" font-family="'Geist', 'Noto Sans KR', sans-serif">z1-collect</text>
+      <text x="280" y="168" fill="#7a8399" font-size="8" font-family="'Geist Mono', 'Noto Sans KR', monospace" text-anchor="end">매일 02:00</text>
+      <rect x="72" y="188" width="208" height="24" rx="4" fill="rgba(45,49,66,0.05)" stroke="#4f5d75" stroke-width="0.8"/>
+      <text x="80" y="204" fill="#2d3142" font-size="12" font-family="'Geist', 'Noto Sans KR', sans-serif">bluebird collect</text>
+      <text x="272" y="204" fill="#4f5d75" font-size="9" font-family="'Geist Mono', monospace" text-anchor="end">py3.12 · v0.1.0</text>
+      <text x="80" y="236" fill="#7a8399" font-size="9" font-family="'Geist Mono', 'Noto Sans KR', monospace">키: z1.key · 익명화 비밀키</text>
+
+      <!-- z2-app (focal: approval gate lives here) -->
+      <rect x="432" y="176" width="224" height="104" rx="6" fill="#f5f5f5"/>
+      <rect x="432" y="176" width="224" height="104" rx="6" fill="rgba(235,108,54,0.08)" stroke="#eb6c36" stroke-width="1.2"/>
+      <use href="#i-server" x="440" y="180" width="16" height="16" color="#eb6c36"/>
+      <text x="472" y="192" fill="#2d3142" font-size="12" font-weight="600" font-family="'Geist', 'Noto Sans KR', sans-serif">z2-app</text>
+      <text x="648" y="192" fill="#7a8399" font-size="8" font-family="'Geist Mono', 'Noto Sans KR', monospace" text-anchor="end">30분 · 06:00</text>
+      <rect x="440" y="212" width="208" height="24" rx="4" fill="rgba(45,49,66,0.05)" stroke="#4f5d75" stroke-width="0.8"/>
+      <text x="448" y="228" fill="#2d3142" font-size="12" font-family="'Geist', 'Noto Sans KR', sans-serif">import · publish</text>
+      <text x="640" y="228" fill="#4f5d75" font-size="9" font-family="'Geist Mono', monospace" text-anchor="end">py3.12 · v0.1.0</text>
+      <rect x="440" y="244" width="208" height="24" rx="4" fill="rgba(45,49,66,0.02)" stroke="rgba(45,49,66,0.20)" stroke-width="0.8" stroke-dasharray="4,3"/>
+      <text x="448" y="260" fill="#7a8399" font-size="12" font-family="'Geist', 'Noto Sans KR', sans-serif">검토 콘솔</text>
+      <text x="640" y="260" fill="#7a8399" font-size="9" font-family="'Geist Mono', 'Noto Sans KR', monospace" text-anchor="end">Next.js · 예정</text>
+
+      <!-- z2-gpu (planned) -->
+      <rect x="720" y="176" width="224" height="104" rx="6" fill="#f5f5f5"/>
+      <rect x="720" y="176" width="224" height="104" rx="6" fill="rgba(45,49,66,0.02)" stroke="rgba(45,49,66,0.20)" stroke-width="1" stroke-dasharray="4,3"/>
+      <use href="#i-cube" x="728" y="180" width="16" height="16" color="#7a8399"/>
+      <text x="764" y="192" fill="#2d3142" font-size="12" font-weight="600" font-family="'Geist', 'Noto Sans KR', sans-serif">z2-gpu</text>
+      <text x="936" y="192" fill="#7a8399" font-size="8" font-family="'Geist Mono', 'Noto Sans KR', monospace" text-anchor="end">예정 · 80GB급</text>
+      <rect x="728" y="212" width="208" height="24" rx="4" fill="rgba(45,49,66,0.02)" stroke="rgba(45,49,66,0.20)" stroke-width="0.8" stroke-dasharray="4,3"/>
+      <text x="736" y="228" fill="#2d3142" font-size="12" font-family="'Geist', 'Noto Sans KR', sans-serif">vLLM · EXAONE</text>
+      <text x="928" y="228" fill="#7a8399" font-size="9" font-family="'Geist Mono', monospace" text-anchor="end">OpenAI 호환 API</text>
+      <rect x="728" y="244" width="208" height="24" rx="4" fill="rgba(45,49,66,0.02)" stroke="rgba(45,49,66,0.20)" stroke-width="0.8" stroke-dasharray="4,3"/>
+      <text x="736" y="260" fill="#2d3142" font-size="12" font-family="'Geist', 'Noto Sans KR', sans-serif">BGE-M3 임베딩</text>
+      <text x="928" y="260" fill="#7a8399" font-size="9" font-family="'Geist Mono', monospace" text-anchor="end">dense 1024</text>
+
+      <!-- z2-db -->
+      <rect x="432" y="376" width="224" height="104" rx="6" fill="#f5f5f5"/>
+      <rect x="432" y="376" width="224" height="104" rx="6" fill="rgba(45,49,66,0.05)" stroke="#4f5d75" stroke-width="1"/>
+      <use href="#i-database" x="440" y="380" width="16" height="16" color="#4f5d75"/>
+      <text x="472" y="392" fill="#2d3142" font-size="12" font-weight="600" font-family="'Geist', 'Noto Sans KR', sans-serif">z2-db</text>
+      <text x="648" y="392" fill="#7a8399" font-size="8" font-family="'Geist Mono', 'Noto Sans KR', monospace" text-anchor="end">백업 01:00 · PITR</text>
+      <rect x="440" y="412" width="208" height="24" rx="4" fill="rgba(45,49,66,0.05)" stroke="#4f5d75" stroke-width="0.8"/>
+      <text x="448" y="428" fill="#2d3142" font-size="12" font-family="'Geist', 'Noto Sans KR', sans-serif">core DB</text>
+      <text x="640" y="428" fill="#4f5d75" font-size="9" font-family="'Geist Mono', monospace" text-anchor="end">PG 16 · pgvector 0.8</text>
+      <text x="448" y="460" fill="#7a8399" font-size="9" font-family="'Geist Mono', 'Noto Sans KR', monospace">hostssl · scram-sha-256 · IP 고정</text>
+
+      <!-- z3-web -->
+      <rect x="1088" y="152" width="224" height="152" rx="6" fill="#f5f5f5"/>
+      <rect x="1088" y="152" width="224" height="152" rx="6" fill="#ffffff" stroke="#2d3142" stroke-width="1"/>
+      <use href="#i-server" x="1096" y="156" width="16" height="16" color="#2d3142"/>
+      <text x="1128" y="168" fill="#2d3142" font-size="12" font-weight="600" font-family="'Geist', 'Noto Sans KR', sans-serif">z3-web</text>
+      <text x="1304" y="168" fill="#7a8399" font-size="8" font-family="'Geist Mono', 'Noto Sans KR', monospace" text-anchor="end">적재 15분</text>
+      <rect x="1096" y="188" width="208" height="24" rx="4" fill="rgba(45,49,66,0.05)" stroke="#4f5d75" stroke-width="0.8"/>
+      <text x="1104" y="204" fill="#2d3142" font-size="12" font-family="'Geist', 'Noto Sans KR', sans-serif">nginx · TLS 종료</text>
+      <text x="1296" y="204" fill="#4f5d75" font-size="9" font-family="'Geist Mono', monospace" text-anchor="end">1.26</text>
+      <rect x="1096" y="220" width="208" height="24" rx="4" fill="rgba(45,49,66,0.05)" stroke="#4f5d75" stroke-width="0.8"/>
+      <text x="1104" y="236" fill="#2d3142" font-size="12" font-family="'Geist', 'Noto Sans KR', sans-serif">포털 :3000</text>
+      <text x="1296" y="236" fill="#4f5d75" font-size="9" font-family="'Geist Mono', monospace" text-anchor="end">Next.js 15.5 · Node 22</text>
+      <rect x="1096" y="252" width="208" height="24" rx="4" fill="rgba(45,49,66,0.05)" stroke="#4f5d75" stroke-width="0.8"/>
+      <text x="1104" y="268" fill="#2d3142" font-size="12" font-family="'Geist', 'Noto Sans KR', sans-serif">bluebird import</text>
+      <text x="1296" y="268" fill="#4f5d75" font-size="9" font-family="'Geist Mono', monospace" text-anchor="end">py3.12 · v0.1.0</text>
+      <text x="1104" y="292" fill="#7a8399" font-size="9" font-family="'Geist Mono', 'Noto Sans KR', monospace">키: z2.pub (검증만)</text>
+
+      <!-- z3-db -->
+      <rect x="1088" y="376" width="224" height="104" rx="6" fill="#f5f5f5"/>
+      <rect x="1088" y="376" width="224" height="104" rx="6" fill="rgba(45,49,66,0.05)" stroke="#4f5d75" stroke-width="1"/>
+      <use href="#i-database" x="1096" y="380" width="16" height="16" color="#4f5d75"/>
+      <text x="1128" y="392" fill="#2d3142" font-size="12" font-weight="600" font-family="'Geist', 'Noto Sans KR', sans-serif">z3-db</text>
+      <text x="1304" y="392" fill="#7a8399" font-size="8" font-family="'Geist Mono', 'Noto Sans KR', monospace" text-anchor="end">백업 01:00</text>
+      <rect x="1096" y="412" width="208" height="24" rx="4" fill="rgba(45,49,66,0.05)" stroke="#4f5d75" stroke-width="0.8"/>
+      <text x="1104" y="428" fill="#2d3142" font-size="12" font-family="'Geist', 'Noto Sans KR', sans-serif">publish DB</text>
+      <text x="1296" y="428" fill="#4f5d75" font-size="9" font-family="'Geist Mono', monospace" text-anchor="end">PostgreSQL 16</text>
+      <text x="1104" y="460" fill="#7a8399" font-size="9" font-family="'Geist Mono', 'Noto Sans KR', monospace">포털 계정 SELECT 전용</text>
+
+      <!-- ===== Legend ===== -->
+      <line x1="32" y1="568" x2="1408" y2="568" stroke="rgba(45,49,66,0.10)" stroke-width="0.8"/>
+      <text x="32" y="592" fill="#4f5d75" font-size="8" font-family="'Geist Mono', monospace" letter-spacing="0.14em">LEGEND</text>
+
+      <line x1="112" y1="588" x2="144" y2="588" stroke="#eb6c36" stroke-width="1.4" stroke-dasharray="5,4" marker-end="url(#arrow-accent)"/>
+      <text x="152" y="592" fill="#4f5d75" font-size="9" font-family="'Geist', 'Noto Sans KR', sans-serif">승인분 반출 (망연계 파일)</text>
+
+      <line x1="320" y1="588" x2="352" y2="588" stroke="#2e5aa8" stroke-width="1.2" marker-end="url(#arrow-link)"/>
+      <text x="360" y="592" fill="#4f5d75" font-size="9" font-family="'Geist', 'Noto Sans KR', sans-serif">구역 경계 통과 (점선 = 비동기 파일)</text>
+
+      <line x1="584" y1="588" x2="616" y2="588" stroke="#4f5d75" stroke-width="1.2" marker-end="url(#arrow)"/>
+      <text x="624" y="592" fill="#4f5d75" font-size="9" font-family="'Geist', 'Noto Sans KR', sans-serif">구역 내부 연결</text>
+
+      <rect x="736" y="580" width="40" height="16" rx="4" fill="rgba(45,49,66,0.05)" stroke="#4f5d75" stroke-width="0.8"/>
+      <text x="784" y="592" fill="#4f5d75" font-size="9" font-family="'Geist', 'Noto Sans KR', sans-serif">배포 아티팩트 · 버전</text>
+
+      <rect x="912" y="580" width="40" height="16" rx="4" fill="rgba(45,49,66,0.02)" stroke="rgba(45,49,66,0.20)" stroke-width="0.8" stroke-dasharray="4,3"/>
+      <text x="960" y="592" fill="#4f5d75" font-size="9" font-family="'Geist', 'Noto Sans KR', sans-serif">예정 (미구현)</text>
+
+      <text x="1408" y="592" fill="#7a8399" font-size="9" font-family="'Geist Mono', 'Noto Sans KR', monospace" text-anchor="end">구역 간 직접 통신 전부 차단 · 방화벽표 F1–F7</text>
+    </svg>
+
+    <p class="colophon">근거 docs/DEPLOYMENT.md §1–6 · deploy/prod/ · 2026-10-06</p>
+  </div>
+</body>
+</html>

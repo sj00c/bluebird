@@ -1,0 +1,23 @@
+# 파이프라인 단계 1회 실행 (구역 공통 템플릿). 인스턴스 이름 = 단계 이름.
+#   z1-collect  : bluebird-job@collect.service
+#   z2-app      : bluebird-job@import-core.service, bluebird-job@publish.service
+#   z3-web      : bluebird-job@import-publish.service
+# 이미지 bluebird/pipeline:<버전>은 망연계로 반입 후 서명 검증하고 podman load로 등록한다.
+[Unit]
+Description=bluebird pipeline stage %i
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+EnvironmentFile=/etc/bluebird/bluebird.env
+EnvironmentFile=/etc/bluebird/%i.env
+ExecStart=/usr/bin/podman run --rm --name bb-%i --network=host \
+  --user 10001:10001 --read-only --tmpfs /tmp \
+  --env-file /etc/bluebird/%i.env \
+  -v /srv/bluebird:/srv/bluebird:Z \
+  -v /etc/bluebird/keys:/keys:ro,Z \
+  -v /etc/bluebird/sources.toml:/config/sources.toml:ro,Z \
+  bluebird/pipeline:${BB_VERSION} %i
+TimeoutStartSec=6h
+SyslogIdentifier=bluebird-%i
