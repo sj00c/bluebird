@@ -19,6 +19,7 @@ _PERSON_NAME = re.compile(r"^[가-힣]{2,4}$")
 _LIST_SEP = re.compile(r"[,，、·/]")
 _LIST_SPLIT = re.compile(r"[\s,，、·/]+")
 _NOT_NAME = frozenset({"외", "등", "팀", "및"})
+_COUNT_TOKEN = re.compile(r"^\d+\s*(명|인|개)?$")
 
 
 def anon_id(secret: bytes, source: str, source_key: str, year: int | None) -> str:
@@ -58,7 +59,17 @@ def mask_team(text: str, team: str) -> str:
     variants = {team.strip(), cleaned}
     if _PAREN.search(team) or _LIST_SEP.search(team):
         # '메디뷰(MediView)' → '메디뷰', 'MediView' / '팀명(이름1, 이름2)'·'이름1, 이름2' → 이름마다 마스킹
-        variants.update(t for t in _LIST_SPLIT.split(_PAREN.sub(" ", team)) if t not in _NOT_NAME)
+        variants.update(t for t in _LIST_SPLIT.split(_PAREN.sub(" ", team)) if _maskable_token(t))
     for v in sorted((v for v in variants if len(v) >= 2), key=len, reverse=True):
-        text = re.sub(re.escape(v), MASK, text, flags=re.IGNORECASE)
+        # 라틴 문자로 시작·끝나는 변형은 단어 경계에서만(maintain 안의 'AI' 같은 오치환 방지)
+        pre = r"(?<![A-Za-z0-9])" if v[0].isascii() and v[0].isalnum() else ""
+        post = r"(?![A-Za-z0-9])" if v[-1].isascii() and v[-1].isalnum() else ""
+        text = re.sub(pre + re.escape(v) + post, MASK, text, flags=re.IGNORECASE)
     return text
+
+
+def _maskable_token(t: str) -> bool:
+    """팀 목록에서 떼어 낸 낱말 중 이름처럼 보이는 것만: 한글 2–4자 이름 또는 숫자가 아닌 3자 이상."""
+    if t in _NOT_NAME or _COUNT_TOKEN.match(t):
+        return False
+    return bool(_PERSON_NAME.match(t)) or len(t) >= 3

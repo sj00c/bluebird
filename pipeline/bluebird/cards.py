@@ -11,12 +11,13 @@ missing_data는 본문이 스스로 밝힌 부족·미개방 데이터 문장만
 
 from __future__ import annotations
 
+import hashlib
 import re
 
 from psycopg.types.json import Jsonb
 
 from . import db, llm
-from .egress import Egress, EgressBlocked
+from .egress import Egress, EgressError
 
 RULE_VERSION = "rule-v1"
 P1_VERSION = "p1-v1"
@@ -83,17 +84,31 @@ def card_kind(has_body: bool, sent_to_llm: bool) -> str:
     return "full" if sent_to_llm else "local_extract"
 
 
+_CUE = re.compile(r"없|부족|미개방|비공개|공개되지\s*않|개방되지\s*않|구하기\s*어렵|확보|제공되지\s*않|부재|흩어져|분산")
+_TOKEN = re.compile(r"[가-힣A-Za-z0-9]{2,}")
+_GENERIC = frozenset({"데이터", "정보", "자료", "통계"})
+EXCERPT_MIN, EXCERPT_MAX = 10, 300
+
+
 def _anchor_missing(body: str, items: object) -> list[dict]:
-    """LLM이 낸 missing_data 중 excerpt가 본문에 글자 그대로 있는 것만 남긴다."""
+    """LLM이 낸 missing_data 중 다음을 모두 만족하는 것만 남긴다(지어낸 부족 데이터가 D 원인으로 가는 것을 막음).
+    - excerpt가 본문에 글자 그대로 있고 길이 10–300자
+    - excerpt에 부족·미개방 표현이 있음
+    - name의 일반어(데이터·정보…)가 아닌 낱말 하나 이상이 excerpt에 있음"""
     out = []
     for it in items if isinstance(items, list) else []:
         if not isinstance(it, dict):
             continue
         ex, name = str(it.get("excerpt") or "").strip(), str(it.get("name") or "").strip()
-        pos = body.find(ex) if ex else -1
-        if not name or pos < 0:
+        if not name or not EXCERPT_MIN <= len(ex) <= EXCERPT_MAX or not _CUE.search(ex):
             continue
-        out.append({"name": name[:120], "excerpt": ex[:300], "char_span": [pos, pos + len(ex)], "origin": "body"})
+        tokens = [t for t in _TOKEN.findall(name) if t not in _GENERIC]
+        if not tokens or not any(t in ex for t in tokens):
+            continue
+        pos = body.find(ex)
+        if pos < 0:
+            continue
+        out.append({"name": name[:120], "excerpt": ex, "char_span": [pos, pos + len(ex)], "origin": "body"})
     return out
 
 
@@ -112,58 +127,70 @@ def llm_card(eg: Egress, p: llm.Provider, idea: dict) -> tuple[dict, int | None]
     }, call_id
 
 
+def body_sha(body: str | None) -> str:
+    return hashlib.sha256((body or "").strip().encode()).hexdigest()
+
+
 def build(*, dsn: str, rebuild: bool = False, egress: Egress | None = None) -> dict:
     """카드 생성. 본문 있는 export_grade=O 소스는 LLM 키가 있으면 P1(LLM, egress 경유)로, 없으면 규칙으로 만든다.
-    이미 LLM·사람이 만든 카드는 규칙으로 덮어쓰지 않는다. 규칙 카드는 키가 생기면 다음 실행에서 LLM으로 다시 만든다."""
+
+    다시 만드는 경우: 카드 없음 / 본문 해시가 바뀜(LLM·규칙 카드 모두. 사람 카드는 본문이 바뀌어도 사람이 다시 본다) /
+    키가 생겨 규칙 카드를 LLM으로 올릴 수 있음. --rebuild는 사람 카드를 뺀 전부.
+    """
     prov = llm.provider()
     with db.pipeline_run(dsn, "cards") as stats, db.connect(dsn) as conn:
         cur = conn.execute(
-            f"""SELECT i.id, i.source_id, i.title, i.body, i.used_data, i.category, i.year, i.source_url,
-                       s.export_grade
-                  FROM core.idea i JOIN core.source s ON s.id = i.source_id
-                  LEFT JOIN core.idea_card k ON k.idea_id = i.id
-                 WHERE i.retired_at IS NULL AND ({"k.idea_id IS NULL OR k.extractor <> 'human' OR NOT %(llm)s" if rebuild else
-                        "k.idea_id IS NULL OR (k.extractor = 'rule' AND (k.updated_at < i.updated_at"
-                        " OR (%(llm)s AND s.export_grade = 'O' AND coalesce(btrim(i.body), '') <> '')))"})
-                 ORDER BY i.id""", {"llm": prov is not None},
+            """SELECT i.id, i.source_id, i.title, i.body, i.used_data, i.category, i.year, i.source_url,
+                      s.export_grade, k.extractor, k.body_sha256
+                 FROM core.idea i JOIN core.source s ON s.id = i.source_id
+                 LEFT JOIN core.idea_card k ON k.idea_id = i.id
+                WHERE i.retired_at IS NULL AND (k.idea_id IS NULL OR k.extractor <> 'human')
+                ORDER BY i.id"""
         )
         cols = [d.name for d in cur.description]
-        ideas = [dict(zip(cols, row)) for row in cur.fetchall()]
+        todo = []
+        for row in cur.fetchall():
+            idea = dict(zip(cols, row))
+            sha = body_sha(idea["body"])
+            has_body = bool((idea["body"] or "").strip())
+            upgrade = prov is not None and idea["extractor"] == "rule" and has_body and idea["export_grade"] == "O"
+            if rebuild or idea["extractor"] is None or idea["body_sha256"] != sha or upgrade:
+                todo.append({**idea, "sha": sha, "has_body": has_body})
         own = prov is not None and egress is None
         eg = egress or (Egress.from_dsn(dsn) if prov else None)
         n = {"rule": 0, "llm": 0, "llm_failed": 0}
         try:
             with conn.cursor() as w:
-                for idea in ideas:
-                    has_body = bool((idea["body"] or "").strip())
-                    c, extractor, model, version, sent = None, "rule", None, RULE_VERSION, False
-                    if has_body and prov and idea["export_grade"] == "O":
+                for idea in todo:
+                    c, extractor, model, version, call_id, sent = None, "rule", None, RULE_VERSION, None, False
+                    if idea["has_body"] and prov and idea["export_grade"] == "O":
                         try:
-                            c, _ = llm_card(eg, prov, idea)
+                            c, call_id = llm_card(eg, prov, idea)
                             extractor, model, version, sent = "llm", prov.model, P1_VERSION, True
-                        except (EgressBlocked, ValueError, KeyError) as e:
+                        except (EgressError, ValueError, KeyError, TypeError, IndexError, AttributeError) as e:
                             n["llm_failed"] += 1
                             print(f"[cards] P1 failed for {idea['id']}: {type(e).__name__}: {str(e)[:200]}")
                     if c is None:
-                        c = rule_card(idea) if has_body else {"problem": None, "solution": None, "missing_data": []}
+                        c = rule_card(idea) if idea["has_body"] else {"problem": None, "solution": None,
+                                                                      "missing_data": []}
                     n[extractor] += 1
                     w.execute(
                         """INSERT INTO core.idea_card (idea_id, card_kind, title, problem, solution, target_user,
                              missing_data, used_data, required_tech, domain, year, source_url, extractor, model,
-                             prompt_version)
-                           VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+                             prompt_version, body_sha256, egress_call_id)
+                           VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
                            ON CONFLICT (idea_id) DO UPDATE SET card_kind=EXCLUDED.card_kind, title=EXCLUDED.title,
                              problem=EXCLUDED.problem, solution=EXCLUDED.solution, target_user=EXCLUDED.target_user,
                              missing_data=EXCLUDED.missing_data, used_data=EXCLUDED.used_data,
                              required_tech=EXCLUDED.required_tech, domain=EXCLUDED.domain, year=EXCLUDED.year,
                              source_url=EXCLUDED.source_url, extractor=EXCLUDED.extractor, model=EXCLUDED.model,
-                             prompt_version=EXCLUDED.prompt_version, updated_at=now()
-                           WHERE core.idea_card.extractor <> 'human'
-                             AND NOT (core.idea_card.extractor = 'llm' AND EXCLUDED.extractor = 'rule')""",
-                        (idea["id"], card_kind(has_body, sent), idea["title"], c["problem"], c["solution"],
-                         c.get("target_user"), Jsonb(c["missing_data"]), idea["used_data"],
+                             prompt_version=EXCLUDED.prompt_version, body_sha256=EXCLUDED.body_sha256,
+                             egress_call_id=EXCLUDED.egress_call_id, updated_at=now()
+                           WHERE core.idea_card.extractor <> 'human'""",
+                        (idea["id"], card_kind(idea["has_body"], sent), idea["title"], c["problem"],
+                         c["solution"], c.get("target_user"), Jsonb(c["missing_data"]), idea["used_data"],
                          c.get("required_tech") or [], idea["category"], idea["year"], idea["source_url"],
-                         extractor, model, version),
+                         extractor, model, version, idea["sha"], call_id),
                     )
                     if sent:  # LLM 결과는 건별로 확정(중단돼도 비용 쓴 결과는 남김)
                         conn.commit()

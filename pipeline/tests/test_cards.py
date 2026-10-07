@@ -1,6 +1,7 @@
 import json
 
 import httpx
+import pytest
 
 from bluebird import llm
 from bluebird.cards import card_kind, extract_missing_data, llm_card, rule_card
@@ -40,7 +41,6 @@ def test_llm_card_keeps_only_excerpts_found_in_body(monkeypatch):
 
 def test_llm_card_refused_for_pending_source(monkeypatch):
     monkeypatch.setenv("OPENAI_API_KEY", "k")
-    import pytest
 
     from bluebird.egress import EgressBlocked
     eg = Egress(policy=Policy(grades={"kipris": "pending"}), recorder=lambda c: 1, proxy="",
@@ -73,3 +73,22 @@ def test_no_missing_data_when_body_says_nothing_missing():
 def test_rule_card_problem_and_solution():
     c = rule_card({"body": "노인은 병원 예약이 어렵다. 음성으로 예약하는 서비스를 제공한다."})
     assert c["problem"].startswith("노인은") and c["solution"].startswith("음성으로")
+
+
+def _anchor(body, items):
+    from bluebird.cards import _anchor_missing
+    return _anchor_missing(body, items)
+
+
+def test_anchor_rejects_weak_or_invented_missing_data():
+    body = "버스 도착 정보는 있다. 저상버스 배차 데이터가 공개되지 않아 휠체어 이용자가 기다린다."
+    good = "저상버스 배차 데이터가 공개되지 않아 휠체어 이용자가 기다린다."
+    assert _anchor(body, [{"name": "저상버스 배차 데이터", "excerpt": good}])[0]["excerpt"] == good
+    # 너무 짧은 조각(본문에 있어도), 부족 표현 없는 문장, 이름과 무관한 문장, 300자 초과는 버린다
+    assert _anchor(body, [{"name": "저상버스 배차 데이터", "excerpt": "데이터"}]) == []
+    assert _anchor(body, [{"name": "버스 도착 정보", "excerpt": "버스 도착 정보는 있다."}]) == []
+    assert _anchor(body, [{"name": "지하철 혼잡도 데이터", "excerpt": good}]) == []
+    assert _anchor(body, [{"name": "데이터", "excerpt": good}]) == []  # 일반어만 있는 이름
+    long_body = "가" * 290 + " 배차 데이터가 없다."
+    assert _anchor(long_body, [{"name": "배차 데이터", "excerpt": long_body}]) == []
+

@@ -105,3 +105,10 @@ def test_mafra_splits_part_and_award(tmp_path):
     (r,) = mafra_contest_csv(SourceSpec("m", "mafra_contest_csv", f, "n", "l", "", 2, True), b"x" * 32)
     assert (r["year"], r["category"], r["award"]) == (2015, "서비스 개발", "우수상")
     assert r["used_data"] == ["명산등산로 서비스", "산악기상정보"]
+
+
+def test_list_masking_keeps_generic_short_tokens_and_word_boundaries():
+    team = "AI Lab(김하나, 2명)"
+    out = mask_team("AI 기반 maintain 도구, Lab 안에서 김하나가 개발. Labor 통계 2명", team)
+    # 이름(김하나)·3자 이상 팀 낱말(Lab)은 가리고, 2자 라틴 낱말(AI)·인원수(2명)·단어 속 부분(maintain, Labor)은 둔다
+    assert out == f"AI 기반 maintain 도구, {MASK} 안에서 {MASK}가 개발. Labor 통계 2명"

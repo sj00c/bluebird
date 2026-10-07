@@ -6,7 +6,7 @@
     · registered_at ≥ 기준 스냅샷일 − 7일 이면 observed_new("파랑새 관측 신규")
     · 아니면 reappeared(오래전에 등록됐는데 이번에 목록에 다시 나타남, 약한 근거)
 - observed_new·reappeared는 core.condition_change(kind='dataset_opened')를 만든다.
-날짜만으로 "그때 없었다"고 주장하지 않는다. 판별은 missing_data 의미 일치 + 판정 + 사람 승인으로 한다.
+날짜만으로 과거의 부재를 주장하지 않는다(금지 문구는 wording.py). 판별은 missing_data 의미 일치 + 판정 + 사람 승인으로 한다.
 """
 
 from __future__ import annotations

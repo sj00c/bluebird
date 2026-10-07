@@ -46,8 +46,16 @@ LLM_ENDPOINTS = {
 }
 
 
-class EgressBlocked(Exception):
+class EgressError(Exception):
+    """egress 호출 실패의 공통 부모. 호출자는 httpx를 import하지 않고 이것만 잡는다."""
+
+
+class EgressBlocked(EgressError):
     pass
+
+
+class EgressTransportError(EgressError):
+    """네트워크·타임아웃 등 전송 실패(감사 행은 남는다)."""
 
 
 class KeyMissing(EgressBlocked):
@@ -225,14 +233,18 @@ class Egress:
         except httpx.HTTPError as e:
             call.reason = f"{type(e).__name__}: {e}"
             self._record(call)
-            raise
+            raise EgressTransportError(call.reason) from e
         finally:
             self._expected_sha = None
         call.http_status, call.bytes_in = resp.status_code, len(content)
         if purpose == "llm" and resp.status_code < 400:
-            usage = json.loads(content).get("usage") or {}
-            call.tokens_in = usage.get("prompt_tokens", usage.get("input_tokens"))
-            call.tokens_out = usage.get("completion_tokens", usage.get("output_tokens"))
+            # 응답 형식이 이상해도 감사 행은 반드시 남긴다(본문은 이미 나갔다).
+            try:
+                usage = json.loads(content).get("usage") or {}
+                call.tokens_in = usage.get("prompt_tokens", usage.get("input_tokens"))
+                call.tokens_out = usage.get("completion_tokens", usage.get("output_tokens"))
+            except (ValueError, AttributeError):
+                call.reason = "unparseable LLM response"
         rid = self._record(call)
         return Response(resp.status_code, content, resp.headers, str(resp.url), rid)
 
