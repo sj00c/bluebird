@@ -1,38 +1,39 @@
--- 공개존(Z3) publish DB 초기 스키마. core의 공개 허용 컬럼 부분집합만 둔다.
-CREATE SCHEMA IF NOT EXISTS publish;
-CREATE EXTENSION IF NOT EXISTS pg_trgm;
+-- DMZ 공개용 DB의 고정 스키마(bb_migrator가 적용).
+-- publish 스키마 자체는 여기서 만들지 않는다. 매 주기 publisher가 체크섬 등록된 템플릿(publish_schema.sql)으로
+-- publish_next를 만들고 RENAME으로 교체한다(bluebird.publish).
+--   meta   : 교체 대상 밖. snapshot_log, 템플릿 등록
+--   inbox  : 국민 이의 제기. portal은 INSERT만, 업무망 inbox_reader가 SELECT·DELETE(pull 후 삭제)
+CREATE SCHEMA meta;
+CREATE SCHEMA inbox;
 
-CREATE TABLE publish.snapshot_log (
-    bundle_id  text PRIMARY KEY,
-    created_at timestamptz NOT NULL,
-    applied_at timestamptz NOT NULL DEFAULT now(),
-    stats      jsonb NOT NULL DEFAULT '{}'
+CREATE TABLE meta.publish_template (
+    version       text PRIMARY KEY,
+    sha256        text NOT NULL,
+    registered_at timestamptz NOT NULL DEFAULT now()
 );
 
-CREATE TABLE publish.source (
-    id      text PRIMARY KEY,
-    name    text NOT NULL,
-    license text NOT NULL,
-    url     text NOT NULL
+CREATE TABLE meta.snapshot_log (
+    snapshot_id      bigint PRIMARY KEY,           -- core.publish_snapshot.id, 단조 증가
+    template_version text NOT NULL REFERENCES meta.publish_template(version),
+    created_at       timestamptz NOT NULL,
+    applied_at       timestamptz NOT NULL DEFAULT now(),
+    stats            jsonb NOT NULL DEFAULT '{}'
 );
 
-CREATE TABLE publish.idea (
-    id            text PRIMARY KEY,
-    source_id     text NOT NULL REFERENCES publish.source(id),
-    contest_name  text NOT NULL,
-    host_org      text NOT NULL,
-    year          smallint,
-    award         text,
-    title         text NOT NULL,
-    body          text,
-    used_data     text[] NOT NULL,
-    category      text,
-    source_url    text
+CREATE TABLE inbox.objection (
+    id           bigserial PRIMARY KEY,
+    idea_id      text NOT NULL CHECK (idea_id ~ '^ID-[0-9]{4}-[0-9a-f]{10}$'),
+    kind         text NOT NULL CHECK (kind IN ('fact', 'cause', 'change', 'privacy', 'other')),
+    body         text NOT NULL CHECK (char_length(body) BETWEEN 1 AND 2000),
+    submitted_at timestamptz NOT NULL DEFAULT now()
 );
-CREATE INDEX idea_year_idx ON publish.idea (year);
-CREATE INDEX idea_title_trgm_idx ON publish.idea USING gin (title gin_trgm_ops);
 
--- 포털 계정(bluebird_portal)은 init 스크립트가 만든다. 읽기 전용.
-GRANT USAGE ON SCHEMA publish TO bluebird_portal;
-GRANT SELECT ON ALL TABLES IN SCHEMA publish TO bluebird_portal;
-ALTER DEFAULT PRIVILEGES IN SCHEMA publish GRANT SELECT ON TABLES TO bluebird_portal;
+GRANT USAGE ON SCHEMA meta TO bb_publisher, bb_portal;
+GRANT SELECT ON meta.publish_template TO bb_publisher;
+GRANT SELECT, INSERT ON meta.snapshot_log TO bb_publisher;
+GRANT SELECT ON meta.snapshot_log TO bb_portal;
+
+GRANT USAGE ON SCHEMA inbox TO bb_portal, bb_inbox_reader;
+GRANT INSERT ON inbox.objection TO bb_portal;
+GRANT USAGE ON SEQUENCE inbox.objection_id_seq TO bb_portal;
+GRANT SELECT, DELETE ON inbox.objection TO bb_inbox_reader;

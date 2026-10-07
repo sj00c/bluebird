@@ -7,7 +7,7 @@ clear
 echo "=== 파랑새 시험 배포 상태 ==="
 dc ps --format 'table {{.Service}}\t{{.State}}\t{{.Ports}}'
 echo
-echo "업무망 core.idea   : $(dc exec -T core-db psql -U bluebird -d bluebird_core -tAc 'select count(*) from core.idea')"
+echo "업무망 core.idea     : $(dc exec -T core-db psql -U bluebird -d bluebird_core -tAc 'select count(*) from core.idea')"
 echo "DMZ   publish.idea : $(dc exec -T publish-db psql -U bluebird -d bluebird_publish -tAc 'select count(*) from publish.idea')"
 echo
 open ../../docs/diagrams/architecture.html "http://localhost:$(grep BB_HTTP_PORT .env | cut -d= -f2)/pool"

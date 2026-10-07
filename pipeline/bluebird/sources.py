@@ -1,7 +1,7 @@
-"""수집존(Z1) 파일 소스 어댑터.
+"""원본 아이디어 파일 소스 어댑터.
 
-현재 구현: 공공데이터포털 등에서 받은 파일을 수집존 반입 디렉터리(seed)에 두면 읽는 `awards_csv`, `kipris_idea_master`.
-각 어댑터는 (source 메타, award_record 행 iterator)를 만든다. award_record에는 팀명·원천키가 없다.
+파일은 backend-jobs의 seed 디렉터리(egress로 받은 것 또는 반입한 것)에 둔다. sources.toml이 소스 목록이다.
+각 어댑터는 award_record 행 iterator를 만든다. award_record에는 팀명·성명·원천키가 없다(AWARD_RECORD_COLUMNS 고정).
 """
 
 from __future__ import annotations
@@ -18,6 +18,11 @@ from .anonymize import anon_id, mask_team, team_kind
 
 _WS = re.compile(r"\s+")
 
+AWARD_RECORD_COLUMNS = (
+    "idea_id", "source_id", "contest_name", "host_org", "year", "award", "title", "body",
+    "used_data", "category", "team_kind", "source_url", "extra",
+)
+
 
 @dataclass(frozen=True)
 class SourceSpec:
@@ -29,16 +34,9 @@ class SourceSpec:
     url: str
     layer: int
     public_ok: bool
-
-    def meta_row(self) -> dict:
-        return {
-            "id": self.id,
-            "name": self.name,
-            "license": self.license,
-            "url": self.url,
-            "layer": self.layer,
-            "public_ok": self.public_ok,
-        }
+    export_grade: str = "pending"
+    policy_approved_by: str | None = None
+    policy_approved_at: str | None = None
 
 
 def load_sources(config: Path, seed_dir: Path) -> list[SourceSpec]:
@@ -57,6 +55,9 @@ def load_sources(config: Path, seed_dir: Path) -> list[SourceSpec]:
                 url=s.get("url", ""),
                 layer=int(s["layer"]),
                 public_ok=bool(s["public_ok"]),
+                export_grade=s.get("export_grade", "pending"),
+                policy_approved_by=s.get("policy_approved_by"),
+                policy_approved_at=s.get("policy_approved_at"),
             )
         )
     return specs

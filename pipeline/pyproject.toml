@@ -1,10 +1,11 @@
 [project]
 name = "bluebird"
 version = "0.1.0"
-description = "파랑새 데이터 파이프라인 (수집존·처리존·공개존 번들 전송)"
+description = "파랑새 업무망 backend (적재·신호·진단·공개 반영)"
 requires-python = ">=3.11"
 dependencies = [
-    "cryptography>=43",
+    "httpx>=0.27",
+    "openpyxl>=3.1.5",
     "psycopg[binary]>=3.2",
 ]
 

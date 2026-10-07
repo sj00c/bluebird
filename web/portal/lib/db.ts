@@ -1,7 +1,7 @@
 import "server-only";
 import { Pool } from "pg";
 
-// 공개존 DB(publish 스키마) 읽기 전용 계정. 쓰기 권한이 없다.
+// DMZ 공개용 DB. bb_portal 계정: publish 읽기 + inbox 이의 INSERT만.
 const globalForPool = globalThis as unknown as { bbPool?: Pool };
 
 export const pool =
@@ -70,7 +70,7 @@ export async function poolStats() {
   const r = await pool.query<{ ideas: string; sources: string; snapshot_at: Date | null }>(
     `SELECT (SELECT count(*) FROM publish.idea) AS ideas,
             (SELECT count(*) FROM publish.source) AS sources,
-            (SELECT max(created_at) FROM publish.snapshot_log) AS snapshot_at`,
+            (SELECT max(applied_at) FROM meta.snapshot_log) AS snapshot_at`,
   );
   const row = r.rows[0];
   return { ideas: Number(row.ideas), sources: Number(row.sources), snapshotAt: row.snapshot_at };

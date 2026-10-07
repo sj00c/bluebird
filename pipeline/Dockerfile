@@ -1,5 +1,5 @@
-# 수집존(collector)·처리존(worker)·공개존(importer) 공용 파이프라인 이미지.
-# 내부망 반입: 인터넷망 CI에서 빌드 → docker save → 망연계 반입 → docker load (서명 검증 후)
+# 업무망 backend 이미지(backend-jobs). 외부 호출은 egress 모듈 → DMZ 프록시로만.
+# 업무망 반입: 빌드 → docker save → 기관 반입 절차(서명·검사) → docker load
 FROM python:3.12-slim AS build
 COPY --from=ghcr.io/astral-sh/uv:0.10 /uv /usr/local/bin/uv
 WORKDIR /app
@@ -10,7 +10,8 @@ COPY bluebird ./bluebird
 RUN uv sync --frozen --no-dev
 
 FROM python:3.12-slim
-RUN useradd --system --uid 10001 --home /app bluebird
+RUN useradd --system --uid 10001 --home /app bluebird \
+ && mkdir /signals && chown bluebird /signals
 WORKDIR /app
 COPY --from=build /app /app
 ENV PATH="/app/.venv/bin:$PATH" PYTHONUNBUFFERED=1

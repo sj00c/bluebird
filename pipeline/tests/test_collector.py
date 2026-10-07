@@ -1,8 +1,7 @@
 import csv
 
-from bluebird.collector.anonymize import MASK, anon_id, clean_team, mask_team, team_kind
-from bluebird.collector.sources import SourceSpec, awards_csv
-from bluebird.stages import AWARD_RECORD_COLUMNS
+from bluebird.anonymize import MASK, anon_id, clean_team, mask_team, team_kind
+from bluebird.sources import AWARD_RECORD_COLUMNS, SourceSpec, awards_csv
 
 
 def test_team_kind():

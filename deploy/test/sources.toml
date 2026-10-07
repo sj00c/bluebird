@@ -1,5 +1,9 @@
-# 수집존 파일 소스 목록. file은 seed 디렉터리 기준 상대경로. 파일이 없으면 건너뛴다.
-# public_ok=false 소스는 처리존까지만 들어가고 공개존으로 반출되지 않는다.
+# 원본 아이디어 소스 목록. file은 seed 디렉터리 기준 상대경로. 파일이 없으면 건너뛴다.
+#
+# public_ok    : 공개 관문. true면 DMZ 공개용 DB로 반영된다. 반드시 policy_approved_by/at(소스 단위 정책 승인)이 있어야 한다.
+# export_grade : 반출 관문. 외부 호출(상용 LLM·흔적 검색)에 이 소스 필드를 보낼 수 있는지.
+#                O = 공개 출처, 허용 필드 반출 가능 / pending = 약관·N2SF 결정 대기(기본 차단) / deny = 반출 금지
+# 시험 환경의 정책 승인자는 운영 담당 대리 표기다. 운영에서는 보안담당 회신으로 채운다.
 
 [[source]]
 id = "gov_startup_prelim_awards"
@@ -10,13 +14,17 @@ license = "공공데이터포털 개방 데이터 (이용조건 재확인 필요
 url = ""
 layer = 2
 public_ok = true
+export_grade = "O"
+policy_approved_by = "test-operator"
+policy_approved_at = "2026-10-06T00:00:00+09:00"
 
 [[source]]
 id = "kipris_contest_idea_bulk"
 adapter = "kipris_idea_master"
 file = "kipris_idea_master.csv"
 name = "KIPRIS Plus 공모전 아이디어 벌크(1979~2014)"
-license = "KIPRIS Plus 이용약관 — 팀 내부 분석 전용, 공개 불가"
+license = "KIPRIS Plus 이용약관 — 공개·외부 전송은 약관 확인 전까지 보류(data.go.kr 15006010 표기 '제한 없음'과 충돌, 10/26 게이트)"
 url = "https://plus.kipris.or.kr"
 layer = 1
 public_ok = false
+export_grade = "pending"

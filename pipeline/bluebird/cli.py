@@ -1,15 +1,18 @@
-"""bluebird CLI. 경로·DSN은 인자 또는 환경변수(BB_*)로 받는다. 구역별 컨테이너/서버에서 같은 CLI를 쓴다."""
+"""bluebird CLI. 경로·DSN은 인자 또는 환경변수(BB_*)로 받는다.
+
+업무망 backend-jobs가 실행한다. 외부 호출은 egress 모듈을 거쳐 DMZ 프록시로만 나간다.
+"""
 
 from __future__ import annotations
 
 import argparse
 import os
-import secrets
 import sys
+from datetime import date
 from pathlib import Path
 
-from . import db, stages
-from .bundle import ZONES, generate_keypair, move_bundles
+from . import db, ingest, publish
+from .signals import catalog
 
 
 def _env(name: str) -> str | None:
@@ -21,78 +24,71 @@ def _p(name: str):
     return Path(v) if v else None
 
 
+def _require(ap: argparse.ArgumentParser, a: argparse.Namespace, *names: str) -> None:
+    missing = [n for n in names if getattr(a, n) is None]
+    if missing:
+        ap.error(f"missing required options/env: {', '.join(missing)}")
+
+
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(prog="bluebird")
     sub = ap.add_subparsers(dest="cmd", required=True)
 
-    k = sub.add_parser("keygen", help="구역 서명키 생성 (+ z1 익명화 비밀키)")
-    k.add_argument("--zone", choices=ZONES, required=True)
-    k.add_argument("--dir", type=Path, required=True)
-
-    m = sub.add_parser("migrate", help="SQL 마이그레이션 적용")
+    m = sub.add_parser("migrate", help="SQL 마이그레이션 적용 (publish는 템플릿 등록 포함)")
     m.add_argument("--target", choices=db.TARGETS, required=True)
-    m.add_argument("--dsn", default=_env("BB_DSN"))
+    m.add_argument("--dsn", default=None, help="기본: core=BB_DSN, publish=BB_PUBLISH_MIGRATOR_DSN")
 
-    c = sub.add_parser("collect", help="[z1] 파일 소스 수집 → collect 번들")
-    c.add_argument("--config", type=Path, default=_p("BB_SOURCES"))
-    c.add_argument("--seed-dir", type=Path, default=_p("BB_SEED_DIR"))
-    c.add_argument("--state-dir", type=Path, default=_p("BB_STATE_DIR"))
-    c.add_argument("--outbox", type=Path, default=_p("BB_OUTBOX"))
-    c.add_argument("--key", type=Path, default=_p("BB_SIGN_KEY"))
-    c.add_argument("--secret", type=Path, default=_p("BB_ANON_SECRET"))
-    c.add_argument("--force", action="store_true")
+    i = sub.add_parser("ingest", help="seed 파일 → core 적재(마스킹·익명 ID)")
+    i.add_argument("--dsn", default=_env("BB_DSN"))
+    i.add_argument("--config", type=Path, default=_p("BB_SOURCES"))
+    i.add_argument("--seed-dir", type=Path, default=_p("BB_SEED_DIR"))
+    i.add_argument("--secret", type=Path, default=_p("BB_ANON_SECRET"))
+    i.add_argument("--only")
+    i.add_argument("--force", action="store_true")
 
-    mv = sub.add_parser("move", help="[시험 환경] outbox → inbox 이동 (망연계 대체)")
-    mv.add_argument("--src", type=Path, required=True)
-    mv.add_argument("--dst", type=Path, required=True)
-
-    for name, zone_help in (("import-core", "[z2] collect 번들 적재"), ("import-publish", "[z3] publish 번들 적재")):
-        i = sub.add_parser(name, help=zone_help)
-        i.add_argument("--inbox", type=Path, default=_p("BB_INBOX"))
-        i.add_argument("--done-dir", type=Path, default=_p("BB_DONE_DIR"))
-        i.add_argument("--quarantine-dir", type=Path, default=_p("BB_QUARANTINE_DIR"))
-        i.add_argument("--peer-key", type=Path, default=_p("BB_PEER_PUBKEY"), help="보낸 구역의 공개키")
-        i.add_argument("--dsn", default=_env("BB_DSN"))
-
-    pb = sub.add_parser("publish", help="[z2] 공개 스냅샷 → publish 번들")
+    pb = sub.add_parser("publish", help="승인분 → DMZ 공개용 DB 교체(push)")
     pb.add_argument("--dsn", default=_env("BB_DSN"))
-    pb.add_argument("--outbox", type=Path, default=_p("BB_OUTBOX"))
-    pb.add_argument("--key", type=Path, default=_p("BB_SIGN_KEY"))
+    pb.add_argument("--publish-dsn", default=_env("BB_PUBLISH_DSN"))
+
+    sg = sub.add_parser("signals", help="바뀐 것 신호")
+    sgs = sg.add_subparsers(dest="signal", required=True)
+    ci = sgs.add_parser("catalog-import", help="목록개방현황 파일 → 스냅샷")
+    ci.add_argument("--file", type=Path, required=True)
+    ci.add_argument("--taken-at", type=date.fromisoformat, required=True)
+    ci.add_argument("--dsn", default=_env("BB_DSN"))
+    cf = sgs.add_parser("catalog-fetch", help="egress로 목록개방현황 내려받아 스냅샷")
+    cf.add_argument("--out-dir", type=Path, default=_p("BB_SIGNAL_DIR"))
+    cf.add_argument("--dsn", default=_env("BB_DSN"))
+    cf.add_argument("--no-import", action="store_true")
+    cf.add_argument("--taken-at", type=date.fromisoformat, default=None, help="기본: 오늘(KST)")
 
     a = ap.parse_args(argv)
-    missing = [n for n, v in vars(a).items() if v is None]
-    if missing:
-        ap.error(f"missing required options/env: {', '.join(missing)}")
 
-    if a.cmd == "keygen":
-        priv, pub = generate_keypair(a.dir, a.zone)
-        print(f"{priv}\n{pub}")
-        if a.zone == "z1":
-            secret = a.dir / "z1.anon_secret"
-            if not secret.exists():
-                secret.write_text(secrets.token_hex(32))
-                os.chmod(secret, 0o600)
-            print(secret)
-    elif a.cmd == "migrate":
-        print("applied:", db.migrate(a.dsn, a.target) or "nothing")
-    elif a.cmd == "collect":
-        stages.collect(config=a.config, seed_dir=a.seed_dir, state_dir=a.state_dir, outbox=a.outbox,
-                       key_path=a.key, secret_path=a.secret, force=a.force)
-    elif a.cmd == "move":
-        for p in move_bundles(a.src, a.dst):
-            print(f"[move] {p.name}")
-    elif a.cmd in ("import-core", "import-publish"):
-        fn = stages.import_core if a.cmd == "import-core" else stages.import_publish
-        try:
-            results = fn(inbox=a.inbox, done_dir=a.done_dir, quarantine_dir=a.quarantine_dir,
-                         public_key_path=a.peer_key, dsn=a.dsn)
-        except stages.QuarantinedBundlesError as e:
-            print(f"[import] {e}", file=sys.stderr)
-            return 2
-        if any(r["status"] != "ok" for r in results):
-            return 2
+    if a.cmd == "migrate":
+        dsn = a.dsn or _env("BB_DSN" if a.target == "core" else "BB_PUBLISH_MIGRATOR_DSN")
+        if not dsn:
+            ap.error("missing --dsn")
+        print("applied:", db.migrate(dsn, a.target) or "nothing")
+        if a.target == "publish":
+            print(f"template {publish.TEMPLATE_VERSION}:", publish.register_template(dsn)[:12])
+    elif a.cmd == "ingest":
+        _require(ap, a, "dsn", "config", "seed_dir", "secret")
+        ingest.ingest(dsn=a.dsn, config=a.config, seed_dir=a.seed_dir, secret_path=a.secret, only=a.only,
+                      force=a.force)
     elif a.cmd == "publish":
-        stages.publish(dsn=a.dsn, outbox=a.outbox, key_path=a.key)
+        _require(ap, a, "dsn", "publish_dsn")
+        publish.push(core_dsn=a.dsn, publish_dsn=a.publish_dsn)
+    elif a.cmd == "signals":
+        _require(ap, a, "dsn")
+        if a.signal == "catalog-import":
+            catalog.import_snapshot(dsn=a.dsn, path=a.file, taken_at=a.taken_at)
+        elif a.signal == "catalog-fetch":
+            _require(ap, a, "out_dir")
+            from .egress import Egress
+            with Egress.from_dsn(a.dsn) as eg:
+                path = catalog.fetch(egress=eg, out_dir=a.out_dir)
+            if not a.no_import:
+                catalog.import_snapshot(dsn=a.dsn, path=path, taken_at=a.taken_at or catalog.today_kst())
     return 0
 
 
