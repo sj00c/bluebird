@@ -13,7 +13,8 @@
     "pg": "8.23.1",
     "react": "19.2.8",
     "react-dom": "19.2.8",
-    "server-only": "0.0.1"
+    "server-only": "0.0.1",
+    "shaders": "4.0.2"
   },
   "devDependencies": {
     "@types/node": "^22",

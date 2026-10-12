@@ -17,10 +17,19 @@ export const CHANGE_KIND: Record<string, string> = {
   tech: "기술",
 };
 
-export const VERDICT: Record<string, string> = { now: "지금 가능", conditional: "조건부 가능", hold: "보류" };
+export const VERDICT: Record<string, string> = {
+  now: "지금 가능",
+  conditional: "조건부 가능",
+  hold: "보류",
+};
 
 // 데이터 개방 신호의 근거 수준(목록개방현황 스냅샷 비교). 날짜만으로 "새로 열렸다"고 말하지 않는다.
-export function tierText(c: { kind: string; tier: string | null; occurred_at: string | null; registered_at: string | null }): string | null {
+export function tierText(c: {
+  kind: string;
+  tier: string | null;
+  occurred_at: string | null;
+  registered_at: string | null;
+}): string | null {
   if (c.kind !== "dataset_opened") return null;
   const reg = `포털 등록 ${c.registered_at ?? "-"}`;
   if (c.tier === "observed_new") return `파랑새 관측 신규 · ${reg}`;
@@ -29,15 +38,27 @@ export function tierText(c: { kind: string; tier: string | null; occurred_at: st
 }
 
 // 사업화 흔적 확인 범위
-export function traceText(status: string | null, externalSearch: string | null): string | null {
+export function traceText(
+  status: string | null,
+  externalSearch: string | null,
+): string | null {
   if (!status || status === "pending") return null;
-  return externalSearch === "done" ? "외부 검색(뉴스·특허) 실시" : "외부 검색 미실시";
+  return externalSearch === "done"
+    ? "외부 검색(뉴스·특허) 실시"
+    : "외부 검색 미실시";
 }
 
-export const VERDICT_PILL: Record<string, string> = { now: "hi", conditional: "mid", hold: "lo" };
+export const VERDICT_PILL: Record<string, string> = {
+  now: "hi",
+  conditional: "mid",
+  hold: "lo",
+};
 
 // 시의성 네 축(core.timeliness tech·data·regulation·policy). 화면 시안의 이름을 쓴다.
-export const AXES: { key: "tech" | "data" | "regulation" | "policy"; label: string }[] = [
+export const AXES: {
+  key: "tech" | "data" | "regulation" | "policy";
+  label: string;
+}[] = [
   { key: "tech", label: "기술 준비도" },
   { key: "data", label: "데이터 개방도" },
   { key: "regulation", label: "제도 정합성" },
@@ -50,13 +71,18 @@ export const TRACE: Record<string, string> = {
   pivot: "방향 바꿔 사업화",
   similar_unlinked: "비슷한 사업 있음(연결 미확인)",
   award_only: "수상 기록만",
-  none: "흔적 없음",
+  none: "확인 범위 내 흔적 미발견",
   pending: "확인 전",
 };
 
 // 사업화 흔적 확인 항목. 외부 검색(뉴스·특허)은 키가 있어야 실시된다(publish.idea.external_search).
-export const TRACE_ITEMS: { label: string; via: string; external: boolean }[] = [
-  { label: "후속 보도(뉴스·웹)", via: "네이버 뉴스 검색", external: true },
-  { label: "특허·상표", via: "KIPRIS Plus", external: true },
-  { label: "후속 지원사업 선정", via: "K-Startup·기업마당 공고", external: false },
-];
+export const TRACE_ITEMS: { label: string; via: string; external: boolean }[] =
+  [
+    { label: "후속 보도(뉴스·웹)", via: "네이버 뉴스 검색", external: true },
+    { label: "특허", via: "KIPRIS Plus", external: true },
+    {
+      label: "후속 지원사업 선정",
+      via: "K-Startup·기업마당 공고",
+      external: false,
+    },
+  ];

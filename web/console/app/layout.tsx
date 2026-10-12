@@ -1,40 +1,95 @@
 import type { Metadata } from "next";
+import type { ReactNode } from "react";
 import Link from "next/link";
 import { getMe } from "@/lib/api";
+import { ROLES } from "@/lib/labels";
 import { logout } from "./actions";
+import { Navigation } from "./navigation";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "파랑새 관리자 콘솔",
+  title: "파랑새 운영 콘솔",
+  description: "검토 대기열, 분석 작성, 승인 및 공개 상태 관리",
   robots: { index: false, follow: false },
 };
-
 export const dynamic = "force-dynamic";
 
-export default async function RootLayout({ children }: { children: React.ReactNode }) {
+export default async function RootLayout({
+  children,
+}: {
+  children: ReactNode;
+}) {
   const me = await getMe();
-  // 코더만인 사람은 큐·상세를 볼 수 없다(예측 원인을 보고 코딩하면 κ가 부풀려진다). API도 403.
-  const isStaff = !!me && me.roles.some((r) => ["reviewer", "expert", "auditor"].includes(r));
+  const isStaff =
+    !!me &&
+    me.roles.some((role) => ["reviewer", "expert", "auditor"].includes(role));
+  const home = isStaff
+    ? "/overview"
+    : me?.roles.includes("coder")
+      ? "/coding"
+      : "/login";
+  const links = [
+    ...(isStaff
+      ? [
+          { href: "/overview", label: "운영 개요", index: "01" },
+          { href: "/", label: "검토 대기열", index: "02" },
+        ]
+      : []),
+    ...(me?.roles.includes("coder")
+      ? [{ href: "/coding", label: "독립 코딩", index: "03" }]
+      : []),
+    ...(me?.roles.some((role) => ["reviewer", "auditor"].includes(role))
+      ? [{ href: "/objections", label: "이의 관리", index: "04" }]
+      : []),
+  ];
   return (
     <html lang="ko">
+      <head>
+        <link rel="stylesheet" href="/fonts/pretendard-1.3.9/pretendard.css" />
+      </head>
       <body>
-        <header className="top">
-          <Link href="/" className="logo">파랑새 관리자 콘솔</Link>
-          {me && <nav>
-            {isStaff && <Link href="/">검토 대기</Link>}
-            {me.roles.includes("coder") && <Link href="/coding">2인 코딩</Link>}
-            {(me.roles.includes("reviewer") || me.roles.includes("auditor")) && <Link href="/objections">이의 처리</Link>}
-          </nav>}
-          {me && (
-            <div className="right">
-              {me.user} · {me.roles.join(", ")}
-              <form action={logout} className="inline">
-                <button type="submit" className="link">로그아웃</button>
-              </form>
-            </div>
-          )}
-        </header>
-        <main className="wrap">{children}</main>
+        <a className="skip" href="#main">
+          본문으로 바로 가기
+        </a>
+        <div className={me ? "shell" : "shell anonymous"}>
+          <aside className="sidebar">
+            <Link href={home} className="logo">
+              <span className="brand-mark" aria-hidden="true">
+                파
+              </span>
+              <span>
+                파랑새<small>운영 콘솔</small>
+              </span>
+            </Link>
+            {me && <Navigation links={links} />}
+          </aside>
+          <div className="main-shell">
+            <header className="top">
+              <span className="workspace-label">파랑새 / 운영 콘솔</span>
+              {me ? (
+                <div className="account">
+                  <span>
+                    <b>{me.user}</b>
+                    <small>
+                      {me.roles.map((role) => ROLES[role] ?? role).join(" · ")}
+                    </small>
+                  </span>
+                  <form action={logout}>
+                    <button type="submit" className="sub small">
+                      로그아웃
+                    </button>
+                  </form>
+                </div>
+              ) : (
+                <span className="muted">인증된 운영자 전용</span>
+              )}
+            </header>
+            <main id="main" className="wrap">
+              {children}
+            </main>
+            <footer className="footer">저장 → 검토·승인 → 공개 배치</footer>
+          </div>
+        </div>
       </body>
     </html>
   );

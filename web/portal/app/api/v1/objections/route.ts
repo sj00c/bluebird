@@ -1,12 +1,16 @@
 import { NextResponse } from "next/server";
-import { insertObjection, OBJECTION_KINDS, type ObjectionKind } from "@/lib/db";
+import { insertObjection } from "@/lib/objections";
+import { OBJECTION_KINDS } from "@/lib/input";
+import type { ObjectionKind } from "@/lib/types";
 
 export const dynamic = "force-dynamic";
 
 const ID_RE = /^ID-[0-9]{4}-[0-9a-f]{10}$/;
 
 export async function POST(req: Request) {
-  const isJson = (req.headers.get("content-type") ?? "").includes("application/json");
+  const isJson = (req.headers.get("content-type") ?? "").includes(
+    "application/json",
+  );
   let ideaId = "";
   let kind = "";
   let body = "";
@@ -32,12 +36,20 @@ export async function POST(req: Request) {
   // 이의 가져오기(objections pull)와 같은 규칙: 제어문자(탭·줄바꿈 제외)는 지운 뒤 길이를 잰다. 코드포인트 기준 1..2000.
   body = body.replace(/[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]/g, "").trim();
   if (!ID_RE.test(ideaId)) return respond(isJson, "", 400, "bad_request");
-  if (!(OBJECTION_KINDS as readonly string[]).includes(kind) || [...body].length < 1 || [...body].length > 2000) {
+  if (
+    !(OBJECTION_KINDS as readonly string[]).includes(kind) ||
+    [...body].length < 1 ||
+    [...body].length > 2000
+  ) {
     return respond(isJson, ideaId, 400, "bad_request");
   }
   let found: boolean;
   try {
-    found = await insertObjection({ ideaId, kind: kind as ObjectionKind, body });
+    found = await insertObjection({
+      ideaId,
+      kind: kind as ObjectionKind,
+      body,
+    });
   } catch {
     return respond(isJson, ideaId, 500, "server_error");
   }
@@ -46,7 +58,12 @@ export async function POST(req: Request) {
   return seeOther(`/ideas/${ideaId}?objection=ok#objection`);
 }
 
-function respond(isJson: boolean, ideaId: string, status: number, detail: string) {
+function respond(
+  isJson: boolean,
+  ideaId: string,
+  status: number,
+  detail: string,
+) {
   if (isJson || !ID_RE.test(ideaId)) {
     return NextResponse.json({ ok: false, detail }, { status });
   }
@@ -55,5 +72,8 @@ function respond(isJson: boolean, ideaId: string, status: number, detail: string
 
 // 상대 경로 Location: 컨테이너 안 주소(0.0.0.0:3000)가 아니라 브라우저가 연 nginx 주소 기준으로 이동한다.
 function seeOther(location: string) {
-  return new NextResponse(null, { status: 303, headers: { Location: location } });
+  return new NextResponse(null, {
+    status: 303,
+    headers: { Location: location },
+  });
 }

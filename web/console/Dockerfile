@@ -1,6 +1,7 @@
 # 업무망 관리자 콘솔 이미지. Next.js standalone 출력만 담는다.
 FROM node:22-alpine AS build
 WORKDIR /app
+ENV NEXT_TELEMETRY_DISABLED=1
 COPY package.json package-lock.json ./
 RUN npm ci --no-audit --no-fund
 COPY . .
@@ -12,6 +13,7 @@ WORKDIR /app
 RUN addgroup -S -g 10001 console && adduser -S -u 10001 -G console console
 COPY --from=build --chown=console:console /app/.next/standalone ./
 COPY --from=build --chown=console:console /app/.next/static ./.next/static
+COPY --from=build --chown=console:console /app/public ./public
 USER console
 EXPOSE 3000
 CMD ["node", "server.js"]
