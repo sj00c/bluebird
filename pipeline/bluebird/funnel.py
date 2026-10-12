@@ -13,6 +13,7 @@ import json
 import os
 import re
 from datetime import date, timedelta
+from typing import Literal
 
 from psycopg.types.json import Jsonb
 
@@ -52,11 +53,14 @@ def decide_trace(profile: str, checks: dict[str, dict], required: tuple[str, ...
     # external_search = 체계적 외부 검색(NAVER 뉴스·KIPRIS Plus 특허)을 실제로 돌렸는가. 사람 manual 확인은 따로 표기.
     external = "done" if any(checks.get(i, {}).get("result") in ("found", "none")
                              for i in ("news_web", "ip")) else "not_done"
+    manual = checks.get("manual", {})
+    if manual.get("status"):  # 사람이 직접 분류한 결과가 최종(미실행 자동 검색보다 우선)
+        return manual["status"], external
+    if profile == "full_v1":
+        # Removing an API key must not erase a failed search or an uninterpreted hit.
+        required = tuple(dict.fromkeys((*required, *(i for i in ("news_web", "ip") if i in checks))))
     if any(checks.get(i, {}).get("result", "not_run") == "not_run" for i in required):
         return "pending", external
-    manual = checks.get("manual", {})
-    if manual.get("status"):  # 사람이 직접 분류한 결과가 최종
-        return manual["status"], external
     if profile == "kipris_local_v1":
         # 로컬 기록에 연결(특허 연계·유사 아이디어)이 있으면 사람 확인 대상으로 남긴다.
         return ("pending" if any(checks[i]["result"] == "found" for i in required) else "none"), external
@@ -161,8 +165,12 @@ def trace_pending(*, dsn: str) -> dict:
 
 
 def trace_manual(*, dsn: str, idea_id: str, result: str, status: str | None, url: str | None, note: str,
-                 by: str) -> str:
+                 by: str, item: str = "manual") -> str:
     """사람이 외부 검색을 직접 하고 결과를 넣는다. found면 근거 URL 필수. status는 최종 분류(선택)."""
+    if item not in ("manual", "news_web", "ip"):
+        raise ValueError("manual trace item must be manual|news_web|ip")
+    if item != "manual" and status is not None:
+        raise ValueError("final status belongs to the manual interpretation, not a search item")
     if result not in ("found", "none"):
         raise ValueError("result must be found|none")
     if result == "found" and not url:
@@ -175,12 +183,12 @@ def trace_manual(*, dsn: str, idea_id: str, result: str, status: str | None, url
         detail = {"by": by, "note": note, **({"status": status} if status else {})}
         conn.execute(
             """INSERT INTO core.trace_check (idea_id, item, result, query_fields, detail)
-               VALUES (%s,'manual',%s,'{title,host_org,year}',%s)
+               VALUES (%s,%s,%s,'{title,host_org,year}',%s)
                ON CONFLICT (idea_id, item) DO UPDATE SET result=EXCLUDED.result, detail=EXCLUDED.detail,
-                 checked_at=now()""", (idea_id, result, Jsonb(detail)))
+                 checked_at=now()""", (idea_id, item, result, Jsonb(detail)))
         if url:
             _evidence(conn, kind="manual", url=url, title=None, excerpt=note, observed_at=today_kst(),
-                      target_type="trace", target_id=f"{idea_id}:manual")
+                      target_type="trace", target_id=f"{idea_id}:{item}")
         st = _save_verdict(conn, idea_id, profile_for(idea["source_id"], idea["export_grade"]))
         conn.commit()
     return st
@@ -496,7 +504,7 @@ def match_judge(*, dsn: str, limit: int = 50, egress: Egress | None = None) -> d
 # ----------------------------------------------------------------------------- 4 S
 
 def score_set(*, dsn: str, idea_id: str, scores: dict[str, int | None], evidence: dict[str, str], by: str,
-              as_of: date | None = None) -> score.Score:
+              as_of: date | None = None, _proposed: bool = False) -> score.Score | None:
     """사람 채점. 점수 있는 항목마다 근거 URL 필수. 바뀐 것의 축은 승인 전 매칭(yes/partial/human)에서 가져온다."""
     missing = [k for k, v in scores.items() if v is not None and not evidence.get(k)]
     if missing:
@@ -504,6 +512,10 @@ def score_set(*, dsn: str, idea_id: str, scores: dict[str, int | None], evidence
     as_of = as_of or today_kst()
     with db.connect(dsn) as conn:
         _idea(conn, idea_id)
+        conn.execute("SELECT id FROM core.idea WHERE id=%s FOR UPDATE", (idea_id,))
+        if _proposed and conn.execute(
+                "SELECT 1 FROM core.timeliness WHERE idea_id=%s LIMIT 1", (idea_id,)).fetchone():
+            return None  # 자동 채점은 날짜가 달라도 기존 사람/자동 채점을 덮어쓰지 않는다.
         kinds = {r[0] for r in conn.execute(
             """SELECT c.kind FROM core.change_match m JOIN core.condition_change c ON c.id = m.change_id
                  JOIN core.diagnosis d ON d.idea_id = m.idea_id
@@ -530,7 +542,8 @@ def score_set(*, dsn: str, idea_id: str, scores: dict[str, int | None], evidence
         conn.execute("DELETE FROM core.x_evidence WHERE target_type='timeliness' AND target_id=%s", (tid,))
         for axis, url in evidence.items():
             if scores.get(axis) is not None:
-                _evidence(conn, kind="manual", url=url, title=f"시의성 {score.AXIS_KO[axis]} 근거",
+                _evidence(conn, kind="condition_change" if _proposed else "manual", url=url,
+                          title=f"시의성 {score.AXIS_KO[axis]} 근거",
                           excerpt=f"{score.EVIDENCE_EXCERPT}{score.AXIS_KO[axis]}", observed_at=as_of, target_type="timeliness", target_id=tid)
         conn.commit()
     return sc
@@ -545,6 +558,19 @@ def _live_idea(conn, idea_id: str) -> None:
         raise KeyError(f"no live idea {idea_id}")
     if row[0] is not None:
         raise ValueError(f"{idea_id} is withheld since {row[0]:%Y-%m-%d} (objection); it cannot be approved")
+
+
+def review_round(*, dsn: str, idea_id: str, by: str, round_: Literal["expert", "audit"],
+                 decision: Literal["approve", "reject"], note: str | None = None) -> None:
+    """Record an expert/audit review without publishing; final review uses approve/reject."""
+    if round_ not in ("expert", "audit"):
+        raise ValueError("review round must be expert or audit")
+    wording.check(note)
+    with db.connect(dsn) as conn:
+        _live_idea(conn, idea_id)
+        conn.execute("INSERT INTO core.review (target_type, target_id, reviewer, round, decision, note)"
+                     " VALUES ('idea',%s,%s,%s,%s,%s)", (idea_id, by, round_, decision, note))
+        conn.commit()
 
 
 def approve(*, dsn: str, idea_id: str, by: str, note: str | None = None) -> dict:

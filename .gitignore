@@ -14,3 +14,4 @@ node_modules/
 next-env.d.ts
 /.gjc/
 .DS_Store
+/parangsae-src/

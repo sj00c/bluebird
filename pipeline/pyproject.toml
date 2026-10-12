@@ -16,7 +16,6 @@ bluebird = "bluebird.cli:main"
 
 [dependency-groups]
 dev = [
-    "httpx>=0.27",
     "pytest>=8",
     "ruff>=0.6",
 ]

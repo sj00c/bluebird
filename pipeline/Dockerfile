@@ -1,5 +1,5 @@
-# 업무망 backend 이미지(backend-jobs). 외부 호출은 egress 모듈 → DMZ 프록시로만.
-# 업무망 반입: 빌드 → docker save → 기관 반입 절차(서명·검사) → docker load
+# 로컬 backend 이미지: jobs와 API가 공유하며, 외부 HTTP는 egress 모듈로 제한한다.
+# 잠금 파일로 설치하고 런타임에는 uv·개발 도구를 포함하지 않는다.
 FROM python:3.12-slim AS build
 COPY --from=ghcr.io/astral-sh/uv:0.10 /uv /usr/local/bin/uv
 WORKDIR /app

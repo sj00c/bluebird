@@ -402,7 +402,7 @@ def report(*, dsn: str, publish_dsn: str, inbox_dsn: str | None = None, p95_ms: 
                          + ("" if names is None else
                             f" (이름 대조 {names['compared']:,}/{names['expected']:,}건(보류·퇴역 제외), 원본 파일 "
                             f"{names['source_files']}, 없음 {names['missing_files']})"),
-                         "전부 0, 성명 일치 0 (+ test_no_direct_http)"))
+                         "전부 0, 성명 일치 0"))
 
         ob = conn.execute(
             """SELECT count(*) FILTER (WHERE pulled_at IS NOT NULL), count(*) FILTER (WHERE resolved_at IS NOT NULL)

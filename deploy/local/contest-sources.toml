@@ -1,0 +1,1130 @@
+# Official downloadable CSV sources, inspected 2026-10-08.
+# Counts below are raw / eligible / exact distinct source rows, not cross-source unique ideas.
+# Public proposals and improvement projects are not contest winners.
+# All public/export permissions remain pending; source availability is not approval.
+# Date mappings use source event/submission/budget years only; unknown years remain null.
+
+# Observed 159 / 159 / 159 rows; cp949.
+[[source]]
+id = "jeonnam_awarded_proposals"
+adapter = "mapped_contest_csv"
+collector = "data_go_csv"
+dataset_id = "15105816"
+file = "jeonnam_awarded_proposals.csv"
+name = "전남광주통합특별시_우수제안 목록 정보"
+license = "이용허락범위 제한 없음"
+url = "https://www.data.go.kr/data/15105816/fileData.do"
+layer = 2
+public_ok = false
+export_grade = "pending"
+record_kind = "contest_award"
+host_org = "전남광주통합특별시"
+[source.columns]
+"title" = "제안명"
+"year" = "선정시기"
+"award" = "등급"
+"category" = "구분"
+
+# Observed 126 / 49 / 49 rows; utf-8-sig.
+[[source]]
+id = "yeonggwang_contest_proposals"
+adapter = "mapped_contest_csv"
+collector = "data_go_csv"
+dataset_id = "15153466"
+file = "yeonggwang_contest_proposals.csv"
+name = "전남광주통합특별시 영광군_대표홈페이지_제안공모전"
+license = "이용허락범위 제한 없음"
+url = "https://www.data.go.kr/data/15153466/fileData.do"
+layer = 2
+public_ok = false
+export_grade = "pending"
+record_kind = "contest_submission"
+host_org = "전남광주통합특별시 영광군"
+[source.exclude]
+"제목(BS_SUBJECT)" = ["영광군 청소년 정책제안대회 안내", "제안(붙임 파일 참고)", "제안공모", "RE:영광 군민대학 운영 제안", "2024 영광군 제안 공모신청서", "영광군정 제안서", "2024년 영광군 제안 공모", "RE:○ 관할 운동(체육)시설의 스마트 운동(체육)시설로의 전환", "RE:영광군 제안 공모(안전한 어린이 보행환경 조성)", "RE:영광 자유광장 조성", "RE:독거노인  홈캠  보급 지원", "RE:제안(붙임 파일 참고)", "RE:영광군 주간 모범식단표 제공으로 군민 건강증진", "RE:민원인 대형폐기물 배출 신고시 현금 결재 방법 개선", "RE:제안공모", "RE:와상 장애인을 위한 장애인콜택시 추가 배치", "공모합니다.", "RE:관광발전 영광", "골목 포장 부탁드립니다.", "제안 공모 신청서", "RE:영광군정 제안서", "RE:영광군 문화관광 누리집과 연동되는 QR코드 제작, 주요관광지에 부착 활용", "RE:공모합니다.", "RE:영광군 관내 도서관에 ‘아이디어야놀자(콘텐츠)’ 보급", "RE:영광군 공모 제안참여", "RE:영광군의 주요 건물에 미디어파사드 설치", "RE:영광 토요영어마을 제안서", "RE:군민증 및 전국 통용 카드 발급", "영광군 공모 제안참여", "RE:골목 포장 부탁드립니다.", "RE:백수해안도로 관광 활성화 방안", "RE:방학 중 자녀 돌봄 프로그램이 있었으면 합니다", "제안공모전제안합니다.", "2025년 영광군 제안공모", "RE:제안 공모 신청서", "RE:2024년 영광군 제안 공모", "1", "공모전에 응모합니다.", "2025년 영광군 제안 공모 응모 서류 제출 (OOO)", "RE:2024 영광군 제안 공모신청서", "RE:신규 공무원 대상 ‘새내기 휴가’ 신설", "RE:제안공모전제안합니다.", "2025년 영광군 제안 공모", "2025 영광 제안 공모전", "영광군 제안 공모 신청합니다.", "첨부파일 참조 요망", "2025년 영광군 제안_공모신청서 신청합니다!", "영광군 제안 공모", "2025년 영광군 제인 공모(OOO)", "제안 공모전 참여", "영광군에게 제안합니다!", "제안", "함께 만드는 더 나은 영광, 당신의 아이디어가 정책이 됩니다 제출"]
+[source.columns]
+"title" = "제목(BS_SUBJECT)"
+
+# Observed 109 / 109 / 109 rows; utf-8-sig.
+[[source]]
+id = "rural_sixth_industry_awards"
+adapter = "mapped_contest_csv"
+collector = "data_go_csv"
+dataset_id = "15124203"
+file = "rural_sixth_industry_awards.csv"
+name = "농림수산식품교육문화정보원_6차산업 경진대회수상사례"
+license = "이용허락범위 제한 없음"
+url = "https://www.data.go.kr/data/15124203/fileData.do"
+layer = 2
+public_ok = false
+export_grade = "pending"
+record_kind = "contest_award"
+host_org = "농림수산식품교육문화정보원"
+[source.columns]
+"title" = "제목"
+"body" = ["주요사업", "성과"]
+
+# Observed 280 / 161 / 161 rows; cp949.
+[[source]]
+id = "happy_rural_community_awards"
+adapter = "mapped_contest_csv"
+collector = "data_go_csv"
+dataset_id = "15140150"
+file = "happy_rural_community_awards.csv"
+name = "한국농어촌공사_행복농촌만들기 콘테스트 수상 정보"
+license = "이용허락범위 제한 없음"
+url = "https://www.data.go.kr/data/15140150/fileData.do"
+layer = 2
+public_ok = false
+export_grade = "pending"
+record_kind = "contest_award"
+host_org = "한국농어촌공사"
+require_any = ["마을만들기_마을특징", "마을만들기_마을중장기발전방향", "마을만들기_추진성과"]
+[source.columns]
+"title" = "관리명"
+"year" = "수상년도"
+"award" = "수상등급"
+"category" = "수상분야"
+"body" = ["마을만들기_마을특징", "마을만들기_마을중장기발전방향", "마을만들기_추진성과"]
+"people" = ["담당자명", "참여자"]
+
+# Observed 88 / 88 / 85 rows; cp949.
+[[source]]
+id = "ulsan_open_data_contest_entries"
+adapter = "mapped_contest_csv"
+collector = "data_go_csv"
+dataset_id = "15153117"
+file = "ulsan_open_data_contest_entries.csv"
+name = "울산광역시_공공데이터 활용 창업경진대회"
+license = "이용허락범위 제한 없음"
+url = "https://www.data.go.kr/data/15153117/fileData.do"
+layer = 2
+public_ok = false
+export_grade = "pending"
+record_kind = "contest_submission"
+host_org = "울산광역시"
+[source.columns]
+"title" = "작품명"
+"year" = "대회연도"
+"contest" = "대회명"
+"body" = ["소개글"]
+
+# Observed 86 / 86 / 86 rows; utf-8-sig.
+[[source]]
+id = "sejong_education_public_proposals"
+adapter = "mapped_contest_csv"
+collector = "data_go_csv"
+dataset_id = "15150602"
+file = "sejong_education_public_proposals.csv"
+name = "세종특별자치시교육청_제안사업공모정보"
+license = "이용허락범위 제한 없음"
+url = "https://www.data.go.kr/data/15150602/fileData.do"
+layer = 2
+public_ok = false
+export_grade = "pending"
+record_kind = "public_proposal"
+host_org = "세종특별자치시교육청"
+[source.columns]
+"title" = "사업명"
+"key" = "제안공모순번"
+"year" = "등록일시"
+
+# Observed 53 / 36 / 36 rows; cp949.
+[[source]]
+id = "family_support_public_proposals"
+adapter = "mapped_contest_csv"
+collector = "data_go_csv"
+dataset_id = "15153784"
+file = "family_support_public_proposals.csv"
+name = "한국건강가정진흥원_누리집 국민제안정보"
+license = "이용허락범위 제한 없음"
+url = "https://www.data.go.kr/data/15153784/fileData.do"
+layer = 2
+public_ok = false
+export_grade = "pending"
+record_kind = "public_proposal"
+host_org = "한국건강가정진흥원"
+[source.row_equals]
+"삭제여부" = "N"
+[source.exclude]
+"제목" = ["가족친화 직장교육 전문강사 양성 시기 문의", "문의글(언어발달지도사)", "부모교육강사 양성모집 문의드립니다.", "부산 아이돌보미 양성과정 강사", "건강가정지원센터 입사 시 근무경력 인정", "한국건강가정진흥원의 ESG 경영 및 사례", "국민토론방 운영 관련 감사 인사", "다문화 방문교육사업 관련 질의 드립니다.", "다문화가족자녀지원사업 다문화가족자녀 교육활동비", "다문화가족 프로그램 공모전", "국민제안보다는 민원 접수입니다.", "방문교육에 대해서", "사례관리사", "건강가정사", "건강가정다문화가족지원센터  활동", "인구 정책"]
+"국민 제안 내용" = ["안녕하세요. 저는 현재 울산 동구아이돌봄지원센터에 아동학대사례관리전담인력으로 재직 중인 김수지라고 합니다. 저희 제공기관에서 아이돌봄서비스 이용 중인 이용자 분 및 재직중인 아이돌보미 선생님께서 모니터링 응답을 통해 건의해주신 사항이 있어 전달드리고자 합니다.1) 연간 정부지원시간 확대 2) 라형 이용요금 할인에 대한 답변 부탁 드립니다. 감사합니다."]
+[source.columns]
+"title" = "제목"
+"year" = "등록일자"
+
+# Observed 34 / 3 / 3 rows; cp949.
+[[source]]
+id = "incheon_facilities_public_ideas"
+adapter = "mapped_contest_csv"
+collector = "data_go_csv"
+dataset_id = "15138358"
+file = "incheon_facilities_public_ideas.csv"
+name = "인천시설공단_공단 홈페이지 아이디어 뱅크"
+license = "이용허락범위 제한 없음"
+url = "https://www.data.go.kr/data/15138358/fileData.do"
+layer = 2
+public_ok = false
+export_grade = "pending"
+record_kind = "improvement_proposal"
+host_org = "인천시설공단"
+[source.row_equals]
+"공개여부" = "Y"
+[source.exclude]
+"게시판제목" = ["제안서", "2011제안제도", "2011상반기제안", "2009제안서", "기능 테스트입니다."]
+[source.columns]
+"title" = "게시판제목"
+"year" = "등록일자"
+
+# Observed 28 / 28 / 28 rows; utf-8-sig.
+[[source]]
+id = "senior_employment_idea_awards"
+adapter = "mapped_contest_csv"
+collector = "data_go_csv"
+dataset_id = "15156525"
+file = "senior_employment_idea_awards.csv"
+name = "한국노인인력개발원_인천지역 신규 노인일자리 개발을 위한 아이디어 공모전"
+license = "이용허락범위 제한 없음"
+url = "https://www.data.go.kr/data/15156525/fileData.do"
+layer = 2
+public_ok = false
+export_grade = "pending"
+record_kind = "contest_award"
+host_org = "한국노인인력개발원"
+[source.columns]
+"title" = "아이디어명"
+"award" = "수상내역"
+
+# Observed 25 / 25 / 25 rows; cp949.
+[[source]]
+id = "kamco_data_contest_awards"
+adapter = "mapped_contest_csv"
+collector = "data_go_csv"
+dataset_id = "15156683"
+file = "kamco_data_contest_awards.csv"
+name = "한국자산관리공사_연도별 데이터 분야 공모전 수상작 정보"
+license = "공공저작물 : 출처표시, 상업적 이용금지, 변경금지 (제 4유형)"
+url = "https://www.data.go.kr/data/15156683/fileData.do"
+layer = 2
+public_ok = false
+export_grade = "pending"
+record_kind = "contest_award"
+host_org = "한국자산관리공사"
+[source.columns]
+"title" = "아이디어 내용"
+"year" = "개최년도"
+"contest" = "공모전명"
+"award" = "수상내역"
+"category" = "아이디어 분야"
+
+# Observed 76 / 76 / 76 rows; cp949.
+[[source]]
+id = "daejeon_transit_power_proposals"
+adapter = "mapped_contest_csv"
+collector = "data_go_csv"
+dataset_id = "15098477"
+file = "daejeon_transit_power_proposals.csv"
+name = "대전교통공사_전력기술팀 제안(창안) 과제 제출 현황"
+license = "이용허락범위 제한 없음"
+url = "https://www.data.go.kr/data/15098477/fileData.do"
+layer = 2
+public_ok = false
+export_grade = "pending"
+record_kind = "improvement_proposal"
+host_org = "대전교통공사"
+[source.columns]
+"title" = "제    안    명"
+"key" = "접수번호"
+"year" = "제출일자"
+"category" = "제안구분"
+
+# Observed 73 / 64 / 64 rows; cp949.
+[[source]]
+id = "daejeon_transit_control_proposals"
+adapter = "mapped_contest_csv"
+collector = "data_go_csv"
+dataset_id = "15043816"
+file = "daejeon_transit_control_proposals.csv"
+name = "대전교통공사_제어기술팀 제안(창안)과제 제출현황"
+license = "이용허락범위 제한 없음"
+url = "https://www.data.go.kr/data/15043816/fileData.do"
+layer = 2
+public_ok = false
+export_grade = "pending"
+record_kind = "improvement_proposal"
+host_org = "대전교통공사"
+[source.columns]
+"title" = "제안명"
+"year" = "제출일자"
+"category" = "구분"
+"body" = ["내용 및 기대효과"]
+
+# Observed 100 / 100 / 100 rows; utf-8-sig.
+[[source]]
+id = "khnp_quality_circle_awards"
+adapter = "mapped_contest_csv"
+collector = "data_go_csv"
+dataset_id = "15087097"
+file = "khnp_quality_circle_awards.csv"
+name = "한국수력원자력(주)_전국 품질분임조 수상내역"
+license = "이용허락범위 제한 없음"
+url = "https://www.data.go.kr/data/15087097/fileData.do"
+layer = 2
+public_ok = false
+export_grade = "pending"
+record_kind = "contest_award"
+exclude_reason = "internal_activity"
+host_org = "한국수력원자력(주)"
+[source.columns]
+"title" = "제목"
+"year" = "년도"
+"award" = "수상내역"
+
+# Observed 6 / 5 / 5 rows; cp949.
+[[source]]
+id = "fire_industry_design_awards"
+adapter = "mapped_contest_csv"
+collector = "data_go_csv"
+dataset_id = "15039590"
+file = "fire_industry_design_awards.csv"
+name = "한국소방산업기술원 소방산업 우수 디자인 공모전 수상작 목록"
+license = "이용허락범위 제한 없음"
+url = "https://www.data.go.kr/data/15039590/fileData.do"
+layer = 2
+public_ok = false
+export_grade = "pending"
+record_kind = "contest_award"
+host_org = "한국소방산업기술원"
+[source.columns]
+"title" = "제목"
+"year" = "수상년도"
+"award" = "수상구분"
+
+# Observed 19 / 19 / 19 rows; cp949.
+[[source]]
+id = "fire_industry_technology_awards"
+adapter = "mapped_contest_csv"
+collector = "data_go_csv"
+dataset_id = "15132795"
+file = "fire_industry_technology_awards.csv"
+name = "한국소방산업기술원_소방산업대상 공모전 수상작 목록"
+license = "이용허락범위 제한 없음"
+url = "https://www.data.go.kr/data/15132795/fileData.do"
+layer = 2
+public_ok = false
+export_grade = "pending"
+record_kind = "contest_award"
+host_org = "한국소방산업기술원"
+[source.columns]
+"title" = "제목"
+"year" = "수상년도"
+"award" = "부문구분"
+"category" = "수상구분"
+
+# Observed 9 / 9 / 9 rows; cp949.
+[[source]]
+id = "gwangju_open_data_contest_awards"
+adapter = "mapped_contest_csv"
+collector = "data_go_csv"
+dataset_id = "15074003"
+file = "gwangju_open_data_contest_awards.csv"
+name = "전남광주통합특별시_광주 공공데이터 활용 경진대회 수상현황"
+license = "이용허락범위 제한 없음"
+url = "https://www.data.go.kr/data/15074003/fileData.do"
+layer = 2
+public_ok = false
+export_grade = "pending"
+record_kind = "contest_award"
+host_org = "전남광주통합특별시"
+[source.columns]
+"title" = "과제명"
+"year" = "대회명"
+"contest" = "대회명"
+"award" = "수상구분"
+"category" = "공모부문"
+
+# Observed 61 / 61 / 61 rows; cp949.
+[[source]]
+id = "korea_public_design_awards"
+adapter = "mapped_contest_csv"
+collector = "data_go_csv"
+dataset_id = "15087221"
+file = "korea_public_design_awards.csv"
+name = "한국공예디자인문화진흥원_공공디자인대상 수상작 정보"
+license = "이용허락범위 제한 없음"
+url = "https://www.data.go.kr/data/15087221/fileData.do"
+layer = 2
+public_ok = false
+export_grade = "pending"
+record_kind = "contest_award"
+host_org = "한국공예디자인문화진흥원"
+[source.columns]
+"title" = "제목"
+"key" = "등록번호"
+"year" = "연도"
+"award" = "포상"
+"body" = ["내용"]
+"people" = ["수상자명"]
+
+# Observed 30 / 30 / 30 rows; cp949.
+[[source]]
+id = "ai_education_teacher_projects"
+adapter = "mapped_contest_csv"
+collector = "data_go_csv"
+dataset_id = "15091274"
+file = "ai_education_teacher_projects.csv"
+name = "한국과학창의재단_인공지능(AI)교육 교사연구회 성과물 목록"
+license = "이용허락범위 제한 없음"
+url = "https://www.data.go.kr/data/15091274/fileData.do"
+layer = 2
+public_ok = false
+export_grade = "pending"
+record_kind = "improvement_proposal"
+host_org = "한국과학창의재단"
+[source.columns]
+"title" = "교사연구회별 성과물"
+"year" = "과제 수행기간"
+
+# Observed 6 / 6 / 6 rows; cp949.
+[[source]]
+id = "software_teaching_case_awards"
+adapter = "mapped_contest_csv"
+collector = "data_go_csv"
+dataset_id = "15091356"
+file = "software_teaching_case_awards.csv"
+name = "한국과학창의재단_소프트웨어(SW) 수업 우수사례 공모전 수상작 목록"
+license = "이용허락범위 제한 없음"
+url = "https://www.data.go.kr/data/15091356/fileData.do"
+layer = 2
+public_ok = false
+export_grade = "pending"
+record_kind = "contest_award"
+exclude_reason = "teaching_case"
+host_org = "한국과학창의재단"
+[source.columns]
+"title" = "제목"
+"year" = "연도"
+"category" = "분야"
+
+# Observed 5 / 5 / 5 rows; cp949.
+[[source]]
+id = "kps_employee_ideas"
+adapter = "mapped_contest_csv"
+collector = "data_go_csv"
+dataset_id = "15137044"
+file = "kps_employee_ideas.csv"
+name = "한전케이피에스주식회사_아이디어"
+license = "이용허락범위 제한 없음"
+url = "https://www.data.go.kr/data/15137044/fileData.do"
+layer = 2
+public_ok = false
+export_grade = "pending"
+record_kind = "improvement_proposal"
+host_org = "한전케이피에스주식회사"
+[source.columns]
+"title" = "제목(IDEA_SJ)"
+"key" = "아이디어관리번호(IDEA_MNG_NO)"
+"body" = ["내용(CN)"]
+
+# Observed 111 / 111 / 111 rows; utf-8-sig.
+[[source]]
+id = "yangpyeong_budget_proposals"
+adapter = "mapped_contest_csv"
+collector = "data_go_csv"
+dataset_id = "15139350"
+file = "yangpyeong_budget_proposals.csv"
+name = "경기도 양평군_주민참여예산 최종사업 선정목록"
+license = "이용허락범위 제한 없음"
+url = "https://www.data.go.kr/data/15139350/fileData.do"
+layer = 2
+public_ok = false
+export_grade = "pending"
+record_kind = "public_proposal"
+host_org = "경기도 양평군"
+[source.columns]
+"title" = "사업명"
+
+# Observed 7 / 7 / 7 rows; cp949.
+[[source]]
+id = "daejeon_junggu_policy_awards"
+adapter = "mapped_contest_csv"
+collector = "data_go_csv"
+dataset_id = "15139894"
+file = "daejeon_junggu_policy_awards.csv"
+name = "대전광역시 중구_정책제안 공모전 시상 결과"
+license = "이용허락범위 제한 없음"
+url = "https://www.data.go.kr/data/15139894/fileData.do"
+layer = 2
+public_ok = false
+export_grade = "pending"
+record_kind = "contest_award"
+host_org = "대전광역시 중구"
+[source.columns]
+"title" = "제안명"
+"year" = "공모전개최연도"
+"award" = "등급"
+
+# Observed 79 / 79 / 79 rows; cp949.
+[[source]]
+id = "kf_public_diplomacy_projects"
+adapter = "mapped_contest_csv"
+collector = "data_go_csv"
+dataset_id = "15147096"
+file = "kf_public_diplomacy_projects.csv"
+name = "한국국제교류재단_국민공공외교프로젝트목록"
+license = "이용허락범위 제한 없음"
+url = "https://www.data.go.kr/data/15147096/fileData.do"
+layer = 2
+public_ok = false
+export_grade = "pending"
+record_kind = "public_proposal"
+host_org = "한국국제교류재단"
+[source.columns]
+"title" = "활동명"
+"year" = "활동연도"
+"body" = ["활동국가또는대상", "팀소개"]
+
+# Observed 602 / 602 / 602 rows; utf-8-sig.
+[[source]]
+id = "incheon_port_public_proposals"
+adapter = "mapped_contest_csv"
+collector = "data_go_csv"
+dataset_id = "15148814"
+file = "incheon_port_public_proposals.csv"
+name = "인천항만공사_홈페이지 국민의견수렴 정보"
+license = "이용허락범위 제한 없음"
+url = "https://www.data.go.kr/data/15148814/fileData.do"
+layer = 2
+public_ok = false
+export_grade = "pending"
+record_kind = "public_proposal"
+host_org = "인천항만공사"
+[source.row_equals]
+"공개여부" = "Y"
+[source.columns]
+"title" = "제목"
+"key" = "게시글번호"
+"year" = "등록일"
+
+# Observed 13 / 13 / 12 rows; utf-8-sig.
+[[source]]
+id = "serious_game_awards"
+adapter = "mapped_contest_csv"
+collector = "data_go_csv"
+dataset_id = "15150108"
+file = "serious_game_awards.csv"
+name = "한국콘텐츠진흥원_기능성게임 수상작 정보"
+license = "이용허락범위 제한 없음"
+url = "https://www.data.go.kr/data/15150108/fileData.do"
+layer = 2
+public_ok = false
+export_grade = "pending"
+record_kind = "contest_award"
+host_org = "한국콘텐츠진흥원"
+[source.columns]
+"title" = "게임명"
+"year" = "수상구분"
+"award" = "수상구분"
+"category" = "게임장르"
+"body" = ["플랫폼"]
+
+# Observed 12 / 12 / 12 rows; cp949.
+[[source]]
+id = "busan_urban_innovation_awards"
+adapter = "mapped_contest_csv"
+collector = "data_go_csv"
+dataset_id = "15155587"
+file = "busan_urban_innovation_awards.csv"
+name = "부산도시공사_경영혁신 적극행정 우수사례 목록"
+license = "공공저작물 : 출처표시 (제 1유형)"
+url = "https://www.data.go.kr/data/15155587/fileData.do"
+layer = 2
+public_ok = false
+export_grade = "pending"
+record_kind = "contest_award"
+exclude_reason = "internal_activity"
+host_org = "부산도시공사"
+[source.columns]
+"title" = "사례명"
+"award" = "구분"
+"category" = "세부분야"
+"body" = ["요약"]
+
+# Observed 567 / 550 / 524 rows; utf-8-sig.
+[[source]]
+id = "kaia_contest_submissions"
+adapter = "mapped_contest_csv"
+collector = "data_go_csv"
+dataset_id = "15162866"
+file = "kaia_contest_submissions.csv"
+name = "국토교통과학기술진흥원_공모전 신청현황"
+license = "이용허락범위 제한 없음"
+url = "https://www.data.go.kr/data/15162866/fileData.do"
+layer = 2
+public_ok = false
+export_grade = "pending"
+record_kind = "contest_submission"
+host_org = "국토교통과학기술진흥원"
+[source.exclude]
+"출품작명" = ["이건호", "ㄱㄱㄱ", "nohhy95", "국토교통기술로 바뀔 우리의 미래", "국토교통기술, 그 미래에 네가 있다!", "우리가 꿈꿔왔던 세상을 우리의 일상으로!", "더 나은 기술, 더 밝은 대한민국", "미래로 나아가는 국토교통기술", "안녕하세요! 2050년 7월 2일 교통정보입니다.", "2050, 기술의 불시착", "다 보여줄께!!", "2023년 KAIA 대국민 사전정보공개 아이디어 공모전"]
+[source.columns]
+"title" = "출품작명"
+"year" = "공모전년도"
+
+# Observed 22 / 22 / 22 rows; utf-8-sig.
+[[source]]
+id = "youth_data_contest_awards"
+adapter = "mapped_contest_csv"
+collector = "data_go_csv"
+dataset_id = "15166904"
+file = "youth_data_contest_awards.csv"
+name = "성평등가족부_경진대회 수상 정보"
+license = "이용허락범위 제한 없음"
+url = "https://www.data.go.kr/data/15166904/fileData.do"
+layer = 2
+public_ok = false
+export_grade = "pending"
+record_kind = "contest_award"
+host_org = "성평등가족부"
+[source.columns]
+"title" = "수상작품제목(WNAWD_WRKS_TTL)"
+"year" = "개최연도(HDMT_YR)"
+"contest" = "대회명(CNFRN_NM)"
+"award" = "수상명(WNAWD_NM)"
+"category" = "부문명(SECT_NM)"
+
+# Observed 219 / 219 / 219 rows; cp949.
+[[source]]
+id = "gwangjin_budget_proposals"
+adapter = "mapped_contest_csv"
+collector = "data_go_csv"
+dataset_id = "15034406"
+file = "gwangjin_budget_proposals.csv"
+name = "서울특별시 광진구_주민참여예산 현황"
+license = "이용허락범위 제한 없음"
+url = "https://www.data.go.kr/data/15034406/fileData.do"
+layer = 2
+public_ok = false
+export_grade = "pending"
+record_kind = "public_proposal"
+host_org = "서울특별시 광진구"
+[source.columns]
+"title" = "사업명"
+"year" = "연도"
+
+# Observed 144 / 144 / 144 rows; cp949.
+[[source]]
+id = "yeongdeungpo_budget_proposals"
+adapter = "mapped_contest_csv"
+collector = "data_go_csv"
+dataset_id = "15048758"
+file = "yeongdeungpo_budget_proposals.csv"
+name = "서울특별시_영등포구_주민참여예산현황"
+license = "이용허락범위 제한 없음"
+url = "https://www.data.go.kr/data/15048758/fileData.do"
+layer = 2
+public_ok = false
+export_grade = "pending"
+record_kind = "public_proposal"
+host_org = "서울특별시 영등포구"
+[source.columns]
+"title" = "사업명"
+"year" = "회계연도"
+
+# Observed 51 / 51 / 51 rows; cp949.
+[[source]]
+id = "seodaemun_budget_proposals"
+adapter = "mapped_contest_csv"
+collector = "data_go_csv"
+dataset_id = "15048767"
+file = "seodaemun_budget_proposals.csv"
+name = "서울특별시 서대문구_주민참여예산 승인사업  현황"
+license = "이용허락범위 제한 없음"
+url = "https://www.data.go.kr/data/15048767/fileData.do"
+layer = 2
+public_ok = false
+export_grade = "pending"
+record_kind = "public_proposal"
+host_org = "서울특별시 서대문구"
+[source.columns]
+"title" = "사업명"
+"year" = "편성년도"
+
+# Observed 440 / 440 / 440 rows; cp949.
+[[source]]
+id = "jeju_budget_proposals"
+adapter = "mapped_contest_csv"
+collector = "data_go_csv"
+dataset_id = "15071627"
+file = "jeju_budget_proposals.csv"
+name = "제주특별자치도_주민참여예산신청현황"
+license = "이용허락범위 제한 없음"
+url = "https://www.data.go.kr/data/15071627/fileData.do"
+layer = 2
+public_ok = false
+export_grade = "pending"
+record_kind = "public_proposal"
+host_org = "제주특별자치도"
+[source.columns]
+"title" = "사업명"
+"year" = "예산대상연도"
+"category" = "사업유형"
+
+# Observed 23 / 23 / 23 rows; cp949.
+[[source]]
+id = "yeonsu_budget_proposals"
+adapter = "mapped_contest_csv"
+collector = "data_go_csv"
+dataset_id = "15087402"
+file = "yeonsu_budget_proposals.csv"
+name = "인천광역시 연수구_주민참여예산 운영현황"
+license = "이용허락범위 제한 없음"
+url = "https://www.data.go.kr/data/15087402/fileData.do"
+layer = 2
+public_ok = false
+export_grade = "pending"
+record_kind = "public_proposal"
+host_org = "인천광역시 연수구"
+[source.columns]
+"title" = "사업명"
+
+# Observed 30 / 30 / 30 rows; cp949.
+[[source]]
+id = "namdong_budget_proposals"
+adapter = "mapped_contest_csv"
+collector = "data_go_csv"
+dataset_id = "15087648"
+file = "namdong_budget_proposals.csv"
+name = "인천광역시 남동구_주민참여예산사업 반영결과"
+license = "이용허락범위 제한 없음"
+url = "https://www.data.go.kr/data/15087648/fileData.do"
+layer = 2
+public_ok = false
+export_grade = "pending"
+record_kind = "public_proposal"
+host_org = "인천광역시 남동구"
+[source.columns]
+"title" = "사업명"
+"year" = "제안 연도"
+
+# Observed 90 / 90 / 90 rows; cp949.
+[[source]]
+id = "daegu_seogu_budget_proposals"
+adapter = "mapped_contest_csv"
+collector = "data_go_csv"
+dataset_id = "15092743"
+file = "daegu_seogu_budget_proposals.csv"
+name = "대구광역시 서구_주민참여예산사업 현황"
+license = "이용허락범위 제한 없음"
+url = "https://www.data.go.kr/data/15092743/fileData.do"
+layer = 2
+public_ok = false
+export_grade = "pending"
+record_kind = "public_proposal"
+host_org = "대구광역시 서구"
+[source.columns]
+"title" = "제안사업명"
+
+# Observed 34 / 33 / 33 rows; cp949.
+[[source]]
+id = "goyang_budget_proposals"
+adapter = "mapped_contest_csv"
+collector = "data_go_csv"
+dataset_id = "15127194"
+file = "goyang_budget_proposals.csv"
+name = "경기도 고양시_주민참여예산 반영사업"
+license = "이용허락범위 제한 없음"
+url = "https://www.data.go.kr/data/15127194/fileData.do"
+layer = 2
+public_ok = false
+export_grade = "pending"
+record_kind = "public_proposal"
+host_org = "경기도 고양시"
+[source.columns]
+"title" = "사 업 명"
+"category" = "제안 구분"
+"body" = ["주민제안 내역"]
+
+# Observed 5987 / 5986 / 5986 rows; utf-8-sig.
+[[source]]
+id = "gwangju_budget_proposals"
+adapter = "mapped_contest_csv"
+collector = "data_go_csv"
+dataset_id = "15132901"
+file = "gwangju_budget_proposals.csv"
+name = "전남광주통합특별시_시민광장 광주온 시민참여예산 제안사업 정보"
+license = "이용허락범위 제한 없음"
+url = "https://www.data.go.kr/data/15132901/fileData.do"
+layer = 2
+public_ok = false
+export_grade = "pending"
+record_kind = "public_proposal"
+host_org = "전남광주통합특별시"
+[source.exclude]
+"사업명" = ["테스트글입니다. 확인후 삭제 바랍니다."]
+[source.columns]
+"title" = "사업명"
+"year" = "년도"
+"key" = "제안순번"
+
+# Observed 7706 / 7706 / 7688 rows; cp949.
+[[source]]
+id = "daegu_budget_project_proposals"
+adapter = "mapped_contest_csv"
+collector = "data_go_csv"
+dataset_id = "15133517"
+file = "daegu_budget_project_proposals.csv"
+name = "대구광역시_주민참여예산 시민 제안사업 구체화 정보"
+license = "이용허락범위 제한 없음"
+url = "https://www.data.go.kr/data/15133517/fileData.do"
+layer = 2
+public_ok = false
+export_grade = "pending"
+record_kind = "public_proposal"
+host_org = "대구광역시"
+[source.row_equals]
+"삭제여부" = "N"
+[source.columns]
+"title" = "사업명"
+"year" = "사업년도"
+
+# Observed 1658 / 1658 / 1645 rows; cp949.
+[[source]]
+id = "daegu_budget_selected_projects"
+adapter = "mapped_contest_csv"
+collector = "data_go_csv"
+dataset_id = "15133520"
+file = "daegu_budget_selected_projects.csv"
+name = "대구광역시_주민참여예산 시민 선정사업 상세정보"
+license = "이용허락범위 제한 없음"
+url = "https://www.data.go.kr/data/15133520/fileData.do"
+layer = 2
+public_ok = false
+export_grade = "pending"
+record_kind = "public_proposal"
+host_org = "대구광역시"
+[source.columns]
+"title" = "사업명"
+"year" = "사업년도"
+
+# Observed 30 / 30 / 30 rows; cp949.
+[[source]]
+id = "daegu_youth_budget_awards"
+adapter = "mapped_contest_csv"
+collector = "data_go_csv"
+dataset_id = "15136149"
+file = "daegu_youth_budget_awards.csv"
+name = "대구광역시_주민참여예산 청소년우수사업 정보"
+license = "이용허락범위 제한 없음"
+url = "https://www.data.go.kr/data/15136149/fileData.do"
+layer = 2
+public_ok = false
+export_grade = "pending"
+record_kind = "contest_award"
+host_org = "대구광역시"
+[source.columns]
+"title" = "사업명"
+"year" = "년도"
+"category" = "분야"
+"award" = "수상이름"
+"body" = ["사업내용"]
+
+# Observed 21 / 21 / 21 rows; cp949.
+[[source]]
+id = "nonsan_department_budget_proposals"
+adapter = "mapped_contest_csv"
+collector = "data_go_csv"
+dataset_id = "15145203"
+file = "nonsan_department_budget_proposals.csv"
+name = "충청남도 논산시_주민참여예산사업(사업부서)"
+license = "이용허락범위 제한 없음"
+url = "https://www.data.go.kr/data/15145203/fileData.do"
+layer = 2
+public_ok = false
+export_grade = "pending"
+record_kind = "public_proposal"
+host_org = "충청남도 논산시"
+[source.columns]
+"title" = "사업명"
+"year" = "사업연도"
+
+# Observed 186 / 186 / 186 rows; cp949.
+[[source]]
+id = "nonsan_district_budget_proposals"
+adapter = "mapped_contest_csv"
+collector = "data_go_csv"
+dataset_id = "15145205"
+file = "nonsan_district_budget_proposals.csv"
+name = "충청남도 논산시_주민참여예산사업(읍면동)"
+license = "이용허락범위 제한 없음"
+url = "https://www.data.go.kr/data/15145205/fileData.do"
+layer = 2
+public_ok = false
+export_grade = "pending"
+record_kind = "public_proposal"
+host_org = "충청남도 논산시"
+[source.columns]
+"title" = "사업명 "
+"year" = "사업연도 "
+
+# Observed 1199 / 1199 / 1199 rows; cp949.
+[[source]]
+id = "geoje_budget_proposals"
+adapter = "mapped_contest_csv"
+collector = "data_go_csv"
+dataset_id = "15145448"
+file = "geoje_budget_proposals.csv"
+name = "경상남도 거제시_주민참여예산현황"
+license = "이용허락범위 제한 없음"
+url = "https://www.data.go.kr/data/15145448/fileData.do"
+layer = 2
+public_ok = false
+export_grade = "pending"
+record_kind = "public_proposal"
+host_org = "경상남도 거제시"
+[source.columns]
+"title" = "사업명"
+"year" = "회계연도"
+
+# Observed 9 / 9 / 9 rows; utf-8-sig.
+[[source]]
+id = "namdong_citizen_proposals"
+adapter = "mapped_contest_csv"
+collector = "data_go_csv"
+dataset_id = "15155076"
+file = "namdong_citizen_proposals.csv"
+name = "인천광역시 남동구_남동구홈페이지_구민제안"
+license = "이용허락범위 제한 없음"
+url = "https://www.data.go.kr/data/15155076/fileData.do"
+layer = 2
+public_ok = false
+export_grade = "pending"
+record_kind = "public_proposal"
+host_org = "인천광역시 남동구"
+[source.columns]
+"title" = "제목"
+"year" = "등록일"
+
+# Observed 50 / 50 / 50 rows; cp949.
+[[source]]
+id = "gyeongbuk_budget_proposals"
+adapter = "mapped_contest_csv"
+collector = "data_go_csv"
+dataset_id = "15160654"
+file = "gyeongbuk_budget_proposals.csv"
+name = "경상북도_주민참여예산신청현황"
+license = "이용허락범위 제한 없음"
+url = "https://www.data.go.kr/data/15160654/fileData.do"
+layer = 2
+public_ok = false
+export_grade = "pending"
+record_kind = "public_proposal"
+host_org = "경상북도"
+[source.columns]
+"title" = "사업명"
+"year" = "예산대상연도"
+"category" = "사업유형"
+
+# Observed 25 / 25 / 25 rows; cp949.
+[[source]]
+id = "jeonbuk_budget_proposals"
+adapter = "mapped_contest_csv"
+collector = "data_go_csv"
+dataset_id = "15160678"
+file = "jeonbuk_budget_proposals.csv"
+name = "전북특별자치도_주민참여예산신청현황"
+license = "이용허락범위 제한 없음"
+url = "https://www.data.go.kr/data/15160678/fileData.do"
+layer = 2
+public_ok = false
+export_grade = "pending"
+record_kind = "public_proposal"
+host_org = "전북특별자치도"
+[source.columns]
+"title" = "사업명"
+"year" = "회계연도"
+"category" = "유형"
+
+# Observed 448 / 448 / 445 rows; cp949.
+[[source]]
+id = "sejong_budget_proposals"
+adapter = "mapped_contest_csv"
+collector = "data_go_csv"
+dataset_id = "15160880"
+file = "sejong_budget_proposals.csv"
+name = "세종특별자치시_주민제안사업"
+license = "이용허락범위 제한 없음"
+url = "https://www.data.go.kr/data/15160880/fileData.do"
+layer = 2
+public_ok = false
+export_grade = "pending"
+record_kind = "public_proposal"
+host_org = "세종특별자치시"
+[source.columns]
+"title" = "사업명"
+"year" = "예산대상연도"
+"category" = "사업유형"
+
+# Observed 580 / 580 / 554 rows; cp949.
+[[source]]
+id = "yuseong_budget_proposals"
+adapter = "mapped_contest_csv"
+collector = "data_go_csv"
+dataset_id = "15160908"
+file = "yuseong_budget_proposals.csv"
+name = "대전광역시 유성구_홈페이지구민사업제안"
+license = "이용허락범위 제한 없음"
+url = "https://www.data.go.kr/data/15160908/fileData.do"
+layer = 2
+public_ok = false
+export_grade = "pending"
+record_kind = "public_proposal"
+host_org = "대전광역시 유성구"
+[source.columns]
+"title" = "제안사업명"
+"year" = "제안심사연도"
+"category" = "구분"
+
+# Observed 65 / 65 / 65 rows; utf-8-sig.
+[[source]]
+id = "busan_budget_proposals"
+adapter = "mapped_contest_csv"
+collector = "data_go_csv"
+dataset_id = "15161622"
+file = "busan_budget_proposals.csv"
+name = "부산광역시_주민참여예산 예산편성 목록"
+license = "이용허락범위 제한 없음"
+url = "https://www.data.go.kr/data/15161622/fileData.do"
+layer = 2
+public_ok = false
+export_grade = "pending"
+record_kind = "public_proposal"
+host_org = "부산광역시"
+[source.columns]
+"title" = "사업명"
+"category" = "구분"
+
+# Observed 218 / 218 / 218 rows; utf-8-sig.
+[[source]]
+id = "chungbuk_budget_proposals"
+adapter = "mapped_contest_csv"
+collector = "data_go_csv"
+dataset_id = "15161856"
+file = "chungbuk_budget_proposals.csv"
+name = "충청북도_주민참여예산 세부내역"
+license = "이용허락범위 제한 없음"
+url = "https://www.data.go.kr/data/15161856/fileData.do"
+layer = 2
+public_ok = false
+export_grade = "pending"
+record_kind = "public_proposal"
+host_org = "충청북도"
+[source.columns]
+"title" = "사업명"
+"year" = "회계연도"
+"category" = "사업유형"
+
+# Observed 164 / 164 / 164 rows; cp949.
+[[source]]
+id = "gyeongnam_budget_proposals"
+adapter = "mapped_contest_csv"
+collector = "data_go_csv"
+dataset_id = "15162158"
+file = "gyeongnam_budget_proposals.csv"
+name = "경상남도_주민참여예산 현황"
+license = "이용허락범위 제한 없음"
+url = "https://www.data.go.kr/data/15162158/fileData.do"
+layer = 2
+public_ok = false
+export_grade = "pending"
+record_kind = "public_proposal"
+host_org = "경상남도"
+[source.columns]
+"title" = "사업명"
+"year" = "회계연도"
+"category" = "사업유형"
+
+# Observed 17 / 17 / 17 rows; cp949.
+[[source]]
+id = "gangwon_budget_proposals"
+adapter = "mapped_contest_csv"
+collector = "data_go_csv"
+dataset_id = "15162578"
+file = "gangwon_budget_proposals.csv"
+name = "강원특별자치도_주민참여예산 제안사업 현황"
+license = "이용허락범위 제한 없음"
+url = "https://www.data.go.kr/data/15162578/fileData.do"
+layer = 2
+public_ok = false
+export_grade = "pending"
+record_kind = "public_proposal"
+host_org = "강원특별자치도"
+[source.columns]
+"title" = "사업명"
+"year" = "사업연도"
+"category" = "사업유형"
+
+# Observed 3047 / 3046 / 3036 rows; utf-8-sig.
+[[source]]
+id = "ulsan_budget_proposals"
+adapter = "mapped_contest_csv"
+collector = "data_go_csv"
+dataset_id = "15164278"
+file = "ulsan_budget_proposals.csv"
+name = "울산광역시_주민참여예산 제안 사업 목록 데이터"
+license = "이용허락범위 제한 없음"
+url = "https://www.data.go.kr/data/15164278/fileData.do"
+layer = 2
+public_ok = false
+export_grade = "pending"
+record_kind = "public_proposal"
+host_org = "울산광역시"
+[source.exclude]
+"사업명" = ["개발제한구역내 산지 태양광 발전사업 인허가 및 지원 가능성 문의"]
+[source.columns]
+"title" = "사업명"
+"year" = "년도"
+"category" = "분야"
+
+# Observed 38 / 36 / 36 rows; cp949.
+[[source]]
+id = "jeonnam_citizen_proposals"
+adapter = "mapped_contest_csv"
+collector = "data_go_csv"
+dataset_id = "15130550"
+file = "jeonnam_citizen_proposals.csv"
+name = "전남광주통합특별시_소통인전남 제안광장"
+license = "이용허락범위 제한 없음"
+url = "https://www.data.go.kr/data/15130550/fileData.do"
+layer = 2
+public_ok = false
+export_grade = "pending"
+record_kind = "public_proposal"
+host_org = "전남광주통합특별시"
+[source.exclude]
+"제안명" = ["유자품종명", "24년 출생신고 18년간 20만원 지급 대상"]
+[source.columns]
+"title" = "제안명"
+"year" = "등록일시"
+
+# Observed 53 / 46 / 46 rows; cp949.
+[[source]]
+id = "kogas_technology_research_proposals"
+adapter = "mapped_contest_csv"
+collector = "data_go_csv"
+dataset_id = "15146845"
+file = "kogas_technology_research_proposals.csv"
+name = "(주)한국가스기술공사_연구관리시스템_제안"
+license = "이용허락범위 제한 없음"
+url = "https://www.data.go.kr/data/15146845/fileData.do"
+layer = 2
+public_ok = false
+export_grade = "pending"
+record_kind = "improvement_proposal"
+host_org = "(주)한국가스기술공사"
+[source.exclude]
+"제안명" = ["2019-A", "2019-B", "2019-C", "2019-D", "과제등록", "testTask", "신규과제 시험"]
+[source.columns]
+"title" = "제안명"
+"key" = "제안고유번호"
+"year" = "제안연도"

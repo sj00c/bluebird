@@ -188,7 +188,8 @@ def test_name_leaks_end_to_end(fresh, tmp_path):
     (tmp_path / "other").write_bytes(b"o" * 32)
     cfg = tmp_path / "sources.toml"
     cfg.write_text('[[source]]\nid="d"\nadapter="design_idea_csv"\nfile="d.csv"\nname="n"\nlicense="l"\nlayer=2\n'
-                   'public_ok=true\nexport_grade="O"\npolicy_approved_by="t"\npolicy_approved_at="2026-10-06"\n',
+                   'public_ok=true\nexport_grade="O"\npolicy_approved_by="t"\npolicy_approved_at="2026-10-06"\n'
+                   'record_kind="contest_award"\n',
                    encoding="utf-8")
     with (tmp_path / "d.csv").open("w", encoding="utf-8", newline="") as f:
         w = csv.writer(f)

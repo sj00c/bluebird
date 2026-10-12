@@ -76,9 +76,11 @@ def test_catalog_tiers_and_reregistration(fresh, tmp_path):
 
 
 def _seed_idea(c, missing_data="[]"):
-    c.execute("INSERT INTO core.source VALUES ('s','n','l','',2,true,'O',true,'op',now(),now())")
+    c.execute("INSERT INTO core.source (id, name, license, url, layer, public_ok, export_grade, body_present,"
+              " policy_approved_by, policy_approved_at, record_kind)"
+              " VALUES ('s','n','l','',2,true,'O',true,'op',now(),'contest_award')")
     c.execute("INSERT INTO core.ingest_run (source_id, status) VALUES ('s','ok')")
-    c.execute("INSERT INTO core.contest VALUES ('C-1','s','대회','',2019)")
+    c.execute("INSERT INTO core.contest (id, source_id, name, host_org, year) VALUES ('C-1','s','대회','',2019)")
     c.execute("INSERT INTO core.idea (id, source_id, contest_id, year, title, team_kind, first_ingest_id,"
               " last_ingest_id) VALUES ('ID-2019-aaaaaaaaaa','s','C-1',2019,'제목','empty',1,1)")
     c.execute("INSERT INTO core.idea_card (idea_id, card_kind, title, missing_data, extractor)"
@@ -133,6 +135,33 @@ def test_publish_swap(fresh):
         assert c.execute("SELECT problem FROM publish.idea").fetchone()[0] is None
 
 
+def test_ingest_keeps_body_metadata_on_unchanged_and_failed_attempts(fresh, tmp_path):
+    from bluebird import ingest
+
+    secret = tmp_path / "secret"
+    secret.write_bytes(b"s" * 32)
+    config = tmp_path / "sources.toml"
+    config.write_text(
+        '[[source]]\nid="official"\nadapter="mapped_contest_csv"\nfile="official.csv"\n'
+        'name="공식 제안"\nlicense="l"\nlayer=2\npublic_ok=false\nexport_grade="pending"\n'
+        'record_kind="contest_award"\n'
+        '[source.columns]\ntitle="제안명"\nbody=["설명"]\n', encoding="utf-8")
+    source = tmp_path / "official.csv"
+    source.write_text("제안명,설명\n빗물 회수,지붕의 빗물을 저장하는 장치\n", encoding="utf-8")
+    options = {"dsn": fresh, "config": config, "seed_dir": tmp_path, "secret_path": secret}
+    first = ingest.ingest(**options)
+    assert first[0]["with_body"] == 1
+    assert ingest.ingest(**options)[0]["status"] == "unchanged"
+    with psycopg.connect(fresh) as conn:
+        assert conn.execute("SELECT body_present FROM core.source WHERE id='official'").fetchone()[0]
+    source.write_text("변경된헤더,설명\n제안,잘못된 스키마\n", encoding="utf-8")
+    with pytest.raises(ValueError, match="missing required headers"):
+        ingest.ingest(**options)
+    with psycopg.connect(fresh) as conn:
+        assert conn.execute("SELECT body_present FROM core.source WHERE id='official'").fetchone()[0]
+        assert conn.execute("SELECT body FROM core.idea WHERE source_id='official'").fetchone()[0] == "지붕의 빗물을 저장하는 장치"
+
+
 def test_ingest_retires_vanished_rows_and_cards_follow(fresh, tmp_path):
     """원본 파일이 갱신돼 사라진 행은 retired_at, 다시 나타나면 복귀. 절반 넘게 사라지면 멈춘다."""
     import csv
@@ -142,7 +171,8 @@ def test_ingest_retires_vanished_rows_and_cards_follow(fresh, tmp_path):
     (tmp_path / "secret").write_bytes(b"s" * 32)
     (tmp_path / "sources.toml").write_text(
         '[[source]]\nid="d"\nadapter="design_idea_csv"\nfile="d.csv"\nname="n"\nlicense="l"\nlayer=2\n'
-        'public_ok=true\nexport_grade="O"\npolicy_approved_by="t"\npolicy_approved_at="2026-10-06"\n',
+        'public_ok=true\nexport_grade="O"\npolicy_approved_by="t"\npolicy_approved_at="2026-10-06"\n'
+        'record_kind="contest_award"\n',
         encoding="utf-8")
 
     def write(rows):
@@ -590,3 +620,120 @@ def test_manual_announcement_path_reaches_stage3(fresh):
                      what_changed=["예비창업 지원"], how_now="예비창업패키지에 신청할 수 있다", by="t")
     with psycopg.connect(fresh) as c:
         assert c.execute("SELECT s3 FROM core.revival_candidate WHERE idea_id=%s", (iid,)).fetchone()[0] is True
+
+
+def test_record_kind_audience_and_dup_are_markers_not_filters(fresh, tmp_path):
+    """0011·0012: 기록 종류·학생 대회 표시·같은 제목 묶음·제외 후보 이유는 선별 재료일 뿐이다. 깔때기·카드는 전부를 본다.
+    레지스트리만 바꿔도(--policy-only) record_kind·exclude_reason이 따라오고, 사람이 넣은 이유는 재계산에 살아남는다."""
+    import csv
+
+    from bluebird import cards, ingest
+
+    (tmp_path / "secret").write_bytes(b"s" * 32)
+    cfg = tmp_path / "sources.toml"
+
+    def write_cfg(kind, reason=None):
+        cfg.write_text(
+            '[[source]]\nid="m"\nadapter="mapped_contest_csv"\nfile="m.csv"\nname="n"\nlicense="l"\nlayer=2\n'
+            'public_ok=true\nexport_grade="O"\npolicy_approved_by="t"\npolicy_approved_at="2026-10-06"\n'
+            f'record_kind="{kind}"\n' + (f'exclude_reason="{reason}"\n' if reason else '')
+            + '[source.columns]\ntitle="제목"\ncontest="대회"\nyear="연도"\n', encoding="utf-8")
+
+    def reasons():
+        with psycopg.connect(fresh) as c:
+            return {t: sorted(r) for t, r in c.execute(
+                "SELECT i.title, array_remove(array_agg(x.reason ORDER BY x.reason), NULL)"
+                "  FROM core.idea i LEFT JOIN core.idea_exclusion x ON x.idea_id = i.id GROUP BY i.title")}
+
+    with (tmp_path / "m.csv").open("w", encoding="utf-8", newline="") as f:
+        w = csv.writer(f)
+        w.writerow(["제목", "대회", "연도"])
+        w.writerows([
+            ["저상버스 도착 알림 서비스", "공공데이터 창업경진대회", "2021"],
+            ["저상버스 도착알림 서비스", "공공데이터 창업경진대회", "2022"],   # 공백만 다른 중복
+            ["자유낙하 실험기", "제40회 전국학생과학발명품경진대회", "2021"],
+            ["캠퍼스 공유 자전거", "대학창의발명대회", "2021"],                  # '대학생'은 학생 아님
+        ])
+
+    write_cfg("contest_submission")
+    ingest.ingest(dsn=fresh, config=cfg, seed_dir=tmp_path, secret_path=tmp_path / "secret")
+    cards.build(dsn=fresh)
+    with psycopg.connect(fresh) as c:
+        assert c.execute("SELECT record_kind FROM core.source WHERE id='m'").fetchone()[0] == "contest_submission"
+        assert dict(c.execute("SELECT name, audience FROM core.contest").fetchall()) == {
+            "공공데이터 창업경진대회": "unknown", "제40회 전국학생과학발명품경진대회": "student", "대학창의발명대회": "unknown"}
+        assert c.execute("SELECT count(*) FROM core.idea_card").fetchone()[0] == 4          # 학생 대회도 카드
+        assert c.execute("SELECT count(*) FROM core.funnel_stage(-1)").fetchone()[0] == 4   # 전부 깔때기
+        dup_title, canon_year = c.execute(
+            "SELECT d.title, cn.year FROM core.idea_dup x JOIN core.idea d ON d.id = x.idea_id"
+            " JOIN core.idea cn ON cn.id = x.canonical_id").fetchone()
+        assert (dup_title, canon_year) == ("저상버스 도착알림 서비스", 2021)   # 대표 = 연도 빠른 것
+        c.execute("UPDATE core.contest SET audience='general' WHERE name='대학창의발명대회'")  # 사람이 확정
+        c.execute("INSERT INTO core.idea_exclusion (idea_id, reason, decided_by)"
+                  " SELECT id, 'internal_activity', 'reviewer' FROM core.idea WHERE title='캠퍼스 공유 자전거'")
+        c.commit()
+    assert reasons() == {"저상버스 도착 알림 서비스": [], "저상버스 도착알림 서비스": ["duplicate_title"],
+                         "자유낙하 실험기": ["student_contest"], "캠퍼스 공유 자전거": ["internal_activity"]}
+
+    write_cfg("public_proposal", reason="certified_product")
+    r = ingest.sync_policy(dsn=fresh, configs=[cfg])
+    assert r["synced"] == ["m"] and r["contests_classified"] == 0 and r["dup_rows"] == 1
+    with psycopg.connect(fresh) as c:
+        assert c.execute("SELECT record_kind, exclude_reason FROM core.source WHERE id='m'").fetchone() == (
+            "public_proposal", "certified_product")
+        assert c.execute("SELECT audience FROM core.contest WHERE name='대학창의발명대회'").fetchone()[0] == "general"
+        assert c.execute("SELECT count(*) FROM core.funnel_stage(-1)").fetchone()[0] == 4   # 이유가 붙어도 빠지지 않는다
+        assert c.execute("SELECT count(*) FROM core.idea_card").fetchone()[0] == 4
+    # 소스 이유 둘(기록 종류·편집 판단)은 전부에, 학생·중복은 해당 건에, 사람이 넣은 것은 살아남는다
+    assert reasons() == {
+        "저상버스 도착 알림 서비스": ["certified_product", "public_proposal"],
+        "저상버스 도착알림 서비스": ["certified_product", "duplicate_title", "public_proposal"],
+        "자유낙하 실험기": ["certified_product", "public_proposal", "student_contest"],
+        "캠퍼스 공유 자전거": ["certified_product", "internal_activity", "public_proposal"]}
+
+    write_cfg("contest_award", reason="student_contest")       # 소스 단위로 쓸 수 없는 이유
+    with pytest.raises(ValueError, match="exclude_reason must be one of"):
+        ingest.sync_policy(dsn=fresh, configs=[cfg])
+
+    cfg.write_text(cfg.read_text(encoding="utf-8").replace('record_kind="contest_award"\n', ''), encoding="utf-8")
+    with pytest.raises(ValueError, match="record_kind must be one of"):
+        ingest.sync_policy(dsn=fresh, configs=[cfg])
+
+
+def test_export_xlsx_excludes_held_sources_by_default(fresh, tmp_path):
+    """export: 라이선스에 '보류'가 든 소스는 기본 xlsx에서 빠지고 --include-held 에서만 들어간다. 출처 명세는 소스 수를 맞춘다."""
+    from openpyxl import load_workbook
+
+    from bluebird import export
+
+    with psycopg.connect(fresh) as c:
+        _seed_idea(c)
+        c.execute("INSERT INTO core.source (id, name, license, url, layer, public_ok, export_grade, record_kind)"
+                  " VALUES ('h','보류 소스','기관 약관 — 공개·외부 전송 보류','',2,false,'pending','contest_award')")
+        c.execute("INSERT INTO core.contest (id, source_id, name, host_org, year) VALUES ('C-h','h','','',2020)")
+        c.execute("INSERT INTO core.idea (id, source_id, contest_id, year, title, team_kind, first_ingest_id, last_ingest_id)"
+                  " VALUES ('ID-2020-hhhhhhhhhh','h','C-h',2020,'보류 아이디어','empty',1,1)")
+        c.commit()
+
+    def ideas(path):
+        ws = load_workbook(path, read_only=True)["ideas"]
+        rows = list(ws.iter_rows(values_only=True))
+        return rows[0], rows[1:]
+
+    r = export.xlsx(dsn=fresh, out=tmp_path / "a.xlsx")
+    hdr, body = ideas(tmp_path / "a.xlsx")
+    assert r["ideas"] == 1 and r["held_excluded"] == ["h"]
+    assert [b[hdr.index("source_id")] for b in body] == ["s"]
+    assert body[0][hdr.index("share")] == "가능" and body[0][hdr.index("contest")] == "대회"
+
+    r = export.xlsx(dsn=fresh, out=tmp_path / "b.xlsx", include_held=True)
+    hdr, body = ideas(tmp_path / "b.xlsx")
+    assert r["ideas"] == 2 and r["held_excluded"] == []
+    held = next(b for b in body if b[hdr.index("source_id")] == "h")
+    assert held[hdr.index("share")] == "보류" and held[hdr.index("contest")] == "보류 소스"   # 대회명 비면 소스명
+
+    out = tmp_path / "p.md"
+    r = export.provenance(dsn=fresh, configs=[], out=out)
+    assert r == {"path": str(out), "sources": 2, "ideas": 2}
+    md = out.read_text(encoding="utf-8")
+    assert "| 보류 소스 | 1 |" in md and "`s` |" in md and "레지스트리에 없음" in md

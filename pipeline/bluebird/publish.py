@@ -21,7 +21,7 @@ from psycopg.types.json import Jsonb
 
 from . import db, score, wording
 
-TEMPLATE_VERSION = "v2"
+TEMPLATE_VERSION = "v3"
 PORTAL_ROLE = "bb_portal"
 
 
@@ -66,12 +66,14 @@ QUERIES: dict[str, tuple[tuple[str, ...], str]] = {
     ),
     "idea": (
         ("id", "source_id", "contest_name", "host_org", "year", "award", "title", "body", "used_data", "category",
-         "source_url", "card_kind", "problem", "solution", "trace_status", "external_search"),
+         "source_url", "card_kind", "problem", "solution", "trace_status", "external_search", "record_kind", "audience",
+         "exclude_reasons"),
         """SELECT i.id, i.source_id, c.name, c.host_org, i.year, i.award, i.title, i.body, i.used_data, i.category,
                   i.source_url, k.card_kind,
                   CASE WHEN pc.target_id IS NOT NULL THEN k.problem END,
                   CASE WHEN pc.target_id IS NOT NULL THEN k.solution END,
-                  t.status, t.external_search
+                  t.status, t.external_search, s.record_kind, c.audience,
+                  ARRAY(SELECT x.reason FROM core.idea_exclusion x WHERE x.idea_id = i.id ORDER BY 1)
              FROM core.idea i
              JOIN core.contest c ON c.id = i.contest_id
              JOIN core.source s ON s.id = i.source_id AND s.public_ok AND i.retired_at IS NULL AND i.withheld_at IS NULL

@@ -12,7 +12,7 @@ from tests.test_db_integration import DSN, _pub_db, _seed_idea
 pytestmark = pytest.mark.skipif(not DSN, reason="BB_TEST_DSN not set")
 IID = "ID-2019-aaaaaaaaaa"
 TOKENS = {"rev": ("kim", ["reviewer"]), "ca": ("lee", ["coder"]), "cb": ("park", ["coder"]),
-          "cc": ("choi", ["coder"]), "exp": ("jung", ["expert"])}
+          "cc": ("choi", ["coder"]), "exp": ("jung", ["expert"]), "aud": ("han", ["auditor"])}
 
 
 @pytest.fixture()
@@ -32,13 +32,14 @@ def client(fresh, tmp_path, monkeypatch):
     from fastapi.testclient import TestClient
 
     from bluebird import api
+    from bluebird.http.auth import load_users
     users = {hashlib.sha256(t.encode()).hexdigest(): {"user": u, "roles": r} for t, (u, r) in TOKENS.items()}
     (tmp_path / "users.json").write_text(json.dumps(users))
     monkeypatch.setenv("BB_API_USERS", str(tmp_path / "users.json"))
     monkeypatch.setenv("BB_DSN", fresh)
-    api._users.cache_clear()
+    load_users.cache_clear()
     yield TestClient(api.app)
-    api._users.cache_clear()
+    load_users.cache_clear()
 
 
 def H(tok):
@@ -248,15 +249,16 @@ def test_api_works_as_least_privilege_role(fresh, tmp_path, monkeypatch):
     from fastapi.testclient import TestClient
 
     from bluebird import api
+    from bluebird.http.auth import load_users
     _to_stage4(fresh)
     with psycopg.connect(DSN, autocommit=True) as c:
         c.execute("ALTER ROLE bb_api LOGIN PASSWORD 'apitest'")
-    api_dsn = fresh.replace("postgres:t@", "bb_api:apitest@")
+    api_dsn = psycopg.conninfo.make_conninfo(fresh, user="bb_api", password="apitest")
     users = {hashlib.sha256(t.encode()).hexdigest(): {"user": u, "roles": r} for t, (u, r) in TOKENS.items()}
     (tmp_path / "u.json").write_text(json.dumps(users))
     monkeypatch.setenv("BB_API_USERS", str(tmp_path / "u.json"))
     monkeypatch.setenv("BB_DSN", api_dsn)
-    api._users.cache_clear()
+    load_users.cache_clear()
     cl = TestClient(api.app)
     assert cl.post(f"/api/ideas/{IID}/review", headers=H("rev"), json={"round": "final", "decision": "approve"}
                    ).status_code == 200
@@ -271,7 +273,7 @@ def test_api_works_as_least_privilege_role(fresh, tmp_path, monkeypatch):
     oid = cl.get("/api/objections", headers=H("rev")).json()["items"][0]["id"]
     assert cl.post(f"/api/objections/{oid}/resolve", headers=H("rev"),
                    json={"decision": "accepted", "resolution": "내림", "withhold": True}).status_code == 200
-    api._users.cache_clear()
+    load_users.cache_clear()
     with psycopg.connect(api_dsn) as c:
         for sql in ("CREATE TABLE core.x (a int)", "UPDATE core.idea SET title='x'", "DELETE FROM core.review",
                     "SELECT 1 FROM core.egress_call"):

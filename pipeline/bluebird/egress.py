@@ -1,7 +1,7 @@
 """처리 작업의 유일한 외부 출구(계획 §3.5, 원칙 3).
 
 - HTTP 클라이언트는 이 모듈이 하나만 소유한다(trust_env=False, 프록시는 BLUEBIRD_EGRESS_PROXY를 줄 때만).
-  다른 모듈은 httpx·requests·urllib·socket·LLM SDK를 import하지 않는다(tests/test_no_direct_http.py).
+  다른 모듈은 직접 네트워크를 열지 않는다. urllib.parse 같은 순수 URL 처리는 외부 호출이 아니다.
 - 요청 본문은 이 모듈이 직접 만든다. 호출자는 "어느 소스의 어떤 필드"를 넘기고, 이 모듈이 반출 정책
   (source.export_grade + core.export_policy)을 검사한 뒤 본문을 직렬화한다. LLM도 SDK 없이 REST로 부른다.
 - 보낸 본문의 sha256을 요청 훅에서 다시 계산해 미리 계산한 값과 다르면 막는다.
@@ -18,6 +18,7 @@ import json
 import os
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
+from io import BytesIO
 from urllib.parse import urlsplit
 
 import httpx
@@ -30,6 +31,8 @@ PURPOSES = ("collect", "signal", "trace", "llm", "source_check")
 ALLOWED_HOSTS = (
     "data.go.kr", "law.go.kr", "kipris.or.kr", "k-startup.go.kr", "bizinfo.go.kr",
     "openapi.naver.com", "api.openai.com", "api.anthropic.com",
+    "www.science.go.kr",
+    "award.kidp.or.kr",
 )
 
 # export_grade='O' 소스에서 정책 행 없이도 나갈 수 있는 내용 필드. 그 밖은 core.export_policy에 명시해야 한다.
@@ -213,19 +216,27 @@ class Egress:
         call.bytes_out = len(body) if body is not None else 0
         q = {**(params or {}), **(secret_params or {})}
         self._expected_sha = hashlib.sha256(body or b"").hexdigest()
+        resp = None
         try:
-            resp = self._client.request(method, url, params=q or None, content=body, headers=headers)
+            request = self._client.build_request(method, url, params=q or None, content=body, headers=headers)
+            resp = self._client.send(request, stream=True)
             hops = 0
             while resp.is_redirect and hops < 5:
                 nxt = resp.next_request
                 if nxt is None or not host_allowed(nxt.url.host):
                     raise EgressBlocked(f"redirect to {nxt.url.host if nxt else '?'} not in allowlist")
                 self._expected_sha = hashlib.sha256(nxt.read()).hexdigest()
-                resp = self._client.send(nxt)
+                resp.close()
+                resp = self._client.send(nxt, stream=True)
                 hops += 1
-            content = resp.read()
-            if len(content) > self._max_bytes:
-                raise EgressBlocked(f"response larger than {self._max_bytes} bytes")
+            with BytesIO() as buffer:
+                size = 0
+                for chunk in resp.iter_bytes():
+                    size += len(chunk)
+                    if size > self._max_bytes:
+                        raise EgressBlocked(f"response larger than {self._max_bytes} bytes")
+                    buffer.write(chunk)
+                content = buffer.getvalue()
         except EgressBlocked as e:
             call.decision, call.reason = "blocked", str(e)
             self._record(call)
@@ -236,6 +247,8 @@ class Egress:
             raise EgressTransportError(call.reason) from e
         finally:
             self._expected_sha = None
+            if resp is not None:
+                resp.close()
         call.http_status, call.bytes_in = resp.status_code, len(content)
         if purpose == "llm" and resp.status_code < 400:
             # 응답 형식이 이상해도 감사 행은 반드시 남긴다(본문은 이미 나갔다).
@@ -252,10 +265,19 @@ class Egress:
     def get(self, purpose: str, url: str, *, params: Mapping[str, object] | None = None,
             fields: Mapping[str, Field] | None = None, path_template: str | None = None,
             secret_params: Mapping[str, str] | None = None,
-            secret_headers: Mapping[str, str] | None = None) -> Response:
-        """GET. fields 값은 쿼리 파라미터로 붙는다(반출 검사 후). secret_* 는 감사 행에 남지 않는 인증값."""
+            secret_headers: Mapping[str, str] | None = None,
+            field_params: Mapping[str, str] | None = None) -> Response:
+        """GET. field_params maps policy field names to API parameter names; values remain policy-gated."""
         fields = fields or {}
-        q = {**(params or {}), **{k: v for k, (_, v) in fields.items()}}
+        mapping = field_params or {}
+        if set(mapping) - fields.keys():
+            raise ValueError("field_params contains unknown fields")
+        names = [mapping.get(k, k) for k in fields]
+        if any(not isinstance(k, str) or not k for k in names) or len(set(names)) != len(names):
+            raise ValueError("field_params must have distinct nonempty parameter names")
+        if set(names) & (set(params or {}) | set(secret_params or {})):
+            raise ValueError("field parameters collide with static or secret parameters")
+        q = {**(params or {}), **{mapping.get(k, k): v for k, (_, v) in fields.items()}}
         return self._send(purpose, "GET", url, path_template=path_template, fields=fields, params=q,
                           body=None, headers=secret_headers, secret_params=secret_params)
 

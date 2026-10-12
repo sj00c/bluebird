@@ -148,3 +148,99 @@ def test_mask_team_keeps_masking_latin_oo_and_partly_masked_teams():
     assert audit_variants("이**(브레싱스)") == ["브레싱스"]
     assert "홍길동" in audit_variants("김*수, 홍길동") and not any("*" in v for v in audit_variants("김*수, 홍길동"))
     assert audit_variants("○○○") == [] and audit_variants("") == []
+
+
+def test_mapped_records_mask_people_exclude_contacts_and_keep_unknown_year(tmp_path):
+    from bluebird.sources import mapped_contest_csv
+
+    f = _write_csv(tmp_path / "mapped.csv",
+                   ["제안명", "설명", "연도", "수상자", "학교", "전화", "이메일"], [
+        ["김하나의 접이식 우산", "김하나가 제안한 빗물 회수 장치", "21년 상반기",
+         "김하나", "새봄학교", "010-1234-5678", "private@example.com"],
+        ["방수 장치", "빗물 유입 방지", "2021년", "", "", "", ""],
+        ["", "제목 없는 행", "2022", "", "", "", ""],
+    ])
+    spec = SourceSpec("mapped", "mapped_contest_csv", f, "공식 목록 2025", "l", "", 2, False,
+                      columns={"title": "제안명", "body": ["설명"], "year": "연도", "people": ["수상자"]},
+                      contest_name="제69회 대회", record_kind="contest_award")
+    records = list(mapped_contest_csv(spec, b"x" * 32))
+    assert len(records) == 2
+    assert records[0]["title"] == f"{MASK}의 접이식 우산"
+    assert records[0]["body"] == f"{MASK}가 제안한 빗물 회수 장치"
+    assert [r["year"] for r in records] == [None, 2021]
+    assert records[0]["extra"] == {}  # record_kind는 행이 아니라 core.source에 둔다
+    for private in ("김하나", "새봄학교", "010-1234-5678", "private@example.com"):
+        assert private not in str(records)
+
+
+def test_mapped_ids_survive_reorder_and_exact_duplicates(tmp_path):
+    from bluebird.sources import mapped_contest_csv
+
+    f = tmp_path / "mapped.csv"
+    rows = [["1", "재사용 포장", "2020", "010-1111-2222"],
+            ["2", "빗물 회수", "2021", "010-3333-4444"]]
+    spec = SourceSpec("mapped", "mapped_contest_csv", f, "n", "l", "", 2, False,
+                      columns={"title": "제안명", "year": "연도"})
+    _write_csv(f, ["순번", "제안명", "연도", "전화"], rows + rows[:1], enc="utf-8-sig")
+    first = list(mapped_contest_csv(spec, b"x" * 32))
+    reordered = [[str(i), *row[1:3], "010-9999-8888"] for i, row in enumerate(rows[::-1], 1)]
+    _write_csv(f, ["순번", "제안명", "연도", "전화"], reordered, enc="cp949")
+    second = list(mapped_contest_csv(spec, b"x" * 32))
+    assert len(first) == len(second) == 2
+    assert {r["title"]: r["idea_id"] for r in first} == {r["title"]: r["idea_id"] for r in second}
+
+
+def test_mapped_real_key_survives_title_update_and_rejects_conflicts(tmp_path):
+    import pytest
+
+    from bluebird.sources import mapped_contest_csv
+
+    f = tmp_path / "mapped.csv"
+    spec = SourceSpec("mapped", "mapped_contest_csv", f, "n", "l", "", 2, False,
+                      columns={"title": "제안명", "key": "접수번호"})
+    _write_csv(f, ["접수번호", "제안명"], [["K-42", "빗물 회수"]])
+    first, = mapped_contest_csv(spec, b"x" * 32)
+    _write_csv(f, ["접수번호", "제안명"], [["K-42", "빗물 회수 장치"]])
+    updated, = mapped_contest_csv(spec, b"x" * 32)
+    assert updated["idea_id"] == first["idea_id"]
+    _write_csv(f, ["접수번호", "제안명"], [["K-42", "빗물 회수"], ["K-42", "다른 작품"]])
+    with pytest.raises(ValueError, match="conflicting records"):
+        list(mapped_contest_csv(spec, b"x" * 32))
+
+
+def test_mapped_filters_require_real_content_and_expected_headers(tmp_path):
+    import pytest
+
+    from bluebird.sources import mapped_contest_csv
+
+    f = _write_csv(tmp_path / "mapped.csv", ["제안명", "설명", "공개여부"], [
+        ["마을 이름", "", "Y"], ["실제 프로젝트", "개선 방법", "Y"],
+        ["비공개", "비공개 방법", "N"], ["테스트", "기능 확인", "Y"],
+    ])
+    spec = SourceSpec("mapped", "mapped_contest_csv", f, "n", "l", "", 2, False,
+                      columns={"title": "제안명", "body": ["설명"]}, require_any=["설명"],
+                      row_equals={"공개여부": "Y"}, exclude={"제안명": ["테스트"]})
+    assert [r["title"] for r in mapped_contest_csv(spec, b"x" * 32)] == ["실제 프로젝트"]
+    _write_csv(f, ["제안명", "설명"], [["작품", "방법"]])
+    with pytest.raises(ValueError, match="missing required headers: 공개여부"):
+        list(mapped_contest_csv(spec, b"x" * 32))
+
+
+def test_mapped_record_preserves_verified_detail_url_and_full_long_title(tmp_path):
+    import pytest
+
+    from bluebird.sources import mapped_contest_csv
+
+    title = "물의 흐름을 이용한 장치 " * 40
+    url = "https://www.science.go.kr/mps/1079/bbs/423/moveBbsNttDetail.do?nttSn=21841"
+    f = _write_csv(tmp_path / "mapped.csv", ["title", "source_url"], [[title, url]])
+    spec = SourceSpec("mapped", "mapped_contest_csv", f, "n", "l",
+                      "https://www.science.go.kr/mps/1079/bbs/423/list.do", 2, False,
+                      columns={"title": "title", "source_url": "source_url"})
+    record, = mapped_contest_csv(spec, b"x" * 32)
+    assert record["source_url"] == url
+    assert record["title"] == title.strip()[:300] and record["body"] == title.strip()
+    assert record["year"] is None
+    _write_csv(f, ["title", "source_url"], [["장치", "https://other.example/project"]])
+    with pytest.raises(ValueError, match="official source host"):
+        list(mapped_contest_csv(spec, b"x" * 32))

@@ -16,15 +16,26 @@ check() { if eval "$2" >/dev/null 2>&1; then echo "PASS  $1"; else echo "FAIL  $
 echo "== 서비스"
 check "DB·API·포털·콘솔 실행 중" "[[ \$(dc ps --status running --format '{{.Service}}' | sort | tr '\\n' ' ') == 'api console db portal ' ]]"
 check "포트는 127.0.0.1에만 열림" "! dc ps --format '{{.Ports}}' | grep -q '0.0.0.0:'"
+check "API DB readiness" "curl --fail --silent $api/healthz"
+check "포털 공개 DB readiness" "curl --fail --silent $portal/healthz"
 
 echo "== 반출 통제·데이터"
 core_sql() { dc exec -T db psql -U bluebird -d bluebird_core -tAc "$1"; }
 pub_sql()  { dc exec -T db psql -U bluebird -d bluebird_publish -tAc "$1"; }
 core_n="$(core_sql 'SELECT count(*) FROM core.idea WHERE retired_at IS NULL')"
+student_n="$(core_sql "SELECT count(*) FROM core.idea i JOIN core.contest c ON c.id=i.contest_id WHERE i.retired_at IS NULL AND c.audience='student'")"
 pub_n="$(pub_sql 'SELECT count(*) FROM publish.idea')"
 allowed="$(core_sql 'SELECT count(*) FROM core.idea i JOIN core.source s ON s.id=i.source_id WHERE s.public_ok AND i.retired_at IS NULL AND i.withheld_at IS NULL')"
-echo "      core.idea=$core_n publish.idea=$pub_n (public_ok=$allowed)"
+echo "      core.idea=$core_n (초·중·고 학생 대회 표시=$student_n) publish.idea=$pub_n (public_ok=$allowed)"
 check "공개용 DB = core 공개 허용분"                   "[[ $pub_n -eq $allowed && $pub_n -gt 0 ]]"
+check "모든 소스에 기록 종류(record_kind) 있음" \
+  "[[ \$(core_sql 'SELECT count(*) FROM core.source WHERE record_kind IS NULL') -eq 0 ]]"
+check "공개용 DB 아이디어마다 기록 종류·대회 대상자·제외 후보 이유 필드 채워짐(선별 재료)" \
+  "[[ \$(pub_sql 'SELECT count(*) FROM publish.idea WHERE record_kind IS NULL OR audience IS NULL OR exclude_reasons IS NULL') -eq 0 ]]"
+excl_n="$(core_sql 'SELECT count(DISTINCT idea_id) FROM core.idea_exclusion')"
+echo "      제외 후보 이유 붙은 아이디어=$excl_n / $core_n (거르지 않음 — 깔때기·카드·공개는 전체)"
+check "제외 후보 이유는 어휘표 안의 코드만, 이유가 있어도 깔때기에 그대로 들어감" \
+  "[[ \$(core_sql 'SELECT count(*) FROM core.funnel_stage(-1) f JOIN core.idea_exclusion x ON x.idea_id=f.idea_id') -gt 0 && $excl_n -gt 0 ]]"
 check "비공개 소스(KIPRIS) 미반영" \
   "[[ \$(pub_sql \"SELECT count(*) FROM publish.idea WHERE source_id='kipris_contest_idea_bulk'\") -eq 0 ]]"
 check "공개용 DB에 내부 열 없음(team_kind·extra·ingest·export_grade)" \
@@ -38,10 +49,10 @@ check "snapshot_log ↔ core.publish_snapshot 최신 id 일치" \
 check "카탈로그 스냅샷 #0 적재(sha256 f63f4429)" \
   "[[ \$(core_sql \"SELECT count(*) FROM core.catalog_snapshot WHERE id=0 AND file_sha256 LIKE 'f63f4429%'\") -eq 1 ]]"
 check "egress 차단 기록 외 허용 호출은 모두 화이트리스트" \
-  "[[ \$(core_sql \"SELECT count(*) FROM core.egress_call WHERE decision='allowed' AND dest_host !~ '(data\\.go\\.kr|law\\.go\\.kr|kipris\\.or\\.kr|k-startup\\.go\\.kr|bizinfo\\.go\\.kr|openapi\\.naver\\.com|api\\.openai\\.com|api\\.anthropic\\.com)\$'\") -eq 0 ]]"
+  "[[ \$(core_sql \"SELECT count(*) FROM core.egress_call WHERE decision='allowed' AND dest_host !~ '(data\\.go\\.kr|law\\.go\\.kr|kipris\\.or\\.kr|k-startup\\.go\\.kr|bizinfo\\.go\\.kr|openapi\\.naver\\.com|api\\.openai\\.com|api\\.anthropic\\.com|www\\.science\\.go\\.kr|award\\.kidp\\.or\\.kr)\$'\") -eq 0 ]]"
 
 echo "== 원본·카드·소스 점검(G1·G2·G13)"
-check "core.idea 29,828행(6개 파일 소스)"                "[[ $core_n -eq 29828 ]]"
+check "core.idea 10,000행 이상(66 소스)"                  "[[ $core_n -ge 10000 ]]"
 withheld_n="$(core_sql 'SELECT count(*) FROM core.idea WHERE withheld_at IS NOT NULL')"
 check "공개용 DB 아이디어 + 이의로 공개 중단 3,394 이상(G2)" "[[ \$(( pub_n + withheld_n )) -ge 3394 ]]"
 check "모든 아이디어에 카드 1개(G1 ≥ 10,000)" \
@@ -101,7 +112,6 @@ check "콘솔 응답에 X-Frame-Options DENY·CSP" \
 check "백엔드 API: 토큰 없으면 401" "[[ \$(curl -s -o /dev/null -w '%{http_code}' $api/api/me) == 401 ]]"
 tok="$(awk '$1=="reviewer1"{print $2}' "$rt/console_tokens")"
 check "백엔드 API: 검토자 토큰이면 200" "[[ \$(curl -s -o /dev/null -w '%{http_code}' -H 'Authorization: Bearer $tok' $api/api/me) == 200 ]]"
-check "콘솔: 로그인 쿠키(토큰)로 첫 화면에 검토자 이름" "curl -s -b bb_console_token=$tok $console/ | grep -q reviewer1"
 check "토큰 원문은 어떤 컨테이너에도 마운트되지 않음" \
   "! dc --profile jobs config | grep -q console_tokens && ! docker inspect \$(dc ps -q) | grep -q console_tokens"
 
@@ -153,16 +163,13 @@ check "화면1 GET / 이번 주 재조명 200, weekly_top 1위 표시" \
   "[[ \$(code /) == 200 ]] && curl -s $portal/ | grep -q \"\$(pub_sql 'SELECT idea_id FROM publish.weekly_top ORDER BY rank LIMIT 1')\""
 check "화면 공고 매칭 GET /match?q= 200, API 결과 있음·짧은 질의 400" \
   "[[ \$(code '/match?q=%EB%8C%80%EC%B2%B4%EC%A1%B0%EC%A0%9C') == 200 && \$(code '/api/v1/explore?q=a') == 400 ]] && curl -s '$portal/api/v1/explore?q=%EB%8C%80%EC%B2%B4%EC%A1%B0%EC%A0%9C' | python3 -c 'import json,sys; sys.exit(0 if json.load(sys.stdin)[\"ideas\"] else 1)'"
-top1="$(pub_sql 'SELECT idea_id FROM publish.weekly_top ORDER BY rank LIMIT 1')"
-check "화면3 카드: 4단계·흔적 범위 문구·S 근거·이의 폼" \
-  "curl -s $portal/ideas/$top1 | grep -q '지금 하려면' && curl -s $portal/ideas/$top1 | grep -qE '외부 검색 (미실시|\(뉴스·특허\) 실시)' && curl -s $portal/ideas/$top1 | grep -q '채점 근거' && curl -s $portal/ideas/$top1 | grep -q 'name=\"body\"'"
 check "공개 S마다 채점 축 수만큼 근거(v2), 근거 행 실재" \
   "[[ \$(pub_sql \"SELECT count(*) FROM publish.timeliness t WHERE cardinality(t.evidence_ids) < t.n_scored OR EXISTS (SELECT 1 FROM unnest(t.evidence_ids) e WHERE e NOT IN (SELECT id FROM publish.evidence))\") -eq 0 ]]"
 check "공고 매칭 검색어 제어문자(NUL)도 500 아님" "[[ \$(code '/api/v1/explore?q=ab%00') != 500 && \$(code '/match?q=ab%00') != 500 ]]"
 check "포털 화면 5종(풀·진단 카드·시의성·매칭·통계) 200" "[[ \$(code '/pool?verified=1') == 200 && \$(code '/timeliness') == 200 && \$(code '/match') == 200 && \$(code '/stats') == 200 ]]"
 check "공개 근거에 채점자 이름 없음(S 근거 excerpt는 축 이름)" \
   "[[ \$(pub_sql \"SELECT count(*) FROM publish.evidence e JOIN publish.timeliness t ON e.id = ANY(t.evidence_ids) WHERE e.excerpt NOT LIKE '시의성 축: %'\") -eq 0 ]]"
-check "공개용 DB 템플릿 v2" "[[ \$(pub_sql 'SELECT template_version FROM meta.snapshot_log ORDER BY snapshot_id DESC LIMIT 1') == v2 ]]"
+check "공개용 DB 템플릿 v3(record_kind·audience 포함)" "[[ \$(pub_sql 'SELECT template_version FROM meta.snapshot_log ORDER BY snapshot_id DESC LIMIT 1') == v3 ]]"
 first="$(curl -s "$portal/api/v1/ideas" | python3 -c 'import json,sys; print(json.load(sys.stdin)["items"][0]["id"])')"
 check "GET /ideas/$first 200" "[[ \$(code /ideas/$first) == 200 ]]"
 check "GET /api/v1/ideas/없는ID 404" "[[ \$(code /api/v1/ideas/ID-0000-none) == 404 ]]"

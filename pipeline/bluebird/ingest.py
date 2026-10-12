@@ -40,18 +40,37 @@ def _validate(r: dict, spec: SourceSpec) -> None:
         raise IngestError(f"row source {r['source_id']} != {spec.id}")
 
 
-def upsert_source(conn, spec: SourceSpec, body_present: bool) -> None:
+def upsert_source(conn, spec: SourceSpec, body_present: bool | None) -> None:
     conn.execute(
-        """INSERT INTO core.source (id, name, license, url, layer, public_ok, export_grade, body_present,
-                                    policy_approved_by, policy_approved_at)
-           VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+        """INSERT INTO core.source AS existing (id, name, license, url, layer, public_ok, export_grade, body_present,
+                                    policy_approved_by, policy_approved_at, record_kind, exclude_reason)
+           VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
            ON CONFLICT (id) DO UPDATE SET name=EXCLUDED.name, license=EXCLUDED.license, url=EXCLUDED.url,
              layer=EXCLUDED.layer, public_ok=EXCLUDED.public_ok, export_grade=EXCLUDED.export_grade,
-             body_present=EXCLUDED.body_present, policy_approved_by=EXCLUDED.policy_approved_by,
-             policy_approved_at=EXCLUDED.policy_approved_at, updated_at=now()""",
-        (spec.id, spec.name, spec.license, spec.url, spec.layer, spec.public_ok, spec.export_grade, body_present,
-         spec.policy_approved_by, spec.policy_approved_at),
+             body_present=COALESCE(%s, existing.body_present), policy_approved_by=EXCLUDED.policy_approved_by,
+             policy_approved_at=EXCLUDED.policy_approved_at, record_kind=EXCLUDED.record_kind,
+             exclude_reason=EXCLUDED.exclude_reason, updated_at=now()""",
+        (spec.id, spec.name, spec.license, spec.url, spec.layer, spec.public_ok, spec.export_grade,
+         body_present if body_present is not None else False,
+         spec.policy_approved_by, spec.policy_approved_at, spec.record_kind, spec.exclude_reason, body_present),
     )
+
+
+def classify_contests(conn) -> int:
+    """아직 미확인(unknown)인 대회에 이름 근거로 초·중·고 학생 대회 표시를 붙인다. 사람이 고친 값은 건들지 않는다. docs/IDEA_POOL.md"""
+    return conn.execute(
+        """WITH u AS (UPDATE core.contest SET audience = core.contest_audience(name)
+                      WHERE audience = 'unknown' AND core.contest_audience(name) <> 'unknown' RETURNING 1)
+           SELECT count(*) FROM u"""
+    ).fetchone()[0]
+
+
+def refresh_markers(conn) -> dict:
+    """선별 재료 재계산: 대회 학생 표시 → 같은 제목 묶음 → 제외 후보 이유. 어느 것도 아이디어를 거르지 않는다."""
+    classified = classify_contests(conn)
+    dups = conn.execute("SELECT core.refresh_idea_dup()").fetchone()[0]
+    reasons = conn.execute("SELECT core.refresh_idea_exclusion()").fetchone()[0]
+    return {"contests_classified": classified, "dup_rows": dups, "exclusion_rows": reasons}
 
 
 def _apply(conn, spec: SourceSpec, rows, run_id: int, *, allow_retire: bool = False) -> dict:
@@ -115,7 +134,29 @@ def _apply(conn, spec: SourceSpec, rows, run_id: int, *, allow_retire: bool = Fa
         "UPDATE core.idea i SET retired_at=now() WHERE i.source_id=%s AND i.retired_at IS NULL"
         " AND NOT EXISTS (SELECT 1 FROM stage_idea s WHERE s.id = i.id)", (spec.id,)
     )
+    refresh_markers(conn)
     return {"rows": n, "with_body": with_body, "inserted": inserted, "updated": n - inserted, "retired": gone}
+
+
+def sync_policy(*, dsn: str, configs: list[Path]) -> dict:
+    """파일 없이 레지스트리의 정책 필드(공개·반출·기록 종류·제외 후보 이유)만 core.source에 맞추고 선별 재료를 다시 계산한다.
+    이미 적재된 소스만 갱신한다(새 소스는 적재가 만든다). 수집(collect) 소스는 파일이 seed에 없어 이 길만 있다."""
+    with db.pipeline_run(dsn, "policy") as stats, db.connect(dsn) as conn:
+        known = {r[0] for r in conn.execute("SELECT id FROM core.source")}
+        synced, skipped = [], []
+        for config in configs:
+            for spec in load_sources(config, Path("/nonexistent")):
+                if spec.id not in known:
+                    skipped.append(spec.id)
+                    continue
+                upsert_source(conn, spec, body_present=None)
+                synced.append(spec.id)
+        markers = refresh_markers(conn)
+        conn.commit()
+        stats.update({"synced": len(synced), "skipped": len(skipped), **markers})
+    print(f"[policy] synced {len(synced)} sources, markers {markers}"
+          + (f", not yet ingested: {skipped}" if skipped else ""))
+    return {"synced": synced, "skipped": skipped, **markers}
 
 
 def ingest(*, dsn: str, config: Path, seed_dir: Path, secret_path: Path, only: str | None = None,
@@ -135,7 +176,7 @@ def ingest(*, dsn: str, config: Path, seed_dir: Path, secret_path: Path, only: s
             digest = file_sha256(spec.path)
             with db.connect(dsn) as conn:
                 # FK를 위해 소스 행을 먼저 보장(정책 필드는 적재 성공 시 다시 갱신)
-                upsert_source(conn, spec, body_present=False)
+                upsert_source(conn, spec, body_present=None)
                 if not force and conn.execute(
                     "SELECT 1 FROM core.ingest_run WHERE source_id=%s AND file_sha256=%s AND status='ok'",
                     (spec.id, digest),

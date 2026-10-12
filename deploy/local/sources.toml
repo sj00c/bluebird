@@ -3,7 +3,11 @@
 # public_ok    : 공개 관문. true면 공개 DB로 반영된다. 반드시 policy_approved_by/at(소스 단위 정책 승인)이 있어야 한다.
 # export_grade : 반출 관문. 외부 호출(상용 LLM·흔적 검색)에 이 소스 필드를 보낼 수 있는지.
 #                O = 공개 출처, 허용 필드 반출 가능 / pending = 약관·N2SF 결정 대기(기본 차단) / deny = 반출 금지
-# 시험 환경의 정책 승인자는 운영 담당 대리 표기다. 운영에서는 보안담당 회신으로 채운다.
+# 공개·반출은 기본 보류. 실제 정책 검토 후 승인자·승인일과 허용 범위를 명시한다.
+# record_kind  : 기록 종류. contest_award(수상작) / contest_submission(출품작) / public_proposal(국민·주민 제안) / improvement_proposal(직원 개선제안)
+# exclude_reason: 소스 단위 제외 후보 이유(선택). certified_product(상품화 뒤 받는 인증) / internal_activity(기관 내부 활동) / teaching_case(수업·교육 사례)
+#                record_kind·exclude_reason·대회의 학생 대회 표시(core.contest.audience)·같은 제목 묶음은 전부 선별 재료다.
+#                아이디어마다 core.idea_exclusion에 "뺀다면 이 이유"로 쌓이고, 어떤 이유를 적용할지는 사람이 나중에 고른다. 걸러내지 않는다. docs/IDEA_POOL.md
 
 [[source]]
 id = "gov_startup_prelim_awards"
@@ -13,8 +17,9 @@ name = "범정부 공공데이터 활용 창업경진대회 예선기관 수상�
 license = "공공데이터포털 개방 데이터 (이용조건 재확인 필요)"
 url = "https://www.data.go.kr/data/15146089/fileData.do"
 layer = 2
-public_ok = true
-export_grade = "O"
+public_ok = true  # 데모용 임시 공개(2026-10-08), 실제 정책 승인 아님
+export_grade = "pending"
+record_kind = "contest_award"
 policy_approved_by = "test-operator"
 policy_approved_at = "2026-10-06T00:00:00+09:00"
 
@@ -28,6 +33,7 @@ url = "https://plus.kipris.or.kr"
 layer = 1
 public_ok = false
 export_grade = "pending"
+record_kind = "contest_award"
 
 [[source]]
 id = "gov_startup_final_awards"
@@ -37,8 +43,9 @@ name = "범정부 공공데이터 활용 창업경진대회 본선 수상작(201
 license = "공공누리 제1유형(출처표시)"
 url = "https://www.data.go.kr/data/15146087/fileData.do"
 layer = 2
-public_ok = true
-export_grade = "O"
+public_ok = true  # 데모용 임시 공개(2026-10-08), 실제 정책 승인 아님
+export_grade = "pending"
+record_kind = "contest_award"
 policy_approved_by = "test-operator"
 policy_approved_at = "2026-10-07T00:00:00+09:00"
 
@@ -50,8 +57,9 @@ name = "국립중앙과학관 수상작(전국과학전람회 제69회·학생�
 license = "이용허락범위 제한 없음"
 url = "https://www.data.go.kr/data/15135618/fileData.do"
 layer = 2
-public_ok = true
-export_grade = "O"
+public_ok = true  # 데모용 임시 공개(2026-10-08), 실제 정책 승인 아님
+export_grade = "pending"
+record_kind = "contest_award"
 policy_approved_by = "test-operator"
 policy_approved_at = "2026-10-07T00:00:00+09:00"
 
@@ -63,8 +71,9 @@ name = "농림축산식품부 농식품 공공·빅데이터 활용 창업경진
 license = "이용허락범위 제한 없음"
 url = "https://www.data.go.kr/data/15131197/fileData.do"
 layer = 2
-public_ok = true
-export_grade = "O"
+public_ok = true  # 데모용 임시 공개(2026-10-08), 실제 정책 승인 아님
+export_grade = "pending"
+record_kind = "contest_award"
 policy_approved_by = "test-operator"
 policy_approved_at = "2026-10-07T00:00:00+09:00"
 
@@ -76,7 +85,8 @@ name = "공공디자인 국민아이디어공모 수상작"
 license = "이용허락범위 제한 없음"
 url = "https://www.data.go.kr/data/15138745/fileData.do"
 layer = 2
-public_ok = true
-export_grade = "O"
+public_ok = true  # 데모용 임시 공개(2026-10-08), 실제 정책 승인 아님
+export_grade = "pending"
+record_kind = "contest_award"
 policy_approved_by = "test-operator"
 policy_approved_at = "2026-10-07T00:00:00+09:00"

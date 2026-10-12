@@ -11,7 +11,7 @@ import sys
 from datetime import date
 from pathlib import Path
 
-from . import announce, cards, db, funnel, ingest, kpi, objections, publish, sources_check
+from . import announce, cards, db, enrichment, export, funnel, ingest, kpi, objections, publish, sources_check
 from .signals import catalog
 
 
@@ -40,12 +40,25 @@ def main(argv: list[str] | None = None) -> int:
 
     i = sub.add_parser("ingest", help="seed 파일 → core 적재(마스킹·익명 ID)")
     i.add_argument("--dsn", default=_env("BB_DSN"))
-    i.add_argument("--config", type=Path, default=_p("BB_SOURCES"))
+    i.add_argument("--config", type=Path, action="append", help="기본 BB_SOURCES; --policy-only에서만 반복 가능")
     i.add_argument("--seed-dir", type=Path, default=_p("BB_SEED_DIR"))
     i.add_argument("--secret", type=Path, default=_p("BB_ANON_SECRET"))
     i.add_argument("--only")
     i.add_argument("--force", action="store_true", help="같은 파일도 다시 적재")
     i.add_argument("--allow-retire", action="store_true", help="절반 넘게 사라지는 퇴역 허용")
+    i.add_argument("--policy-only", action="store_true",
+                   help="파일 없이 레지스트리 정책(공개·반출·record_kind·exclude_reason)만 core.source에 맞추고 선별 재료(학생 대회·중복·제외 후보 이유) 재계산. --config 반복 가능")
+
+    co = sub.add_parser("collect", help="공식 공모·제안 원천 수집(분석·공개 승인 없음)")
+    cos = co.add_subparsers(dest="collection", required=True)
+    cc = cos.add_parser("contests", help="공식 파일 검증·원자적 저장 후 기존 적재 실행")
+    cc.add_argument("--config", type=Path, action="append", help="반복 가능; 기본 BB_CONTEST_SOURCES")
+    cc.add_argument("--out-dir", type=Path,
+                    default=(_p("BB_SIGNAL_DIR") / "contests") if _p("BB_SIGNAL_DIR") else None)
+    cc.add_argument("--dsn", default=_env("BB_DSN"))
+    cc.add_argument("--secret", type=Path, default=_p("BB_ANON_SECRET"))
+    cc.add_argument("--only")
+    cc.add_argument("--download-only", action="store_true", help="검증·egress 감사는 수행하고 DB 적재만 생략")
 
     cb = sub.add_parser("cards", help="아이디어 카드(P1) 생성 + G1 card_kind별 보고")
     cb.add_argument("--dsn", default=_env("BB_DSN"))
@@ -62,6 +75,17 @@ def main(argv: list[str] | None = None) -> int:
     pb = sub.add_parser("publish", help="승인분 → 공개 DB 교체(push)")
     pb.add_argument("--dsn", default=_env("BB_DSN"))
     pb.add_argument("--publish-dsn", default=_env("BB_PUBLISH_DSN"))
+
+    ex = sub.add_parser("export", help="공유용 내보내기(읽기 전용)")
+    exs = ex.add_subparsers(dest="export_cmd", required=True)
+    ex1 = exs.add_parser("xlsx", help="아이디어 전체 + 선별 재료를 엑셀 한 파일로")
+    ex1.add_argument("--dsn", default=_env("BB_DSN"))
+    ex1.add_argument("--out", type=Path, required=True)
+    ex1.add_argument("--include-held", action="store_true", help="공개·외부 전송 보류 소스(KIPRIS·과학관·KIDP)도 포함 — 내부 공유용")
+    ex2 = exs.add_parser("provenance", help="어느 소스에서 언제 얼마나 받았는지 Markdown")
+    ex2.add_argument("--dsn", default=_env("BB_DSN"))
+    ex2.add_argument("--config", type=Path, action="append", help="레지스트리 TOML, 반복 가능; 기본 BB_SOURCES+BB_CONTEST_SOURCES")
+    ex2.add_argument("--out", type=Path, required=True)
 
     sg = sub.add_parser("signals", help="바뀐 것 신호")
     sgs = sg.add_subparsers(dest="signal", required=True)
@@ -136,6 +160,12 @@ def main(argv: list[str] | None = None) -> int:
     a = ap.parse_args(argv)
     if a.cmd in FUNNEL_CMDS:
         _require(ap, a, "dsn")
+        if a.cmd == "score":
+            if a.mode is None:
+                _require(ap, a, "idea", "by")
+            elif a.by or any(getattr(a, axis) is not None or getattr(a, f"{axis}_url")
+                             for axis in ("tech", "data", "regulation", "policy")):
+                ap.error("score auto cannot be combined with manual scores, URLs or --by")
         return _run_funnel(a)
 
     if a.cmd == "migrate":
@@ -146,9 +176,30 @@ def main(argv: list[str] | None = None) -> int:
         if a.target == "publish":
             print(f"template {publish.TEMPLATE_VERSION}:", publish.register_template(dsn)[:12])
     elif a.cmd == "ingest":
-        _require(ap, a, "dsn", "config", "seed_dir", "secret")
-        ingest.ingest(dsn=a.dsn, config=a.config, seed_dir=a.seed_dir, secret_path=a.secret, only=a.only,
-                      force=a.force, allow_retire=a.allow_retire)
+        if a.config is None and _p("BB_SOURCES"):
+            a.config = [_p("BB_SOURCES")]
+        if a.policy_only:
+            _require(ap, a, "dsn", "config")
+            ingest.sync_policy(dsn=a.dsn, configs=a.config)
+        else:
+            _require(ap, a, "dsn", "config", "seed_dir", "secret")
+            if len(a.config) != 1:
+                ap.error("ingest takes one --config unless --policy-only")
+            ingest.ingest(dsn=a.dsn, config=a.config[0], seed_dir=a.seed_dir, secret_path=a.secret, only=a.only,
+                          force=a.force, allow_retire=a.allow_retire)
+    elif a.cmd == "collect":
+        from .collection import MAX_DOWNLOAD_BYTES, collect_contests
+        from .egress import Egress
+
+        if a.config is None and _p("BB_CONTEST_SOURCES"):
+            a.config = [_p("BB_CONTEST_SOURCES")]
+        _require(ap, a, "dsn", "config", "out_dir", "secret")
+        with Egress.from_dsn(a.dsn, max_bytes=MAX_DOWNLOAD_BYTES) as eg:
+            results = collect_contests(configs=a.config, out_dir=a.out_dir, secret_path=a.secret,
+                                       dsn=a.dsn, egress=eg, only=a.only, download_only=a.download_only)
+        for result in results:
+            print(funnel.dumps(result))
+        return 1 if any(r["status"] == "error" for r in results) else 0
     elif a.cmd == "cards":
         _require(ap, a, "dsn")
         cards.build(dsn=a.dsn, rebuild=a.rebuild)
@@ -207,6 +258,13 @@ def main(argv: list[str] | None = None) -> int:
         else:
             kpi.print_report(rows)
         return 1 if any(r["status"] == kpi.FAIL for r in rows) else 0
+    elif a.cmd == "export":
+        _require(ap, a, "dsn")
+        if a.export_cmd == "xlsx":
+            print("[export]", export.xlsx(dsn=a.dsn, out=a.out, include_held=a.include_held))
+        else:
+            cfgs = a.config or [p for p in (_p("BB_SOURCES"), _p("BB_CONTEST_SOURCES")) if p]
+            print("[export]", export.provenance(dsn=a.dsn, configs=cfgs, out=a.out))
     elif a.cmd == "publish":
         _require(ap, a, "dsn", "publish_dsn")
         publish.push(core_dsn=a.dsn, publish_dsn=a.publish_dsn)
@@ -239,11 +297,20 @@ def _funnel_parsers(sub) -> None:
         return x
 
     by = {"required": True, "help": "입력한 사람(감사 기록)"}
+    def auto(parent):
+        x = p(parent, "auto", "키가 있을 때만 근거 기반 자동 제안(승인 없음)")
+        x.add_argument("--idea", help="단일 아이디어 선택")
+        x.add_argument("--limit", type=int, choices=range(1, enrichment.MAX_LIMIT + 1), default=1)
+        return x
+
     t = sub.add_parser("trace", help="1 흔적").add_subparsers(dest="sub", required=True)
     p(t, "local", "kipris_local_v1: ip_local + similar_local(외부 호출 없음)")
     p(t, "refresh", "full_v1 판정 재계산(필수 항목 미실행이면 pending)")
+    auto(t)
     x = p(t, "manual", "사람이 외부 검색한 결과 입력")
     x.add_argument("--idea", required=True)
+    x.add_argument("--item", choices=("manual", "news_web", "ip"), default="manual",
+                   help="직접 수행한 검색 항목; 최종 해석은 manual")
     x.add_argument("--result", choices=("found", "none"), required=True)
     x.add_argument("--status", choices=("realized", "pivot", "similar_unlinked", "award_only", "none"))
     x.add_argument("--url")
@@ -252,6 +319,7 @@ def _funnel_parsers(sub) -> None:
 
     d = sub.add_parser("diagnose", help="2 막힌 이유").add_subparsers(dest="sub", required=True)
     p(d, "rule", "본문 missing_data → 원인 D 제안(근거 = 본문 문장)")
+    auto(d)
     x = p(d, "set", "사람 진단(비-U는 --evidence 'URL|발췌' ≥1)")
     x.add_argument("--idea", required=True)
     x.add_argument("--cause", choices=funnel.CAUSES, required=True)
@@ -283,12 +351,14 @@ def _funnel_parsers(sub) -> None:
     x.add_argument("--by", **by)
 
     x = p(sub, "score", "4 시의성 S(사람 채점, 항목마다 근거 URL)")
-    x.add_argument("--idea", required=True)
+    x.add_argument("mode", nargs="?", choices=("auto",))
+    x.add_argument("--idea")
+    x.add_argument("--limit", type=int, choices=range(1, enrichment.MAX_LIMIT + 1), default=1)
     for axis in ("tech", "data", "regulation", "policy"):
         x.add_argument(f"--{axis}", type=int)
         x.add_argument(f"--{axis}-url")
     x.add_argument("--as-of", type=date.fromisoformat)
-    x.add_argument("--by", **by)
+    x.add_argument("--by", help="사람 채점 시 필수(감사 기록)")
 
     r = sub.add_parser("review", help="5 검토·승인").add_subparsers(dest="sub", required=True)
     x = p(r, "approve", "최종 승인 → 공개 대상")
@@ -323,6 +393,13 @@ def _funnel_parsers(sub) -> None:
 def _run_funnel(a) -> int:
     from .egress import Egress
     dsn = a.dsn
+    if (a.cmd in ("trace", "diagnose") and a.sub == "auto") or (a.cmd == "score" and a.mode == "auto"):
+        fn = {"trace": enrichment.trace_auto, "diagnose": enrichment.diagnose_auto,
+              "score": enrichment.score_auto}[a.cmd]
+        options = {"as_of": a.as_of} if a.cmd == "score" else {}
+        result = fn(dsn=dsn, idea_id=a.idea, limit=a.limit, **options)
+        print(funnel.dumps(result))
+        return 1 if result.get("key_required") or result.get("failed") else 0
     if a.cmd == "trace":
         if a.sub == "local":
             funnel.trace_local(dsn=dsn)
@@ -330,7 +407,7 @@ def _run_funnel(a) -> int:
             funnel.trace_pending(dsn=dsn)
         else:
             print(funnel.trace_manual(dsn=dsn, idea_id=a.idea, result=a.result, status=a.status, url=a.url,
-                                      note=a.note, by=a.by))
+                                      note=a.note, by=a.by, item=a.item))
     elif a.cmd == "diagnose":
         if a.sub == "rule":
             funnel.diagnose_rule(dsn=dsn)

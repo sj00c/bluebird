@@ -1,0 +1,80 @@
+# Verified public KIDP galleries; factual project/award metadata, not images or people.
+# Official category filters A,D,F,G: product, space/environment, service/experience, craft.
+# Mixed graphic/film/fashion galleries are not counted as solution records.
+# robots permits collection; copyright remains reserved, so publication/egress stays pending.
+
+[[source]]
+id = "kidp_good_design_projects"
+adapter = "mapped_contest_csv"
+collector = "kidp_awards"
+file = "kidp_good_design_projects.csv"
+name = "한국디자인진흥원 우수디자인(GD)상품선정 공개 수상작"
+license = "KIDP All Rights Reserved — 이용조건 검토 전 공개·외부전송 보류"
+url = "https://award.kidp.or.kr/Exhibit/winners.do?cd_gubun=1"
+layer = 2
+public_ok = false
+export_grade = "pending"
+record_kind = "contest_award"
+exclude_reason = "certified_product"
+host_org = "한국디자인진흥원"
+design_group = "1"
+[source.columns]
+key = "key"
+title = "title"
+year = "year"
+award = "award"
+contest = "contest"
+category = "category"
+source_url = "source_url"
+body = []
+people = []
+
+[[source]]
+id = "kidp_korea_design_projects"
+adapter = "mapped_contest_csv"
+collector = "kidp_awards"
+file = "kidp_korea_design_projects.csv"
+name = "한국디자인진흥원 대한민국디자인전람회 공개 수상작"
+license = "KIDP All Rights Reserved — 이용조건 검토 전 공개·외부전송 보류"
+url = "https://award.kidp.or.kr/Exhibit/winners.do?cd_gubun=2"
+layer = 2
+public_ok = false
+export_grade = "pending"
+record_kind = "contest_award"
+host_org = "한국디자인진흥원"
+design_group = "2"
+[source.columns]
+key = "key"
+title = "title"
+year = "year"
+award = "award"
+contest = "contest"
+category = "category"
+source_url = "source_url"
+body = []
+people = []
+
+[[source]]
+id = "kidp_youth_design_projects"
+adapter = "mapped_contest_csv"
+collector = "kidp_awards"
+file = "kidp_youth_design_projects.csv"
+name = "한국디자인진흥원 청소년디자인전람회 공개 수상작"
+license = "KIDP All Rights Reserved — 이용조건 검토 전 공개·외부전송 보류"
+url = "https://award.kidp.or.kr/Exhibit/winners.do?cd_gubun=3"
+layer = 2
+public_ok = false
+export_grade = "pending"
+record_kind = "contest_award"
+host_org = "한국디자인진흥원"
+design_group = "3"
+[source.columns]
+key = "key"
+title = "title"
+year = "year"
+award = "award"
+contest = "contest"
+category = "category"
+source_url = "source_url"
+body = []
+people = []

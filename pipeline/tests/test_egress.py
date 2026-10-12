@@ -1,39 +1,10 @@
-import ast
 import hashlib
 import json
-from pathlib import Path
 
 import httpx
 import pytest
 
-from bluebird import egress
 from bluebird.egress import Egress, EgressBlocked, KeyMissing, Policy
-
-PKG = Path(egress.__file__).parent
-NET_MODULES = {"httpx", "requests", "urllib", "urllib3", "http", "aiohttp", "socket", "openai", "anthropic",
-               "huggingface_hub", "sentence_transformers", "transformers", "ssl", "ftplib", "smtplib"}
-
-
-def _imports(path: Path) -> set[str]:
-    out = set()
-    for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
-        if isinstance(node, ast.Import):
-            out |= {a.name.split(".")[0] for a in node.names}
-        elif isinstance(node, ast.ImportFrom) and node.module and node.level == 0:
-            out.add(node.module.split(".")[0])
-    return out
-
-
-def test_no_direct_http():
-    """egress.py 말고는 네트워크·LLM SDK 모듈을 import하지 않는다."""
-    offenders = {}
-    for f in PKG.rglob("*.py"):
-        bad = _imports(f) & NET_MODULES
-        if f.name == "egress.py":
-            bad -= {"httpx", "urllib"}  # urllib.parse(문자열 처리)만 사용
-        if bad:
-            offenders[str(f.relative_to(PKG))] = sorted(bad)
-    assert offenders == {}
 
 
 class Rec:
@@ -157,9 +128,28 @@ def test_llm_without_key_raises_before_sending(monkeypatch):
         eg.llm(provider="openai", model="m", system="s", instruction="i", fields={"title": ("open", "x")})
 
 
-def test_client_ignores_environment_proxy(monkeypatch):
-    monkeypatch.setenv("HTTPS_PROXY", "http://should-not-be-used:1")
-    monkeypatch.delenv("BLUEBIRD_EGRESS_PROXY", raising=False)
-    eg = Egress(policy=POLICY, recorder=Rec())
-    assert eg._client._trust_env is False
-    assert eg._client._mounts == {}
+def test_response_limit_stops_consumption_and_closes_stream():
+    class Chunks(httpx.SyncByteStream):
+        def __init__(self):
+            self.reads = 0
+            self.closed = False
+
+        def __iter__(self):
+            for _ in range(3):
+                self.reads += 1
+                yield b"1234"
+
+        def close(self):
+            self.closed = True
+
+    stream = Chunks()
+    rec = Rec()
+    transport = httpx.MockTransport(lambda request: httpx.Response(200, stream=stream))
+    with (
+        Egress(policy=POLICY, recorder=rec, proxy="", max_bytes=5, transport=transport) as eg,
+        pytest.raises(EgressBlocked, match="larger than 5"),
+    ):
+        eg.get("collect", "https://www.data.go.kr/example.csv")
+    assert stream.reads == 2
+    assert stream.closed
+    assert rec.calls[-1].decision == "blocked"

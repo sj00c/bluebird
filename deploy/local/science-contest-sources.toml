@@ -1,0 +1,57 @@
+# Official anonymous project listings, verified 2026-10-08. No CSV15135618 re-download.
+# Explicit 2015+ scope excludes the existing 1979–2014 KIPRIS bulk period.
+# Published entry-filter counts: exhibition 3,268; invention 3,301 (before validation).
+# 2023 listings (297 + 300) can overlap existing science_museum_awards; retain provenance.
+# No attachments, teaching papers, summary volumes, people or school fields are collected.
+# Year comes from each displayed record; absent year remains absent.
+# Extend science_end_year explicitly when the next public archive year is available.
+
+[[source]]
+id = "science_exhibition_archive_2015_onward"
+adapter = "mapped_contest_csv"
+collector = "science_archive"
+file = "science_exhibition_archive_2015_onward.csv"
+name = "국립중앙과학관 전국과학전람회 공개 출품작 목록(2015~2026 검색 범위)"
+license = "국립중앙과학관 공개 게시물 — 이용조건 검토 전 공개·외부전송 보류"
+url = "https://www.science.go.kr/mps/1079/bbs/423/moveBbsNttList.do"
+layer = 2
+public_ok = false
+export_grade = "pending"
+record_kind = "contest_submission"
+contest_name = "전국과학전람회"
+host_org = "국립중앙과학관"
+science_start_year = 2015
+science_end_year = 2026
+[source.columns]
+key = "key"
+title = "title"
+year = "year"
+award = "award"
+source_url = "source_url"
+body = []
+people = []
+
+[[source]]
+id = "science_invention_archive_2015_onward"
+adapter = "mapped_contest_csv"
+collector = "science_archive"
+file = "science_invention_archive_2015_onward.csv"
+name = "국립중앙과학관 전국학생과학발명품경진대회 공개 출품작 목록(2015~2026 검색 범위)"
+license = "국립중앙과학관 공개 게시물 — 이용조건 검토 전 공개·외부전송 보류"
+url = "https://www.science.go.kr/mps/1075/bbs/424/moveBbsNttList.do"
+layer = 2
+public_ok = false
+export_grade = "pending"
+record_kind = "contest_submission"
+contest_name = "전국학생과학발명품경진대회"
+host_org = "국립중앙과학관"
+science_start_year = 2015
+science_end_year = 2026
+[source.columns]
+key = "key"
+title = "title"
+year = "year"
+award = "award"
+source_url = "source_url"
+body = []
+people = []
