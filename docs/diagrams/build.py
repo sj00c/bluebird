@@ -2,14 +2,16 @@
 
 로컬 데모(내 PC · Docker) 구성도. 문구·좌표를 고친 뒤 `python3 docs/diagrams/build.py`.
 """
+import argparse
+import os
+import shutil
 import subprocess
 from html import escape
 from pathlib import Path
 
-HERE = Path(__file__).parent
+HERE = Path(__file__).resolve().parent
 OUT = HERE / "architecture.html"
 PDF = HERE / "architecture.pdf"
-CHROME = "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
 W, H = 1600, 880
 
 ZONE_STROKE = "#34508a"
@@ -117,7 +119,7 @@ parts.append(t(94, 486, "(관리자)", 11, GRAY, "middle"))
 card(240, 130, 260, 88, "own", [("server", "포털 (Next.js)")], ["화면 · 조회 · 이의 접수"])
 card(240, 380, 260, 88, "own", [("server", "콘솔 (Next.js)")], ["검토 · 승인 · 이의 처리"])
 card(560, 380, 240, 88, "own", [("server", "백엔드 API (FastAPI)")], ["토큰 확인 · 역할별 권한"])
-card(876, 180, 268, 96, "own", [("database", "공개 DB")], ["승인된 자료 · 이의 접수함"])
+card(876, 180, 268, 96, "own", [("database", "공개 DB")], ["공개 원본 · 승인 분석 · 이의함"])
 card(876, 420, 268, 96, "own", [("database", "원본 DB")], ["아이디어 · 진단 카드 · 근거 URL"])
 card(1370, 250, 180, 190, "own", [("server", "처리 작업")], ["적재 · 카드 · 판정", "공개 · 이의 가져오기"])
 card(900, 650, 650, 130, "plain", [("internet", "외부 공공 · 상용 API")],
@@ -137,7 +139,7 @@ arrow("M 1366,430 H 1148", GRAY, both=True)         # 처리 작업 ↔ 원본 D
 label(1257, 412, "읽기 · 쓰기", "middle", "#374151", FILL_ZONE)
 arrow("M 1366,270 H 1148", GRAY, both=True)         # ④ 처리 작업 → 공개 DB
 step(1257, 270, 4)
-label(1257, 252, "승인분 반영 · 이의 가져오기", "middle", "#374151", FILL_ZONE)
+label(1257, 252, "공개 반영 · 이의 가져오기", "middle", "#374151", FILL_ZONE)
 arrow("M 1460,440 V 646", GRAY)                     # ③ 처리 작업 → 외부 API
 step(1460, 540, 3)
 label(1448, 506, "허용 목록 · 기록", "end", "#374151", FILL_ZONE)
@@ -147,7 +149,7 @@ note(32, 626, 800, 190, "<처리 흐름>", [
     "시민은 브라우저로 포털을 보고 이의를 냅니다.",
     "포털은 공개 DB만 읽습니다. 원본 DB는 볼 수 없습니다.",
     "처리 작업이 외부 API에서 자료를 모아 원본 DB에 저장합니다.",
-    "담당자가 승인한 것만 공개 DB로 옮기고, 이의를 가져옵니다.",
+    "공개 허용 원본과 사람이 승인한 분석을 옮기고, 이의를 가져옵니다.",
     "관리자는 콘솔에서 검토 · 승인합니다. 콘솔은 API만 부릅니다.",
 ], numbered=True)
 
@@ -165,7 +167,7 @@ def marker(mid, color):
 
 svg = f"""<svg viewBox="0 0 {W} {H}" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="bb-title bb-desc" font-family="'Pretendard', 'Noto Sans KR', 'Apple SD Gothic Neo', sans-serif">
 <title id="bb-title">파랑새 시스템 구성도</title>
-<desc id="bb-desc">내 PC의 Docker 안에서 모두 돌아간다. 시민은 브라우저로 포털을 보고, 포털은 PostgreSQL의 공개 DB만 읽으며 이의를 접수함에 넣는다. 관리자는 브라우저로 콘솔에 접속하고, 콘솔은 백엔드 API만 부르며 API는 원본 DB를 쓴다. 처리 작업은 허용 목록에 있는 외부 공공·상용 API(공공데이터포털, 법제처, KIPRIS, 네이버, K-Startup, LLM)에서 자료를 모아 원본 DB에 저장하고, 승인된 자료만 공개 DB로 옮기며 이의를 가져온다. 외부 API 키는 .env 파일에 둔다.</desc>
+<desc id="bb-desc">내 PC의 Docker 안에서 모두 돌아간다. 시민은 브라우저로 포털을 보고, 포털은 PostgreSQL의 공개 DB만 읽으며 이의를 접수함에 넣는다. 관리자는 브라우저로 콘솔에 접속하고, 콘솔은 백엔드 API만 부르며 API는 원본 DB를 쓴다. 처리 작업은 허용 목록에 있는 외부 공공·상용 API에서 자료를 모아 원본 DB에 저장하고, 공개 허용 원본과 사람이 승인한 분석을 공개 DB로 옮기며 이의를 가져온다. 외부 API 키는 .env 파일에 둔다.</desc>
 <defs>
 <filter id="shadow" x="-10%" y="-10%" width="120%" height="130%"><feDropShadow dx="0" dy="1" stdDeviation="2" flood-color="#000" flood-opacity="0.16"/></filter>
 {marker("a", GRAY)}{marker("a-new", NEW)}
@@ -185,7 +187,6 @@ OUT.write_text(f"""<!DOCTYPE html>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>파랑새 시스템 구성도</title>
-<link href="https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@400;500;600;700&display=swap" rel="stylesheet">
 <style>
   @page {{ size: {W + 48}px {H + 48}px; margin: 0; }}
   body {{ margin: 0; background: #ffffff; display: flex; justify-content: center; padding: 24px; }}
@@ -199,6 +200,21 @@ OUT.write_text(f"""<!DOCTYPE html>
 </html>
 """, encoding="utf-8")
 
-subprocess.run([CHROME, "--headless=new", "--disable-gpu", "--no-pdf-header-footer", "--virtual-time-budget=5000",
-                f"--print-to-pdf={PDF}", OUT.as_uri()], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True)
-print(f"wrote {OUT.name}, {PDF.name}")
+parser = argparse.ArgumentParser(description="Generate the local architecture diagram without external services.")
+parser.add_argument("--pdf", action="store_true", help="also export PDF using a local Chromium browser")
+parser.add_argument("--browser", help="Chromium executable path (or BLUEBIRD_CHROME)")
+args = parser.parse_args()
+print(f"wrote {OUT.name}")
+if args.pdf:
+    browser = args.browser or os.environ.get("BLUEBIRD_CHROME") or next(
+        (path for name in ("chromium", "chromium-browser", "google-chrome") if (path := shutil.which(name))),
+        None,
+    )
+    if not browser:
+        parser.error("--pdf requires a local Chromium executable; pass --browser or set BLUEBIRD_CHROME")
+    subprocess.run(
+        [browser, "--headless=new", "--disable-gpu", "--no-pdf-header-footer",
+         f"--print-to-pdf={PDF}", OUT.as_uri()],
+        check=True,
+    )
+    print(f"wrote {PDF.name}")

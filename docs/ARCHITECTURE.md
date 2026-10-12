@@ -1,44 +1,6 @@
-# 파랑새(Bluebird) 아키텍처 설계 v1.0 — 로컬 시연 구조
+# 파랑새(Bluebird) 구현 아키텍처 — 로컬 시연 구조
 
-갱신 2026-10-07. 입력: 예선 제출 기획서(`reference/parangsae-src/04_deck_build/output/submitted_proposal_prelim_capital_parangsae.pdf`), 인수인계 패키지(`reference/parangsae-src/`).
-
----
-
-## 0. 출발점
-
-### 0.1 인수인계 패키지 실사
-
-배포 가능한 코드는 없다. 화면은 정적 HTML 목업 2장(예시 수치), 아키텍처는 그림, 파이프라인은 `pplx_sdk`에 묶인 50건 파일럿 스크립트다. 재사용 대상은 다음뿐이다.
-
-- KIPRIS 벌크 파싱 규칙(CP949, `¶` 구분자, `<br />`, `#N/A`) — `02_kipris_bulk/load_kipris_contest.py`
-- 흔적 검색 질의 생성 규칙(`product_name`, `clean_team`, `masked`)과 판정 프롬프트 — `03_pilot/step1·step2`
-- 검수 완료 골드셋 50건 — `03_pilot/pilot_result_final.csv`
-- 코드북 T·D·R·M·C·O·U 정의와 이론 배경 — 기획서 13쪽, `07_pitch/stall_cause_codebook_7_theory.md`
-- 데이터 소스·API 접근조건 조사 — `06_research/datasets.md`
-
-### 0.2 기획서에서 약속한 것 (설계 요구사항으로 고정)
-
-| 구분 | 기획서 내용 | 쪽 |
-|---|---|---|
-| 핵심 기능 | ① 아이디어 풀 DB(3축 태그·군집·유사 묶음) ② 정체 원인 진단(흔적 4종 → 7코드) ③ 시의성 재평가(S 0~5) ④ 재조명 매칭·알림 | 3, 12 |
-| 흔적 4종 | 뉴스·웹 / 법인·사업자 / 특허·상표 / 후속 지원사업 선정 | 12, 17 |
-| 시의성 S | 기술 준비도·데이터 개방도·제도 정합성·정책 수요 4항목 가중평균. 초기 가중치 0.25 균등 → 멘토링 의견으로 조정. S≥4.0 지금 가능 / 3.0~3.9 조건부(해소 조건 명시) / <3.0 보류. 자료 없는 항목은 점수 미부여·평균에서 제외 | 14 |
-| 프롬프트 | P1 카드 추출(title, problem, solution, target_user, required_data[], required_tech[], domain 9종 중 1, year, source_url, 추정 금지) / P2 원인 분류(primary, secondary≤1, confidence 0~1, rationale 2문장, evidence_ids[], 증거 없으면 U) / P3 시의성(항목별 0~5 + 근거 URL ≥1, 자료 없으면 판단 불가, 달라진 점 ≤3) | 20 |
-| 신뢰성 | 표본 100건 2인 독립 코딩 κ≥0.7 후 채택 / 모든 판정에 근거 링크·수집일 / AI는 후보·근거까지, 최종 판정·공개는 담당자 확인 / 원문 변형 금지 / 이용자 이의 제기·정정 기능 | 10 |
-| 데이터 원칙 | 수상자 성명·소속은 적재 단계에서 삭제, 아이디어 단위 익명 ID / 상업적 이용 금지·변경 금지 데이터 제외 / 빅카인즈 미사용 / 네이버는 API HUB / 디지털융합플랫폼 경유 우선 | 18 |
-| 사용자 | 주최기관 담당자, 참가자(예비창업자·학생·직장인), 정책 기획자 | 11 |
-| 정량 목표(’26.12) | 카드 1만 건+ / 진단 표본 100건 κ≥0.7 / 재발굴 후보 20건 전문가 검토 후 공개 / 공고 매칭 실사용 시연 / 유사 아이디어 조회 1초 내 / 근거 링크 100% | 15, 22, 23 |
-| MVP 단계 | 1단계(~9월) 시드 적재·카드 추출·군집·진단 카드 화면 / 2단계(10~11월) 흔적 API·원인 분류·κ 검증·시의성 / 3단계(12월) 공고 매칭·알림·주최기관 모드·Top 20 공개 | 15 |
-
-**현황 차이**: 기획서상 1단계(~9월)는 완료 상태여야 하지만 실제로는 목업만 있다. 10~11월에 1·2단계를 함께 진행해야 한다(§9).
-
-### 0.3 기획서와 실데이터의 불일치 (설계에 반영)
-
-1. **"3.8만 행"은 아이디어 수가 아니다.** KIPRIS 데이터사전 기준 분석 단위는 26,434건(1979~2014, 학생 발명 위주)이고, 2층 창업경진대회 수상작은 2,190 + 70건. 화면 수치는 DB 실측값만 쓴다. 목표인 "카드 1만 건+"는 달성 가능하다.
-2. **흔적 판정은 5클래스다.** 파일럿 검수본 기준 `realized / pivot / similar_unlinked / award_only / none`(6/4/3/14/23). 이와 별도로 원인 코드(P2)는 `realized`가 아닌 건에만 부여한다.
-3. **KIPRIS 벌크 TXT는 약관상 팀 내부 전용이다.** 공개 노출은 공공데이터포털 `15006010` 파일을 기준으로 한다.
-4. **Supabase·RAGFlow·Superset**(기획서 19, 21쪽)은 로컬 시연에서 쓰기 어렵거나 불필요하다. 자체 PostgreSQL+pgvector로 대체한다(§1).
-5. **익명화와 흔적 검색이 충돌한다.** 흔적 검색에는 팀명이 필요한데, 기획서는 "적재 단계에서 삭제"로 약속했다. → 팀 이름과 사람 이름은 적재 때 지우고 익명 ID만 남긴다(§3.1). 흔적 검색은 아이템명으로 한다. 약속을 지키면서 검색도 가능하다.
+갱신 2026-10-08. 실행 구조·의존 방향·공개 불변식을 먼저 기술한다. 문서 끝 §0은 인수 시점과 기획서의 원래 요구사항 기록이다.
 
 ---
 
@@ -54,13 +16,20 @@
 | `console` | 담당자 검토 화면(Next.js). `api`하고만 통신한다 | 127.0.0.1:3001 |
 | `jobs` | `bluebird` 명령(수집·카드·신호·소스 점검·이의 가져오기·공개·KPI). 평소엔 꺼져 있고 `./demo.sh job <명령>`으로 실행한다 | 없음 |
 
-```
- 브라우저 ──▶ portal  (:3000) ──▶ ┐
-                                  ├──▶ 공개 DB (bluebird_publish) ◀── jobs: 승인분 반영 / 이의 가져오기
- 브라우저 ──▶ console (:3001) ──▶ api (:8000) ──▶ 원본 DB (bluebird_core) ◀── jobs
-                                  ┘     (두 DB는 Postgres 하나 안에 있다)
-
- jobs ──▶ 외부 API (공공 데이터, 상용 AI)   키는 루트 `.env`에서 읽는다
+```mermaid
+flowchart LR
+  Citizen[시민 브라우저] --> Portal[포털 · 서버 렌더링]
+  Operator[운영자 브라우저] --> Console[콘솔 · Server Actions]
+  Console --> API[HTTP 인증·검증·라우트]
+  API --> Read[조회 projection]
+  API --> Domain[검토·점수·이의 워크플로]
+  Read --> Core[(원본 DB)]
+  Domain --> Core
+  Portal --> Public[(공개 DB · inbox)]
+  Jobs[배치 jobs] --> Core
+  Jobs -->|공개 허용 원본 + 승인 분석| Public
+  Public -->|이의 가져오기| Jobs
+  Jobs --> Egress[반출 정책 · 외부 HTTP]
 ```
 
 - 키와 DB 비밀번호는 루트 `.env`(git 제외)에 둔다. 양식은 `.env.example`이다.
@@ -70,9 +39,30 @@
 - 한 개의 비밀번호(`DB_PASSWORD`)를 DB 계정이 함께 쓴다. 계정은 `bluebird`(슈퍼유저, jobs·원본 DB), `bb_api`, `bb_migrator`, `bb_publisher`, `bb_inbox_reader`, `bb_portal`이고 `deploy/local/initdb/00-init.sh`가 만든다.
 - 공개 화면은 보안 헤더를 스스로 붙이고(`next.config.ts`), GET/HEAD/POST 외 방식은 405로 막는다. 콘솔은 자체 CSP를 쓴다. 요청 횟수 제한은 없다(시연용).
 
+### 1.1 코드 경계와 의존 규칙
+
+| 경계 | 소유 코드 | 의존 방향 |
+|---|---|---|
+| API 조립 | `pipeline/bluebird/api.py` | HTTP 라우터를 등록하고 서버를 실행. 기존 ASGI·모듈 실행 진입점 유지 |
+| HTTP 어댑터 | `bluebird/http/auth.py`, `schemas.py`, `routes.py`, `config.py` | 인증·역할·형식 검증·상태 코드 변환. SQL을 직접 실행하지 않음 |
+| 읽기 모델 | `bluebird/http/queries.py` | DSN을 인자로 받아 DB projection 반환. FastAPI에 의존하지 않음 |
+| 쓰기 워크플로 | `funnel.py`, `objections.py`, `score.py`, DB 제약·트리거 | 승인·철회·점수·코딩 규칙과 트랜잭션 소유. HTTP를 역으로 import하지 않음 |
+| 포털 데이터 | `web/portal/lib/{connection,types,input,ideas,revival,exploration,statistics,objections}.ts` | 연결·자료형·입력 규칙·조회/접수 분리. 공개 DB만 접근 |
+| 포털 표현 | `web/portal/app`의 페이지·사례·근거 컴포넌트 | 서버에서 데이터를 읽어 전달. 검색·근거 본문을 GPU 클라이언트에 넣지 않음 |
+| 콘솔 전송·계약 | `web/console/lib/{api,contracts,action-state}.ts`, `app/actions.ts` | 서버 전용 인증 전송·응답 타입·변경 요청. DB 연결 없음 |
+| 콘솔 표현 | `web/console/features/{overview,queue,ideas,coding,objections}` | 라우트는 입력과 로딩, 기능 컴포넌트는 화면 구성. 전송 중 상태만 클라이언트 관리 |
+
+분리는 책임이 달라지는 곳에만 둔다. 범용 서비스/리포지터리 클래스, 옛 경로를 살리는 재수출, 같은 계약의 중복 구현은 두지 않는다. 권한은 메뉴 숨김이 아니라 API와 DB가 강제한다. HTTP 요청 스키마와 SQL 제약이 판정의 경계이며, 화면의 안내 문구가 새로운 규칙을 만들지 않는다.
+
+### 1.2 도구 독립성과 최소 의존성
+
+Claude·Codex·GJC 및 개인 경로는 설치·실행·검증의 전제가 아니다. `.gjc/` 같은 로컬 이력은 무시되는 개발 산출물이며 애플리케이션에서 읽지 않는다. 기존 이력 자체를 데이터 정리 명목으로 삭제하지 않는다.
+
+필수 실행 의존성은 Next.js·React·PostgreSQL 드라이버, FastAPI·psycopg·외부 HTTP/파일 어댑터 및 WebGPU 라이브러리다. npm/uv 잠금 파일로 설치하고 런타임 이미지는 개발 도구 없이 실행한다. 새 UI 프레임워크·차트·폰트 패키지는 추가하지 않는다. 구성도 HTML은 Python 표준 라이브러리만으로 생성·미리보기 가능하다. PDF가 필요할 때만 로컬 Chromium을 명시한다.
+
 ## 2. 지키는 원칙
 
-1. **원본 DB와 공개 DB를 나눈다.** 담당자가 승인한 자료만 공개 DB로 간다. 반출은 컬럼 허용목록 방식이고, 사람 승인이 조건이다. 이것으로 기획서의 "최종 판정·공개는 담당자 확인"을 구조적으로 보장한다.
+1. **원본 DB와 공개 DB를 나눈다.** 공개 원본 풀은 소스 `public_ok` 및 반출 컬럼 허용목록으로 통제한다. 진단·변화·시의성 등 분석은 별도의 사람 최종 승인과 공개 허용이 필요하다. 원본까지 중단한 `withheld_at` 자료는 둘 다 반출하지 않는다.
 2. **이름은 적재 때 지운다.** 팀 이름·사람 이름은 저장하지 않고 익명 ID만 남긴다.
 3. **모든 판정에 근거 URL이 붙는다.** 근거가 없으면 원인은 `U`, 시의성 항목은 점수 없음이다.
 4. **AI는 제안하고 사람이 승인한 뒤에 공개한다.**
@@ -88,18 +78,22 @@
 
 ### 3.1 jobs (배치)
 
-`pipeline/` 이미지 하나로 `bluebird` 명령을 실행한다. 리스너가 없다. 필요할 때 `./demo.sh job <명령>`으로 돌린다(한 번에 전체는 `./demo.sh cycle`).
+`pipeline/` 이미지 하나로 `bluebird` 명령을 실행한다. 리스너가 없다. `./demo.sh cycle`은 기본 원본 적재·점검·승인분 공개·화면 기동을 묶고, 추가 외부 원본 수집은 `./demo.sh collect`로 실행한다.
 
 | 명령 | 하는 일 |
 |---|---|
 | `ingest` | seed 파일 → core 적재. 수상자 성명·소속·팀 이름은 적재 때 지우고 익명 ID(`ID-YYYY-xxxxxxxxxx`)만 남긴다 |
+| `collect contests` | 공식 CSV·과학관·KIDP 목록 → 명시적 매핑·익명화 → 기존 `ingest`. 공모전 출품·수상과 시민제안은 `extra.record_kind`로 구분 |
 | `cards` | 아이디어 카드 만들기. `card_kind` = `full`(상용 LLM이 본문을 읽음) / `local_extract`(로컬 규칙 추출) / `title_only`(제목만) |
 | `sources check` | 데이터 소스가 실제로 불러와지는지 점검(`core.source_check`) |
 | `signals catalog-fetch` / `catalog-import` | 공공데이터 목록개방현황 스냅샷 내려받기·가져오기 → 바뀐 것 신호 |
-| `trace` / `diagnose` / `changes` / `match` / `score` | 1 흔적 → 2 막힌 이유 → 3 바뀐 것 → 시의성 점수. 사람 입력 경로 포함 |
+| `trace local` / `trace refresh` / `diagnose rule` | 키 없이 로컬 자료에 근거한 흔적·규칙 진단. 외부 검색 실시로 기록하지 않음 |
+| `trace auto` | NAVER 뉴스·KIPRIS 특허/실용신안 각 첫 페이지 최대 10건. 발견은 후보이며 자동 사업화 확정 아님 |
+| `diagnose auto` / `score auto` | P2 원문 발췌 검증 / P3 기존 변화 근거·축 검증. 기본 1건·최대 20건, `--idea` 지정, 사람 입력 보존, 승인 없음 |
+| `trace manual` / `diagnose manual` / `changes` / `match` / `score` | 담당자 근거·판단 입력과 변화 연결 |
 | `review` / `top` / `funnel` | 검토·승인, 이번 주 Top 20, 깔때기 단계 보고 |
 | `announce` | 공고 등록(키가 없으면 사람이 실제 공고 URL·제목·기간을 입력) |
-| `publish` | 승인분 → 공개 DB 교체 |
+| `publish` | 공개 허용 원본 + 승인된 분석을 공개 DB로 교체 |
 | `objections pull` / `resolve` | 공개 DB inbox의 이의 가져오기(가져온 행은 inbox에서 삭제) / 처리 |
 | `coding sample`, `kappa` | κ용 표본 만들기, 일치도 계산 |
 | `eval goldset`, `verify top20` | 골드셋 회귀, 공개 Top 20이 전문가 승인과 같은지 확인 |
@@ -107,24 +101,56 @@
 
 외부 HTTP는 `pipeline/bluebird/egress.py`만 한다. 다른 모듈은 직접 HTTP를 열 수 없다. egress는 허용 도메인을 확인하고, 호출마다 `core.egress_call`에 남기고, 외부로 보내도 되는 필드(`core.export_policy`)만 내보낸다.
 
+자동 보강 구현은 `enrichment.py`에 있다. 반출 허용 O급의 현재 유효한 아이디어만 처리한다. 뉴스·특허 검색 실패는 `not_run`으로 남기며 검색 결과 없음으로 바꾸지 않는다. P2는 모델이 반환한 발췌가 실제 본문인지 확인하고 URL은 서버가 근거에 연결한다. P3는 기존 변화 근거 ID만 받고 축에 맞는 URL을 서버가 연결한다. 점수는 정수 0–5 또는 `null`이며, 기존 사람 진단·점수 이력은 자동 처리로 덮어쓰지 않는다. 모델 호출 기록과 버전을 보존한다.
+
+`./demo.sh cycle`은 카드·로컬 흔적 판정·규칙 진단·변화 매칭을 생성하지 않는다. 해당 분석 및 외부 자동 보강은 별도 명령으로만 실행한다. `./demo.sh publish`는 이의 가져오기 → 기존 승인 대상 Top 선정 → 공개를 묶는다. 어느 경로도 사람 승인을 대신하지 않는다.
+
+추가 원본 수집 경계:
+
+- `collection.py`: 출처 레지스트리 → Egress → 임시 후보 파일 → 스키마·행 검증 → `ingest` → 같은 볼륨 내 정상 파일 교체.
+- `collect_science.py`: 공식 연도별 출품작 목록. 2015년 이후 범위만 수집하며 기존 KIPRIS 1979–2014와 구분.
+- `collect_design.py`: 공식 KIDP 공개 갤러리의 제품·공간·서비스·공예 수상 메타데이터. 이미지·첨부·참가자 정보 저장 안 함.
+- `/seed`: 기존 원본 읽기 전용. `/signals/contests`: 신규 원본 비공개 파일. API·포털·콘솔에 수집 쓰기 권한 없음.
+- 원천 ID가 없으면 명시적으로 수집하는 콘텐츠를 기준으로 ID 계산. 순번·연락처 등 제외된 컬럼 변경은 ID를 바꾸지 않음. 서로 다른 출처는 임의 병합하지 않음.
+- Egress는 허용 호스트·리디렉션·응답 크기를 스트림 소비 중 확인하고 호출을 감사 기록. 원본 내용은 수집 요청에 싣지 않음.
+- 신규 수집 권한은 보류. 수집 성공이 공개·상용 AI 반출·사업화 실패 판단·검토 승인을 뜻하지 않음.
+- 예약 실행기는 저장소에 없음. 공공데이터 카탈로그 행과 지원사업 공고는 아이디어 건수에 포함하지 않음.
+
+
 ### 3.2 api (FastAPI)
 
-`python -m bluebird.api`. 콘솔의 유일한 백엔드이고 원본 DB에는 최소 권한 역할 `bb_api`로 붙는다(마이그레이션 0008). 접근 토큰은 사람별로 발급하고, 서버에는 sha256 해시만 둔다(`console_users.json`). 역할:
+`python -m bluebird.api`. 콘솔의 유일한 백엔드이고 원본 DB에는 최소 권한 역할 `bb_api`로 붙는다(0008 및 작성 권한 0010). 접근 토큰은 사람별로 발급하고, 서버에는 sha256 해시만 둔다(`console_users.json`). 역할:
 
 | 역할 | 할 수 있는 일 |
 |---|---|
-| `reviewer` | 최종 승인·반려(`review.round = final`), 이의 처리 |
+| `reviewer` | 흔적·진단·변화 연결·시의성 작성, 최종 승인·반려(`review.round = final`), 이의 처리 |
 | `coder` | 2인 독립 코딩. 자기 코드만 보인다(맹검). 큐·상세는 볼 수 없다 |
 | `expert` | 전문가 승인 라운드(Top 20) |
 | `auditor` | 감사 라운드, 이의 열람 |
 
+주요 API 계약:
+
+| API | 계약 |
+|---|---|
+| `GET /api/overview` | 전체 원본 `counts.raw`·분석 깔때기·소스 권한·마지막 점검·배치·공개 상태. 비밀키나 원본 외부 응답 본문은 보내지 않음 |
+| `GET /api/queue` | 기본 `raw`: 카드 없는 활성·공개중단 전 원본도 조회. 기존 `s0–s6`는 다음 단계 미통과 큐 유지. 검색어, `limit` 1–500, `offset` ≥0; `items,total,counts` 반환 |
+| `GET /api/ideas/{id}` | 원본 제목·본문·수상·공식 `source_url`, 카드 및 근거·승인 이력. 카드 없는 원본도 조회 가능. 이의 본문은 reviewer/auditor만 받음 |
+| `GET /api/changes` | 이미 등록된 변화 검색 |
+| `POST /api/ideas/{id}/trace` | `found`/`none`, 상태·URL·검토 메모 |
+| `POST /api/ideas/{id}/diagnosis` | 코드·설명·근거 URL과 선택적 발췌 |
+| `POST /api/ideas/{id}/match` | 변화 ID·판정·달라진 점·가능해진 방식 |
+| `POST /api/ideas/{id}/score` | 4축별 엄격한 정수 0–5 또는 `null`, 축별 URL, 기준일 |
+
+작성자는 요청의 사용자 이름이 아니라 인증된 토큰에서 결정한다. 권한 위반 403, 없는 아이디어 404, 단계 충돌 409, 형식 오류 422를 구분한다. 마이그레이션 0010은 필요한 테이블 열·시퀀스 권한만 추가하며 소스 정책·배치·외부 호출 권한을 주지 않는다. 실질적인 흔적 상태·근거 변경도 기존 분석 승인을 철회한다.
+
+
 ### 3.3 console (web/console)
 
-관리자용 Next.js. 검토 큐, 아이디어 상세(승인·반려), 2인 독립 코딩, 이의 제기 처리 화면이 있다. 콘솔은 `api`하고만 통신하고 DB에 직접 붙지 않는다. 자체 CSP를 쓴다.
+관리자용 Next.js. 운영 개요는 누적 단계를 단순 카드로 나열하지 않고 공개에 가까운 미통과 단계, 연결 점검, 공개 반영 순서로 작업을 안내한다. 미통과 건수는 누적 통과 수의 차이이며 보류·제외도 포함함을 명시한다. 검색 큐, 상세 작성/승인, 독립 코딩, 이의 처리는 기능별 컴포넌트가 담당한다. Server Action은 API만 호출하며 DB에 직접 붙지 않는다. `getMe`와 `requireMe`는 현재 토큰을 키로 하는 React 요청 범위 캐시를 공유한다. 프로세스 전체 인증 캐시나 오래된 결과를 보관하는 캐시는 쓰지 않는다.
 
 ### 3.4 원본 DB (`bluebird_core`)
 
-PostgreSQL 16 + pgvector + pg_trgm. 스키마 `core`. 마이그레이션 0001–0009가 유일한 스키마 소유자다(§5).
+PostgreSQL 16 + pgvector + pg_trgm. 스키마 `core`. 마이그레이션 0001–0010이 유일한 스키마 소유자다(§5).
 
 ### 3.5 공개 DB (`bluebird_publish`)
 
@@ -142,6 +168,22 @@ PostgreSQL 16 + pgvector + pg_trgm. 스키마 `core`. 마이그레이션 0001–
 ### 3.6 portal (web/portal)
 
 Next.js. 공개 DB를 `bb_portal`로 읽기만 하고, 쓰기는 이의 제기 inbox INSERT 하나뿐이다. 원본 DB 연결 정보가 없다. 보안 헤더는 `next.config.ts`가 붙이고, 미들웨어가 GET/HEAD/POST 외 방식을 405로 막는다.
+
+- 화면 구조: 좁은 메뉴 레일·검색 필터·큰 기록 작업면·비대칭 상세 패널·주간 선정·검토 도구.
+- 홈 데이터: `listIdeas`로 필요한 8건과 전체 수를 조회하고, 출처·주간 선정과 병렬 로드. 필터 제출은 `/pool`의 기존 파싱 경로 사용.
+- 상호작용 경계: 서버가 조회한 기록의 표시 필드와 ID만 `RecordWorkbench`에 전달. 클라이언트는 선택 상태·키보드 이동만 관리하며 원문·근거 본문은 전달하지 않음. 세로 탭 목록과 연결된 패널로 선택·초점 관계 표시.
+- 목록 계약: `/pool`과 공개 API의 기본 페이지 크기 50건 유지. 전역 레이아웃에는 집계 SQL 없음.
+- 표현 규칙: 라벨·불릿·상태 표시 우선. 원문·진단 사유·변화 설명·근거 발췌는 접기 안에 원문 그대로 보존.
+- 공통 표면: 흰 작업면·검정 선택과 버튼·회색 경계선·명확한 초점 표시. 상태는 문구·채움·테두리로 구분. 좁은 화면은 상세 패널을 아래로 배치하고 표는 영역 내부에서 가로 스크롤.
+
+- 그래픽 경계: 루트 `DashboardAtmosphere`가 포털 전체 경로의 배경을 담당. 검색·목록·폼은 HTML로 유지.
+- 렌더러: `shaders@4.0.2`(MIT) 코어 API와 `FlowingGradient`. 무채색 단일 캔버스·CSS 점 격자. 작은 카드 일러스트 대신 전체 작업 표면에 통합.
+- 비용 제한: `setResolutionScale(0.5)`, `setFrameRateCap(24)`, DPR·뷰포트 기반 크기 계산으로 버퍼 60만 픽셀 이하. 초기화는 1×1 CSS 픽셀에서 시작.
+- 수명: 1024px 이상·세밀한 포인터·모션 허용·GPU·탭 가시성 조건에서 지연 로드. 일시 정지·숨긴 탭은 렌더러 정리. 작은 화면·모션 감소·GPU 불가·실패는 CSS 배경 유지.
+- 의존성: 코어 렌더러는 telemetry collector를 시작하지 않음. 콘솔은 추가 GPU 의존성 없이 같은 정적 표면 사용. [라이브러리 가이드](https://shaders.com/docs/guide).
+
+양쪽 앱의 Pretendard Variable 1.3.9는 SIL OFL 라이선스와 함께 로컬 `public/fonts/pretendard-1.3.9/`에 포함한다. WOFF2·`unicode-range`로 필요한 글자 묶음만 받고 `font-display: swap`으로 텍스트를 먼저 보여 준다. 버전 경로에는 장기 immutable 캐시를 적용한다. 모든 글꼴을 preload하지 않으며 CDN·Google Fonts·계정 로그인은 필요 없다. 독립 배포를 위해 각 이미지가 자기 폰트 파일을 포함한다.
+
 
 ### 3.7 원칙 정리
 
@@ -190,7 +232,7 @@ ingest → cards → (1 흔적 → 2 막힌 이유 → 3 바뀐 것 → 시의�
 
 ## 5. 데이터 모델
 
-### 5.1 원본 DB (core) — 마이그레이션 `pipeline/bluebird/db/migrations/core/0001–0009`
+### 5.1 원본 DB (core) — 마이그레이션 `pipeline/bluebird/db/migrations/core/0001–0010`
 
 | 묶음 | 표 |
 |---|---|
@@ -199,7 +241,7 @@ ingest → cards → (1 흔적 → 2 막힌 이유 → 3 바뀐 것 → 시의�
 | 근거 | `evidence`, `x_evidence` |
 | 판정 | `trace_check`, `trace_verdict`(`external_search` 0009), `diagnosis`, `timeliness` |
 | 바뀐 것 | `catalog_snapshot`, `signal_dataset`, `announcement`, `condition_change`(`origin` 0004), `cause_change_kind`, `change_match`(`match_eligible` 함수 0006) |
-| 선정·공개 | `weekly_top`, `review`, `publication`(승인 뒤 변경 시 철회 0005), `publish_snapshot`, `export_policy` |
+| 선정·공개 | `weekly_top`, `review`, `publication`(승인 뒤 변경 시 철회 0005 및 흔적 변경 0010), `publish_snapshot`, `export_policy` |
 | 이의·코딩 | `objection`(0007), `coding_sample` |
 | 감사·운영 | `egress_call`, `source_check`, `pipeline_run` |
 | 깔때기 | `core.funnel_stage(as_of)` 함수(0004), `core.revival_candidate` 뷰 |
@@ -220,7 +262,7 @@ ingest → cards → (1 흔적 → 2 막힌 이유 → 3 바뀐 것 → 시의�
 
 | 범위 | 조건 |
 |---|---|
-| 카드 | 소스 `public_ok` + 공개 허용 |
+| 원본·카드 풀 | 소스 `public_ok`, 현재 유효하고 `withheld_at` 없음. 아이디어별 분석 승인과 별개 |
 | 진단 | 근거 있음 + 사람 최종 승인 |
 | 시의성·바뀐 것 | 사람 최종 승인 + 공개 허용. Top 20은 전문가 승인까지 |
 
@@ -235,10 +277,10 @@ ingest → cards → (1 흔적 → 2 막힌 이유 → 3 바뀐 것 → 시의�
 | 경로 | 내용 |
 |---|---|
 | `/pool` | 아이디어 풀: 공개 아이디어 목록(제목·출처·연도·검증 여부로 거르기) |
-| `/` | 진단 카드: 이번 주 재조명(`weekly_top`) + 원인 진단이 검증된 카드 전체 |
-| `/ideas/[id]` | 아이디어 카드(목업 A): 원본 · 사업화 흔적 확인 · 정체 원인 · 시의성 4축 · 바뀐 것 · 관련 공고 · 이의 제기 |
+| `/` | 아이디어 작업대: 검색·필터 + 공개 원본 8건 선택·상세 패널 + 주간 선정 + 검토 도구 |
+| `/ideas/[id]` | 원본 · 사업화 흔적 확인 범위 · 정체 원인 · 시의성 4축 · 바뀐 것 · 관련 공고 · 이의 제기 |
 | `/timeliness` | 시의성 재평가: 채점한 아이디어의 4축 점수·S·판정 |
-| `/match` | 공고 매칭(목업 B): 공고 제목이나 주제를 넣으면 비슷한 아이디어(`pg_trgm`) + 풀 현황·원인 분포 |
+| `/match` | 주제·공고 유사 검색(`pg_trgm`) + 검증 진단 분포·판정 기준 |
 | `/stats` | 통계: 출처별·연도별·카드 종류·원인·판정 분포 |
 | `/api/v1/ideas`, `/api/v1/ideas/[id]` | 목록·상세 |
 | `/api/v1/explore` | 주제·공고 유사 검색 |
@@ -248,8 +290,9 @@ ingest → cards → (1 흔적 → 2 막힌 이유 → 3 바뀐 것 → 시의�
 
 | 경로 | 내용 |
 |---|---|
-| `/` | 검토 큐 |
-| `/ideas/[id]` | 아이디어 상세, 승인·반려 |
+| `/overview` | 소스·키 대기·배치·공개 상태 |
+| `/` | 단계별 검토 큐, 검색·페이지 이동 |
+| `/ideas/[id]` | 흔적·진단·변화 연결·시의성 작성, 라운드별 승인·반려 |
 | `/coding` | 2인 독립 코딩(서로의 코드 맹검) |
 | `/objections` | 이의 제기 처리(수용 시 원본 공개 중단 선택) |
 | `/login` | 토큰 로그인 |
@@ -266,22 +309,24 @@ bluebird/
     bluebird/
       cli.py, ingest.py, cards.py, llm.py, anonymize.py
       sources.py, sources_check.py, signals/     # 소스 어댑터, 점검, 목록개방현황
-      funnel.py, score.py, announce.py, wording.py
+      funnel.py, enrichment.py, score.py, announce.py, wording.py
       publish.py, publish_template/{v1,v2}.sql    # 공개 DB 반영
-      objections.py, api.py                       # 이의·코딩, FastAPI
+      objections.py, api.py                       # 도메인 처리 / API 조립
+      http/{auth,schemas,routes,queries,config}.py # HTTP 경계와 읽기 모델
       egress.py                                   # 외부 HTTP는 여기만
       db/migrations/{core,publish}/               # 스키마 유일 소유자
     tests/
   web/
-    portal/                 # 공개 포털 (Next.js)
-    console/                # 담당자 콘솔 (Next.js)
+    portal/                 # app 표현 + lib 공개 데이터 접근
+    console/                # app 라우트 + features 표현 + lib API 전송
+    */public/fonts/         # 버전 고정 자체 호스팅 WOFF2·CSS·라이선스
   compose.yaml              # db, api, portal, console, jobs
-  demo.sh                   # init, cycle, up, down, check, job, verify, env, tokens, logs
+  demo.sh                   # init, cycle, up, down, status, publish, check, job, verify, env, tokens, logs
   .env.example              # 키·DB 비밀번호 양식 (실제 값은 .env, git 제외)
   deploy/local/
     initdb/00-init.sh       # DB 2개와 역할 만들기
     sources.toml            # 데이터 소스 목록
-    verify.sh               # 검증 74개
+    verify.sh               # 역할·공개·이의 왕복 점검 (일회용 환경 전용)
     p95.sh                  # G8 응답 속도 측정
   docs/                     # ARCHITECTURE.md, SOURCES.md, diagrams/
   reference/                # 인수인계 원본 (git 제외, 팀원에게 따로 전달)
@@ -313,6 +358,9 @@ bluebird/
 
 `verify.sh`가 보는 것: 공개 DB 역할 권한, 반출 통제와 데이터 수, 원본·카드·소스 점검, 깔때기 단계, 콘솔 보안(토큰 없으면 401, 헤더, 최소 권한 DB 계정), 포털 보안 헤더와 405, 이의 제기 왕복, 공개 화면.
 
+`./demo.sh status`는 API와 포털의 실제 DB 조회 및 콘솔 로그인 응답을 확인하고 실패 시 비정상 종료한다. Compose에도 각 서비스의 healthcheck가 있다. 반면 `verify.sh`는 이의 제출·처리·공개를 실제로 변경하므로 보존할 데이터가 있는 환경에서 실행하지 않는다. `pytest`의 `BB_TEST_DSN`도 역할 변경 권한이 있는 일회용 PostgreSQL만 사용한다.
+
+
 ---
 
 ## 9. 일정 (본선 12월 중순)
@@ -338,3 +386,42 @@ bluebird/
 6. **맹검 점검자(auditor) 지정**: 바뀐 것 정밀도 20건.
 7. **LLM 예산 상한 승인**.
 8. **시의성 가중치**: 초기 0.25 균등값을 멘토링 의견으로 조정.
+
+## 0. 부록 — 인수 당시의 출발점
+
+### 0.1 인수인계 패키지 실사
+
+인수 시점에는 배포 가능한 코드가 없었다. 화면은 정적 HTML 목업 2장(예시 수치), 아키텍처는 그림, 파이프라인은 `pplx_sdk`에 묶인 50건 파일럿 스크립트였다. 재사용한 입력은 다음과 같다.
+
+- KIPRIS 벌크 파싱 규칙(CP949, `¶` 구분자, `<br />`, `#N/A`) — `02_kipris_bulk/load_kipris_contest.py`
+- 흔적 검색 질의 생성 규칙(`product_name`, `clean_team`, `masked`)과 판정 프롬프트 — `03_pilot/step1·step2`
+- 검수 완료 골드셋 50건 — `03_pilot/pilot_result_final.csv`
+- 코드북 T·D·R·M·C·O·U 정의와 이론 배경 — 기획서 13쪽, `07_pitch/stall_cause_codebook_7_theory.md`
+- 데이터 소스·API 접근조건 조사 — `06_research/datasets.md`
+
+### 0.2 기획서에서 약속한 것 (설계 요구사항으로 고정)
+
+| 구분 | 기획서 내용 | 쪽 |
+|---|---|---|
+| 핵심 기능 | ① 아이디어 풀 DB(3축 태그·군집·유사 묶음) ② 정체 원인 진단(흔적 4종 → 7코드) ③ 시의성 재평가(S 0~5) ④ 재조명 매칭·알림 | 3, 12 |
+| 흔적 4종 | 뉴스·웹 / 법인·사업자 / 특허·상표 / 후속 지원사업 선정 | 12, 17 |
+| 시의성 S | 기술 준비도·데이터 개방도·제도 정합성·정책 수요 4항목 가중평균. 초기 가중치 0.25 균등 → 멘토링 의견으로 조정. S≥4.0 지금 가능 / 3.0~3.9 조건부(해소 조건 명시) / <3.0 보류. 자료 없는 항목은 점수 미부여·평균에서 제외 | 14 |
+| 프롬프트 | P1 카드 추출(title, problem, solution, target_user, required_data[], required_tech[], domain 9종 중 1, year, source_url, 추정 금지) / P2 원인 분류(primary, secondary≤1, confidence 0~1, rationale 2문장, evidence_ids[], 증거 없으면 U) / P3 시의성(항목별 0~5 + 근거 URL ≥1, 자료 없으면 판단 불가, 달라진 점 ≤3) | 20 |
+| 신뢰성 | 표본 100건 2인 독립 코딩 κ≥0.7 후 채택 / 모든 판정에 근거 링크·수집일 / AI는 후보·근거까지, 최종 판정·공개는 담당자 확인 / 원문 변형 금지 / 이용자 이의 제기·정정 기능 | 10 |
+| 데이터 원칙 | 수상자 성명·소속은 적재 단계에서 삭제, 아이디어 단위 익명 ID / 상업적 이용 금지·변경 금지 데이터 제외 / 빅카인즈 미사용 / 네이버는 API HUB / 디지털융합플랫폼 경유 우선 | 18 |
+| 사용자 | 주최기관 담당자, 참가자(예비창업자·학생·직장인), 정책 기획자 | 11 |
+| 정량 목표(’26.12) | 카드 1만 건+ / 진단 표본 100건 κ≥0.7 / 재발굴 후보 20건 전문가 검토 후 공개 / 공고 매칭 실사용 시연 / 유사 아이디어 조회 1초 내 / 근거 링크 100% | 15, 22, 23 |
+| MVP 단계 | 1단계(~9월) 시드 적재·카드 추출·군집·진단 카드 화면 / 2단계(10~11월) 흔적 API·원인 분류·κ 검증·시의성 / 3단계(12월) 공고 매칭·알림·주최기관 모드·Top 20 공개 | 15 |
+
+**현재 구현**: 파일 적재·카드·근거 기반 제안·담당자 작성/승인·공개 스냅샷·시민 검색/이의·콘솔 처리까지 로컬 서비스로 연결했다. 기획서의 목표 수치, 외부 유료 API 실응답, 약관 승인과 전문가 검토 완료를 구현 완료와 혼동하지 않는다. 실제 처리 단계·키 대기·승인은 DB와 운영 개요에서 확인한다.
+
+### 0.3 기획서와 실데이터의 불일치 (설계에 반영)
+
+1. **"3.8만 행"은 아이디어 수가 아니다.** KIPRIS 데이터사전 기준 분석 단위는 26,434건(1979~2014, 학생 발명 위주)이고, 2층 창업경진대회 수상작은 2,190 + 70건. 화면 수치는 DB 실측값만 쓴다. 목표인 "카드 1만 건+"는 달성 가능하다.
+2. **흔적 판정은 5클래스다.** 파일럿 검수본 기준 `realized / pivot / similar_unlinked / award_only / none`(6/4/3/14/23). 이와 별도로 원인 코드(P2)는 `realized`가 아닌 건에만 부여한다.
+3. **KIPRIS 벌크 TXT는 약관상 팀 내부 전용이다.** 공개 노출은 공공데이터포털 `15006010` 파일을 기준으로 한다.
+4. **Supabase·RAGFlow·Superset**(기획서 19, 21쪽)은 로컬 시연에서 쓰기 어렵거나 불필요하다. 자체 PostgreSQL+pgvector로 대체한다(§1).
+5. **익명화와 흔적 검색이 충돌한다.** 흔적 검색에는 팀명이 필요한데, 기획서는 "적재 단계에서 삭제"로 약속했다. → 팀 이름과 사람 이름은 적재 때 지우고 익명 ID만 남긴다(§3.1). 흔적 검색은 아이템명으로 한다. 약속을 지키면서 검색도 가능하다.
+
+---
+

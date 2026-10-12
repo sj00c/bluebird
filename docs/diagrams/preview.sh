@@ -1,24 +1,7 @@
 #!/usr/bin/env bash
-# build.py 저장 → architecture.html/pdf 재생성 → 터미널 칸(cmux/Ghostty)에 그림 표시
-set -u
-cd "$(dirname "$0")"
-OUT=/tmp/bb-preview
-CHROME="/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
-mkdir -p "$OUT"
-(
-  last=""
-  while true; do
-    cur=$(stat -f %m build.py)
-    if [[ "$cur" != "$last" ]]; then
-      last="$cur"
-      python3 build.py >/dev/null 2>&1
-      "$CHROME" --headless=new --disable-gpu --hide-scrollbars --force-device-scale-factor=2 --window-size=1648,888 \
-        --virtual-time-budget=3000 --screenshot="$OUT/tmp.png" "file://$PWD/architecture.html" >/dev/null 2>&1 \
-        && mv "$OUT/tmp.png" "$OUT/page-1.png"
-    fi
-    sleep 1
-  done
-) &
-trap 'kill $! 2>/dev/null' EXIT
-sleep 3
-/usr/local/bin/python3 /Users/sj/dev/gen_resume/applications/_shared/cv/view_pages.py "$OUT"
+# 표준 Python만으로 구성도 생성·미리보기. 브라우저에서 출력된 주소를 연다.
+set -euo pipefail
+root="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
+python3 "$root/build.py"
+printf '구성도: http://127.0.0.1:%s/architecture.html\n' "${PORT:-8765}"
+exec python3 -m http.server "${PORT:-8765}" --bind 127.0.0.1 --directory "$root"
