@@ -18,12 +18,13 @@ from . import db
 from .sources import load_sources
 
 IDEA_COLS = ("id", "source_id", "source_name", "license", "share", "record_kind", "contest", "host_org", "audience",
-             "year", "award", "title", "body", "category", "used_data", "source_url", "exclude_reasons")
+             "year", "award", "title", "body", "category", "used_data", "source_url", "exclude_reasons", "canonical_id")
 
 IDEA_SQL = """
 SELECT i.id, s.id, s.name, s.license, s.share_ok, s.record_kind, coalesce(nullif(c.name, ''), s.name), c.host_org, c.audience,
        i.year, i.award, i.title, i.body, i.category, array_to_string(i.used_data, '; '), i.source_url,
-       (SELECT string_agg(x.reason, ', ' ORDER BY x.reason) FROM core.idea_exclusion x WHERE x.idea_id = i.id)
+       (SELECT string_agg(x.reason, ', ' ORDER BY x.reason) FROM core.idea_exclusion x WHERE x.idea_id = i.id),
+       (SELECT d.canonical_id FROM core.idea_duplicate d WHERE d.idea_id = i.id)
   FROM core.idea i
   JOIN core.source s ON s.id = i.source_id
   JOIN core.contest c ON c.id = i.contest_id
@@ -36,7 +37,8 @@ IDEA_VIEW_SQL = """
 SELECT i.id, s.name AS source, s.record_kind, CASE WHEN s.share_ok THEN '가능' ELSE '보류' END AS share,
        c.name AS contest, c.host_org, c.audience, i.year, i.award, i.title, i.body, i.category,
        array_to_string(i.used_data, '; ') AS used_data, i.source_url,
-       (SELECT string_agg(x.reason, ', ' ORDER BY x.reason) FROM core.idea_exclusion x WHERE x.idea_id = i.id) AS exclude_reasons
+       (SELECT string_agg(x.reason, ', ' ORDER BY x.reason) FROM core.idea_exclusion x WHERE x.idea_id = i.id) AS exclude_reasons,
+       (SELECT d.canonical_id FROM core.idea_duplicate d WHERE d.idea_id = i.id) AS canonical_id
   FROM core.idea i
   JOIN core.source s ON s.id = i.source_id
   JOIN core.contest c ON c.id = i.contest_id
@@ -120,6 +122,7 @@ def xlsx(*, dsn: str, out: Path) -> dict:
         ("used_data", "활용 공공데이터(데이터 활용 경진대회만). ; 구분", "버스정보시스템; 상가업소정보"),
         ("source_url", "원본 위치. 건별 상세 URL, 없으면 데이터셋 페이지", "https://www.data.go.kr/data/15146089/fileData.do"),
         ("exclude_reasons", "제외 후보 이유 코드. 복수 = , 구분. 뜻은 exclusion_reason 시트. 받는 쪽이 골라 제외", "student_contest, public_proposal"),
+        ("canonical_id", "같은 아이디어의 다른 기록이면 묶음 대표 id(본문 같음 = 재제출·중복 등록 / 같은 대회·연도·제목 = 출품작·수상작·KIPRIS 목록). 대표·단독 = 빈 값", "ID-2015-3df3a02be2"),
         ("", "", ""),
         ("sources 시트 필드", "설명", ""),
         ("source_id / name / share / license / url", "ideas 시트와 동일. url = 데이터셋 페이지", ""),
@@ -134,7 +137,7 @@ def xlsx(*, dsn: str, out: Path) -> dict:
         ("", "", ""),
         ("exclusion_reason 시트 필드", "설명", ""),
         ("code / label / note", "이유 코드 / 한글 뜻 / 판단 기준", ""),
-        ("basis", "근거 위치. source=소스 전체 / contest=대회 단위 / title=제목 매칭(중복)", ""),
+        ("basis", "근거 위치. source=소스 전체 / contest=대회 단위 / content=본문·제목 내용(중복 기록·내용 부족)", ""),
         ("ideas", "해당 이유가 붙은 아이디어 건수", ""),
     ]
     for row in lines:
@@ -147,10 +150,10 @@ def xlsx(*, dsn: str, out: Path) -> dict:
     ws.append(list(IDEA_COLS))
     for r in ideas:
         ws.append([r[0], r[1], r[2], r[3], _share(r[4]), r[5], r[6], r[7], r[8], r[9], r[10], r[11], r[12], r[13], r[14],
-                   r[15], r[16] or ""])
+                   r[15], r[16] or "", r[17] or ""])
     _autosize(ws, {"id": 22, "source_id": 30, "source_name": 40, "license": 30, "share": 6, "record_kind": 18,
                    "contest": 30, "host_org": 20, "audience": 9, "year": 6, "award": 12, "title": 50, "body": 80,
-                   "category": 14, "used_data": 30, "source_url": 40, "exclude_reasons": 30})
+                   "category": 14, "used_data": 30, "source_url": 40, "exclude_reasons": 30, "canonical_id": 22})
 
     ws = wb.create_sheet("sources")
     ws.append(["source_id", "name", "share", "license", "url", "record_kind", "exclude_reason", "ideas",

@@ -699,6 +699,66 @@ def test_record_kind_audience_and_dup_are_markers_not_filters(fresh, tmp_path):
         ingest.sync_policy(dsn=fresh, configs=[cfg])
 
 
+def test_duplicate_record_and_thin_record_markers(fresh, tmp_path):
+    """0015: 같은 본문 = 같은 아이디어(재제출), 같은 대회·연도±1·제목 + 다른 소스 = 같은 출품작.
+    대회명 없는 흔한 제목은 묶지 않고 본문 없으면 thin_record. 대표 = 공개 허용 소스 우선. 표시만, 걸러내지 않음."""
+    import csv
+
+    from bluebird import ingest
+
+    (tmp_path / "secret").write_bytes(b"s" * 32)
+    cfg = tmp_path / "sources.toml"
+    cfg.write_text("".join(
+        f'[[source]]\nid="{sid}"\nadapter="mapped_contest_csv"\nfile="{sid}.csv"\nname="{sid}"\nlicense="l"\nlayer=2\n'
+        f'public_ok={public}\nexport_grade="O"\npolicy_approved_by="t"\npolicy_approved_at="2026-10-06"\n'
+        'record_kind="contest_award"\ntopic="t"\nshare=true\n'
+        '[source.columns]\ntitle="제목"\ncontest="대회"\nyear="연도"\naward="상"\nbody=["본문"]\n'
+        for sid, public in (("a", "true"), ("b", "false"))), encoding="utf-8")
+    park = "[제안취지] 어린이 공원별로 캐릭터를 정해 디자인하면 아이들이 더 많이 찾아오고 동네 공원이 다시 살아납니다. [사업내용] 공원 캐릭터 조형물 설치"
+    rows = {
+        "a": [["구멍자국이 안생기는 콤파스", "제37회 전국학생과학발명품경진대회", "2015", "", ""],
+              ["어린이공원도 재밌어야 간다", "시민참여예산", "2018", "", park],
+              ["어린이 공원 캐릭터 디자인", "시민참여예산", "2019", "", park.replace(" ", "  ")],   # 제목 바꿔 재제출
+              ["CCTV 설치", "", "2015", "", ""], ["CCTV 설치", "", "2016", "", ""]],
+        "b": [["구멍자국이 안생기는 콤파스!", "제38회 전국학생과학발명품경진대회", "2016", "최우수상", "본 발명은 구멍 자국이 남지 않는 컴퍼스에 관한 것이다."],
+              ["구멍자국이 안생기는 콤파스", "제39회 전국학생과학발명품경진대회", "2018", "", ""],        # 연도 2 차이
+              ["CCTV 설치", "", "2015", "", ""]],                                                     # 대회명 없음
+    }
+    for sid, rs in rows.items():
+        with (tmp_path / f"{sid}.csv").open("w", encoding="utf-8", newline="") as f:
+            w = csv.writer(f)
+            w.writerow(["제목", "대회", "연도", "상", "본문"])
+            w.writerows(rs)
+    ingest.ingest(dsn=fresh, config=cfg, seed_dir=tmp_path, secret_path=tmp_path / "secret")
+
+    def marks():
+        with psycopg.connect(fresh) as c:
+            return sorted(c.execute(
+                "SELECT i.source_id, i.year, i.title, ci.source_id, ci.year, d.rules,"
+                "       array(SELECT x.reason FROM core.idea_exclusion x WHERE x.idea_id = i.id"
+                "              AND x.reason IN ('duplicate_record', 'thin_record') ORDER BY 1)"
+                "  FROM core.idea i LEFT JOIN core.idea_duplicate d ON d.idea_id = i.id"
+                "  LEFT JOIN core.idea ci ON ci.id = d.canonical_id").fetchall())
+
+    expected = [
+        ("a", 2015, "CCTV 설치", None, None, None, ["thin_record"]),
+        ("a", 2015, "구멍자국이 안생기는 콤파스", None, None, None, []),                 # 대표 = 공개 허용 소스
+        ("a", 2016, "CCTV 설치", None, None, None, ["thin_record"]),
+        ("a", 2018, "어린이공원도 재밌어야 간다", None, None, None, []),                  # 대표 = 이른 연도
+        ("a", 2019, "어린이 공원 캐릭터 디자인", "a", 2018, ["same_body"], ["duplicate_record"]),
+        ("b", 2015, "CCTV 설치", None, None, None, ["thin_record"]),
+        ("b", 2016, "구멍자국이 안생기는 콤파스!", "a", 2015, ["same_entry"], ["duplicate_record"]),
+        ("b", 2018, "구멍자국이 안생기는 콤파스", None, None, None, []),
+    ]
+    assert marks() == expected
+    with psycopg.connect(fresh) as c:
+        assert c.execute("SELECT count(*) FROM core.funnel_stage(-1)").fetchone()[0] == 8   # 표시만, 깔때기 = 전체
+        c.execute("SELECT core.refresh_idea_exclusion()")                                  # 같은 트랜잭션 재실행
+        c.execute("SELECT core.refresh_idea_exclusion()")
+        c.commit()
+    assert marks() == expected
+
+
 def test_export_xlsx_marks_share_from_source_flag(fresh, tmp_path):
     """export: xlsx 1파일 전체. share 열 = core.source.share_ok(레지스트리 share). 소스 표 = 소스 수 일치."""
     from openpyxl import load_workbook
@@ -726,6 +786,7 @@ def test_export_xlsx_marks_share_from_source_flag(fresh, tmp_path):
     by_source = {b[hdr.index("source_id")]: b for b in body}
     assert by_source["s"][hdr.index("share")] == "가능" and by_source["s"][hdr.index("contest")] == "대회"
     assert by_source["h"][hdr.index("share")] == "보류" and by_source["h"][hdr.index("contest")] == "보류 소스"   # 대회명 비면 소스명
+    assert by_source["s"][hdr.index("canonical_id")] is None                                   # 묶음 없음 = 빈 값
 
     out = tmp_path / "p.md"
     r = export.provenance(dsn=fresh, configs=[], out=out)

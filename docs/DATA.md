@@ -25,8 +25,8 @@
 | 한국자산관리공사_연도별 데이터 분야 공모전 수상작 정보 | [공공데이터포털 파일 15156683](https://www.data.go.kr/data/15156683/fileData.do) | 2021~2025 | 25 | 자산관리 데이터 공모전 수상작 | 가능 |
 | 성평등가족부_경진대회 수상 정보 | [공공데이터포털 파일 15166904](https://www.data.go.kr/data/15166904/fileData.do) | 2023~2026 | 22 | 성평등가족 경진대회 수상 | 가능 |
 | 한국소방산업기술원_소방산업대상 공모전 수상작 목록 | [공공데이터포털 파일 15132795](https://www.data.go.kr/data/15132795/fileData.do) | 2025 | 19 | 소방산업 기술 공모전 수상작 | 가능 |
-| 한국콘텐츠진흥원_기능성게임 수상작 정보 | [공공데이터포털 파일 15150108](https://www.data.go.kr/data/15150108/fileData.do) | 2020~2023 | 12 | 기능성게임 수상작 | 가능 |
 | 부산도시공사_경영혁신 적극행정 우수사례 목록 | [공공데이터포털 파일 15155587](https://www.data.go.kr/data/15155587/fileData.do) |  | 12 | 부산도시공사 경영혁신 우수사례 | 가능 |
+| 한국콘텐츠진흥원_기능성게임 수상작 정보 | [공공데이터포털 파일 15150108](https://www.data.go.kr/data/15150108/fileData.do) | 2020~2023 | 12 | 기능성게임 수상작 | 가능 |
 | 전남광주통합특별시_광주 공공데이터 활용 경진대회 수상현황 | [공공데이터포털 파일 15074003](https://www.data.go.kr/data/15074003/fileData.do) | 2026 | 9 | 광주 공공데이터 창업 아이디어 | 가능 |
 | 대전광역시 중구_정책제안 공모전 시상 결과 | [공공데이터포털 파일 15139894](https://www.data.go.kr/data/15139894/fileData.do) | 2024 | 7 | 대전 중구 정책제안 공모 수상 | 가능 |
 | 한국과학창의재단_소프트웨어(SW) 수업 우수사례 공모전 수상작 목록 | [공공데이터포털 파일 15091356](https://www.data.go.kr/data/15091356/fileData.do) | 2020 | 6 | SW 수업 우수사례 | 가능 |
@@ -72,8 +72,8 @@
 | 부산광역시_주민참여예산 예산편성 목록 | [공공데이터포털 파일 15161622](https://www.data.go.kr/data/15161622/fileData.do) |  | 64 | 부산 주민참여예산 | 가능 |
 | 서울특별시 서대문구_주민참여예산 승인사업  현황 | [공공데이터포털 파일 15048767](https://www.data.go.kr/data/15048767/fileData.do) | 2021 | 51 | 서대문구 주민참여예산 | 가능 |
 | 경상북도_주민참여예산신청현황 | [공공데이터포털 파일 15160654](https://www.data.go.kr/data/15160654/fileData.do) | 2026 | 49 | 경북 주민참여예산 | 가능 |
-| 한국건강가정진흥원_누리집 국민제안정보 | [공공데이터포털 파일 15153784](https://www.data.go.kr/data/15153784/fileData.do) | 2017~2024 | 36 | 건강가정 국민제안 | 가능 |
 | 전남광주통합특별시_소통인전남 제안광장 | [공공데이터포털 파일 15130550](https://www.data.go.kr/data/15130550/fileData.do) | 2023~2024 | 36 | 전남 도민 제안 | 가능 |
+| 한국건강가정진흥원_누리집 국민제안정보 | [공공데이터포털 파일 15153784](https://www.data.go.kr/data/15153784/fileData.do) | 2017~2024 | 36 | 건강가정 국민제안 | 가능 |
 | 경기도 고양시_주민참여예산 반영사업 | [공공데이터포털 파일 15127194](https://www.data.go.kr/data/15127194/fileData.do) |  | 33 | 고양 주민참여예산 반영사업 | 가능 |
 | 인천광역시 남동구_주민참여예산사업 반영결과 | [공공데이터포털 파일 15087648](https://www.data.go.kr/data/15087648/fileData.do) | 2023 | 30 | 남동구 주민참여예산 반영결과 | 가능 |
 | 전북특별자치도_주민참여예산신청현황 | [공공데이터포털 파일 15160678](https://www.data.go.kr/data/15160678/fileData.do) | 2024~2026 | 25 | 전북 주민참여예산 | 가능 |
@@ -103,7 +103,8 @@
 SELECT i.id, s.name AS source, s.record_kind, CASE WHEN s.share_ok THEN '가능' ELSE '보류' END AS share,
        c.name AS contest, c.host_org, c.audience, i.year, i.award, i.title, i.body, i.category,
        array_to_string(i.used_data, '; ') AS used_data, i.source_url,
-       (SELECT string_agg(x.reason, ', ' ORDER BY x.reason) FROM core.idea_exclusion x WHERE x.idea_id = i.id) AS exclude_reasons
+       (SELECT string_agg(x.reason, ', ' ORDER BY x.reason) FROM core.idea_exclusion x WHERE x.idea_id = i.id) AS exclude_reasons,
+       (SELECT d.canonical_id FROM core.idea_duplicate d WHERE d.idea_id = i.id) AS canonical_id
   FROM core.idea i
   JOIN core.source s ON s.id = i.source_id
   JOIN core.contest c ON c.id = i.contest_id

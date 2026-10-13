@@ -273,7 +273,7 @@ ingest → cards → (1 흔적 → 2 막힌 이유 → 3 바뀐 것 → 시의�
 | 이의·코딩 | `objection`(0007), `coding_sample` |
 | 감사·운영 | `egress_call`, `source_check`, `pipeline_run` |
 | 깔때기 | `core.funnel_stage(as_of)` 함수(0004), `core.revival_candidate` 뷰 |
-| 선별 재료 | `exclusion_reason`·`idea_exclusion`(0012·0014). 필터링 없음. 제목 기준 중복 표시 = 0014에서 폐지 |
+| 선별 재료 | `exclusion_reason`·`idea_exclusion`(0012·0014·0015), `idea_duplicate`(0015). 필터링 없음. 제목만 같은 중복 표시 = 0014에서 폐지 → 0015 내용 기준: `same_body`(공백 제거 본문 50자+ 일치 = 재제출·중복 등록) / `same_entry`(대회명·연도±1·제목 일치 + 소스 다름 = 출품작·수상작·KIPRIS 목록). 대표 1건(공개 허용→본문 길이→수상→연도) 외 = `duplicate_record`. 본문 없고 같은 제목의 다른 아이디어 3건+ = `thin_record` |
 
 주요 규칙(DB 제약 강제):
 - 카드 `full` = LLM 생성 + 해당 호출 감사 행 연결(0003)
