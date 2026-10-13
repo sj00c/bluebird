@@ -13,7 +13,7 @@ export function parsePage(raw: unknown): number {
     ? Math.min(value, MAX_PAGE)
     : 1;
 }
-// 검색어: 제어문자(NUL 등)를 지우고 공백을 정리한 뒤 200자까지. Postgres text에는 NUL이 들어갈 수 없다.
+// 검색어: 제어문자(NUL 등) 제거 → 공백 정리 → 200자 제한. Postgres text = NUL 불가
 export function cleanQuery(raw: unknown): string {
   // eslint-disable-next-line no-control-regex
   return (typeof raw === "string" ? raw : "")

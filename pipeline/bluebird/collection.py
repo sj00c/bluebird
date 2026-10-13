@@ -20,7 +20,9 @@ from . import ingest
 from .egress import Egress, EgressError
 from .sources import ADAPTERS, SourceSpec, file_sha256, load_sources
 
-MAX_DOWNLOAD_BYTES = 32 * 1024 * 1024
+MAX_DOWNLOAD_BYTES = 32 * 1024 * 1024   # 응답 1건·공식 파일 1개
+COLLECT_ADAPTERS = frozenset({"mapped_contest_csv", "kipris_idea_api"})   # 수집기 산출 CSV를 읽는 어댑터
+MAX_FILE_BYTES = 512 * 1024 * 1024      # 수집기 산출 CSV(API 전수 병합분: 서울 ~45MB, 권익위 수백 MB)
 MAX_METADATA_BYTES = 2 * 1024 * 1024
 
 
@@ -99,16 +101,24 @@ def download_data_go(*, source: dict, destination: Path, egress: Egress) -> dict
     return {"url": url, "bytes": len(payload)}
 
 
-def _download(*, source: dict, destination: Path, egress: Egress) -> dict:
-    if source.get("collector") == "data_go_csv":
+def _download(*, source: dict, destination: Path, egress: Egress, previous: Path | None = None) -> dict:
+    collector = source.get("collector")
+    if collector == "data_go_csv":
         return download_data_go(source=source, destination=destination, egress=egress)
-    if source.get("collector") == "science_archive":
+    if collector == "science_archive":
         from .collect_science import download
         return download(source=source, destination=destination, egress=egress)
-    if source.get("collector") == "kidp_awards":
+    if collector == "kidp_awards":
         from .collect_design import download
         return download(source=source, destination=destination, egress=egress)
-    raise CollectionError(f"unknown collector: {source.get('collector')!r}")
+    if collector == "kipris_idea_db":
+        from .collect_kipris import download
+        return download(source=source, destination=destination, egress=egress)
+    from .collect_proposals import COLLECTORS
+    if collector in COLLECTORS:
+        # previous = 마지막 정상 파일. 증분 수집기(권익위)만 병합에 사용
+        return COLLECTORS[collector](source=source, destination=destination, egress=egress, previous=previous)
+    raise CollectionError(f"unknown collector: {collector!r}")
 
 
 def _sources(configs: list[Path], out_dir: Path, only: str | None) -> list[tuple[Path, SourceSpec, dict]]:
@@ -124,8 +134,8 @@ def _sources(configs: list[Path], out_dir: Path, only: str | None) -> list[tuple
                 raise CollectionError(f"duplicate source ID or output filename: {spec.id}")
             ids.add(spec.id)
             files.add(filename)
-            if spec.adapter != "mapped_contest_csv":
-                raise CollectionError(f"source {spec.id}: collection requires mapped_contest_csv")
+            if spec.adapter not in COLLECT_ADAPTERS:
+                raise CollectionError(f"source {spec.id}: collection requires one of {sorted(COLLECT_ADAPTERS)}")
             if spec.public_ok or spec.export_grade != "pending" or spec.policy_approved_by or spec.policy_approved_at:
                 raise CollectionError(f"source {spec.id}: collection must remain unapproved and pending")
             if only is None or spec.id == only:
@@ -148,8 +158,8 @@ def collect_contests(*, configs: list[Path], out_dir: Path, secret_path: Path,
         try:
             with tempfile.TemporaryDirectory(prefix=".contest-", dir=out_dir) as staging:
                 candidate = Path(staging) / spec.path.name
-                metadata = _download(source=raw, destination=candidate, egress=egress)
-                if not candidate.is_file() or not 0 < candidate.stat().st_size <= MAX_DOWNLOAD_BYTES:
+                metadata = _download(source=raw, destination=candidate, egress=egress, previous=spec.path)
+                if not candidate.is_file() or not 0 < candidate.stat().st_size <= MAX_FILE_BYTES:
                     raise CollectionError("collector produced an empty or oversized file")
                 candidate_spec = replace(spec, path=candidate)
                 rows = 0

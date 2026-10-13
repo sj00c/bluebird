@@ -21,6 +21,8 @@ layer = 2
 public_ok = false
 export_grade = "pending"
 record_kind = "contest_award"
+topic = "t"
+share = false
 contest_name = "우수제안"
 [source.columns]
 title = "제안명"

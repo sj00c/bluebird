@@ -1,9 +1,8 @@
-"""`bluebird sources check` — 어떤 데이터가 실제로 불러와지는지 반복 점검(계획 §4, G13).
+"""`bluebird sources check` — 실제 수신 가능 여부 반복 점검(계획 §4, G13).
 
-- 파일 소스: seed 파일 존재·sha256·행 수·첫 행 표본(마스킹 후)·라이선스.
-- 외부 소스: egress로 실제 호출. 키가 없으면 키 없이 불러 401 등 "키 필요" 응답을 확인하고 key_required로,
-  키 환경변수가 있으면 키를 붙여 불러 ok/error로 기록한다. 키 도착 시 같은 명령을 다시 돌리면 된다.
-- 결과는 core.source_check에 1행씩 남고 표로 출력된다. 아이디어 내용은 어떤 점검 호출에도 넣지 않는다.
+- 파일 소스: seed 파일 존재·sha256·행 수·첫 행 표본(마스킹 후)·라이선스
+- 외부 소스: egress 실제 호출. 키 없음 → 무키 호출로 401 등 확인 → key_required. 키 있음 → ok/error. 키 도착 시 재실행
+- 결과: core.source_check 1행 + 표 출력. 점검 호출에 아이디어 내용 금지
 """
 
 from __future__ import annotations
@@ -49,26 +48,33 @@ def _needs_key(r: Response) -> bool:
         "SERVICE_KEY_IS_NULL", "SERVICE KEY IS NOT REGISTERED", "인증키를 입력", "Authentication failed"))
 
 
-def _json_rows(path: list[str], count_path: list[str] | None = None):
+def _step(node, key):
+    """dict 키 또는 list 인덱스 한 단계. 없으면 None."""
+    if isinstance(key, int):
+        return node[key] if isinstance(node, list) and len(node) > key else None
+    return node.get(key) if isinstance(node, dict) else None
+
+
+def _json_rows(path: list, count_path: list | None = None):
     def parse(r: Response, keyed: bool):
         if r.status >= 400 or _needs_key(r):
             return ("key_required" if _needs_key(r) and not keyed else "error"), None, _err_sample(r, keyed)
         d = r.json()
         node = d
         for k in path:
-            node = node.get(k, {}) if isinstance(node, dict) else {}
+            node = _step(node, k)
         items = node if isinstance(node, list) else [node] if node else []
         total = d
         for k in count_path or []:
-            total = total.get(k) if isinstance(total, dict) else None
+            total = _step(total, k)
         return "ok", int(total) if isinstance(total, (int, str)) and str(total).isdigit() else len(items), \
             items[0] if items else None
     return parse
 
 
 def _err_sample(r: Response, keyed: bool) -> object:
-    """키 없이 부른 응답은 앞부분을 남긴다(키가 없으니 되돌아올 키도 없다).
-    키를 붙인 요청의 오류 응답은 본문을 남기지 않는다 — 공급자가 키 일부를 되돌려 주는 경우가 있다."""
+    """무키 응답: 앞부분 기록(반환될 키 없음).
+    키 포함 요청 오류 응답: 본문 미기록(공급자가 키 일부 반환 가능)."""
     return {"http_status": r.status} if keyed else r.text[:200]
 
 
@@ -102,13 +108,23 @@ REMOTES: tuple[Remote, ...] = (
            f"{DATA_GO_KR}/1140100/PublicProposalService2/PublicProposalItem", "이용허락범위 제한 없음",
            key_env=("DATA_GO_KR_KEY",), auth=lambda k: ({"serviceKey": k["DATA_GO_KR_KEY"]}, {}),
            params=(("pageNo", "1"), ("numOfRows", "1"), ("type", "json")), parse=_probe_only),
+    Remote("acrc_open_proposal_15059423", "원본(국민신문고 공개제안, 수집)", "stretch",
+           f"{DATA_GO_KR}/1140100/OpenProposalService2/OpenProposalList", "공공데이터포털 이용정책",
+           key_env=("DATA_GO_KR_KEY",), auth=lambda k: ({"serviceKey": k["DATA_GO_KR_KEY"]}, {}),
+           params=(("firstIndex", "1"), ("recordCountPerPage", "1"), ("regFrom", "20260101"), ("regTo", "20261231")),
+           parse=_json_rows(["resultList"], ["resultCount"])),
+    Remote("gyeonggi_budget_proposals", "원본(경기 주민참여예산, 수집)", "stretch",
+           "https://openapi.gg.go.kr/tbggrpbudgresdntprpbizl", "이용허락범위 제한 없음", key_env=("GG_OPENAPI_KEY",),
+           auth=lambda k: ({"KEY": k["GG_OPENAPI_KEY"]}, {"User-Agent": "Mozilla/5.0"}),
+           params=(("Type", "json"), ("pIndex", "1"), ("pSize", "1")),
+           parse=_json_rows(["tbggrpbudgresdntprpbizl", 1, "row"], ["tbggrpbudgresdntprpbizl", 0, "head", 0, "list_total_count"])),
     Remote("bizinfo_announcement", "공고 매칭(C)", "stretch", "https://www.bizinfo.go.kr/uss/rss/bizinfoApi.do",
            "기업마당 Open API(자체 키)", key_env=("BIZINFO_KEY",), auth=lambda k: ({"crtfcKey": k["BIZINFO_KEY"]}, {}),
            params=(("dataType", "json"), ("searchCnt", "1")), parse=_probe_only),
-    Remote("naver_search_news", "흔적 news_web", "must", "https://openapi.naver.com/v1/search/news.json",
-           "NAVER 검색 API(일 25,000건)", key_env=("NAVER_CLIENT_ID", "NAVER_CLIENT_SECRET"),
-           auth=lambda k: ({}, {"X-Naver-Client-Id": k["NAVER_CLIENT_ID"],
-                                "X-Naver-Client-Secret": k["NAVER_CLIENT_SECRET"]}),
+    Remote("naver_search_news", "흔적 news_web", "must", "https://naverapihub.apigw.ntruss.com/search/v1/news",
+           "NAVER API HUB 검색(월 775,000건, 한시 무료)", key_env=("NAVER_CLIENT_ID", "NAVER_CLIENT_SECRET"),
+           auth=lambda k: ({}, {"X-NCP-APIGW-API-KEY-ID": k["NAVER_CLIENT_ID"],
+                                "X-NCP-APIGW-API-KEY": k["NAVER_CLIENT_SECRET"]}),
            params=(("query", "공공데이터"), ("display", "1")), parse=_json_rows(["items"], ["total"])),
     Remote("kipris_plus_patent", "흔적 ip", "must",
            "https://plus.kipris.or.kr/kipo-api/kipi/patUtiModInfoSearchSevice/getWordSearch",
@@ -139,7 +155,7 @@ def _check_catalog(eg: Egress) -> tuple[str, int | None, object, Response]:
     d = r.json()
     info = d.get("dataSetFileDetailInfo") or {}
     ok = bool(d.get("atchFileId"))
-    # 행 수는 다운로드해야 알 수 있다(주간 snapshot.sh). 여기서는 받을 수 있는지와 갱신 주기만 본다.
+    # 행 수 = 다운로드 필요(주간 snapshot.sh). 여기서는 수신 가능 여부·갱신 주기만
     sample = {k: info.get(k) for k in ("dataNm", "stdrDe", "updtDt", "nextRegistPrarnde")}
     return ("ok" if ok else "error"), None, sample, r
 

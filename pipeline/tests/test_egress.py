@@ -33,7 +33,7 @@ def _ok(req):
 def test_open_source_title_allowed_and_recorded():
     rec = Rec()
     with _eg(_ok, rec) as eg:
-        r = eg.get("trace", "https://openapi.naver.com/v1/search/news.json", fields={"title": ("open", "꽃 배송")})
+        r = eg.get("trace", "https://naverapihub.apigw.ntruss.com/search/v1/news", fields={"title": ("open", "꽃 배송")})
     assert r.status == 200
     assert "%EA%BD%83" in r.json()["url"]  # 값이 쿼리로 나갔다
     c = rec.calls[-1]
@@ -52,7 +52,7 @@ def test_blocked_fields_never_leave(fields, purpose, why):
     sent = []
     rec = Rec()
     with _eg(lambda req: sent.append(req) or _ok(req), rec) as eg, pytest.raises(EgressBlocked, match=why):
-        eg.get(purpose, "https://openapi.naver.com/x", fields=fields)
+        eg.get(purpose, "https://naverapihub.apigw.ntruss.com/x", fields=fields)
     assert sent == []
     assert rec.calls[-1].decision == "blocked"
 

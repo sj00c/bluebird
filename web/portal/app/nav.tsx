@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 
-// 아이디어 상세에서도 작업대 탐색 위치를 유지한다.
+// 아이디어 상세에서도 작업대 탐색 위치 유지
 const TABS: {
   href: string;
   label: string;

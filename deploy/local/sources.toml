@@ -1,13 +1,13 @@
-# 원본 아이디어 소스 목록. file은 seed 디렉터리 기준 상대경로. 파일이 없으면 건너뛴다.
+# 원본 아이디어 소스 목록. file = seed 디렉터리 기준 상대경로. 파일 없으면 건너뛰.
 #
-# public_ok    : 공개 관문. true면 공개 DB로 반영된다. 반드시 policy_approved_by/at(소스 단위 정책 승인)이 있어야 한다.
-# export_grade : 반출 관문. 외부 호출(상용 LLM·흔적 검색)에 이 소스 필드를 보낼 수 있는지.
+# public_ok    : 공개 관문. true → 공개 DB 반영. policy_approved_by/at(소스 단위 정책 승인) 필수
+# export_grade : 반출 관문. 외부 호출(상용 LLM·흔적 검색)에 소스 필드 전송 가능 여부
 #                O = 공개 출처, 허용 필드 반출 가능 / pending = 약관·N2SF 결정 대기(기본 차단) / deny = 반출 금지
-# 공개·반출은 기본 보류. 실제 정책 검토 후 승인자·승인일과 허용 범위를 명시한다.
+# 공개·반출 기본 보류. 정책 검토 후 승인자·승인일·허용 범위 명시
 # record_kind  : 기록 종류. contest_award(수상작) / contest_submission(출품작) / public_proposal(국민·주민 제안) / improvement_proposal(직원 개선제안)
-# exclude_reason: 소스 단위 제외 후보 이유(선택). certified_product(상품화 뒤 받는 인증) / internal_activity(기관 내부 활동) / teaching_case(수업·교육 사례)
-#                record_kind·exclude_reason·대회의 학생 대회 표시(core.contest.audience)·같은 제목 묶음은 전부 선별 재료다.
-#                아이디어마다 core.idea_exclusion에 "뺀다면 이 이유"로 쌓이고, 어떤 이유를 적용할지는 사람이 나중에 고른다. 걸러내지 않는다. docs/IDEA_POOL.md
+# exclude_reason: 소스 단위 제외 후보 이유(선택). certified_product(상품화 후 인증) / internal_activity(기관 내부 활동) / teaching_case(수업·교육 사례)
+#                record_kind·exclude_reason·학생 대회 표시(core.contest.audience)·동일 제목 묶음 = 선별 재료
+#                아이디어별 core.idea_exclusion에 "뺀다면 이 이유" 기록. 적용 이유 = 사람이 추후 선택. 필터링 없음
 
 [[source]]
 id = "gov_startup_prelim_awards"
@@ -20,20 +20,10 @@ layer = 2
 public_ok = true  # 데모용 임시 공개(2026-10-08), 실제 정책 승인 아님
 export_grade = "pending"
 record_kind = "contest_award"
+topic = "공공데이터 활용 창업 아이디어·서비스(예선)"
+share = false
 policy_approved_by = "test-operator"
 policy_approved_at = "2026-10-06T00:00:00+09:00"
-
-[[source]]
-id = "kipris_contest_idea_bulk"
-adapter = "kipris_idea_master"
-file = "kipris_idea_master.csv"
-name = "KIPRIS Plus 공모전 아이디어 벌크(1979~2014)"
-license = "KIPRIS Plus 이용약관 — 공개·외부 전송은 약관 확인 전까지 보류(data.go.kr 15006010 표기 '제한 없음'과 충돌, 10/26 게이트)"
-url = "https://plus.kipris.or.kr"
-layer = 1
-public_ok = false
-export_grade = "pending"
-record_kind = "contest_award"
 
 [[source]]
 id = "gov_startup_final_awards"
@@ -46,6 +36,8 @@ layer = 2
 public_ok = true  # 데모용 임시 공개(2026-10-08), 실제 정책 승인 아님
 export_grade = "pending"
 record_kind = "contest_award"
+topic = "공공데이터 활용 창업 아이디어·서비스(본선)"
+share = true
 policy_approved_by = "test-operator"
 policy_approved_at = "2026-10-07T00:00:00+09:00"
 
@@ -60,6 +52,8 @@ layer = 2
 public_ok = true  # 데모용 임시 공개(2026-10-08), 실제 정책 승인 아님
 export_grade = "pending"
 record_kind = "contest_award"
+topic = "과학전람회·학생발명품 수상작"
+share = true
 policy_approved_by = "test-operator"
 policy_approved_at = "2026-10-07T00:00:00+09:00"
 
@@ -74,6 +68,8 @@ layer = 2
 public_ok = true  # 데모용 임시 공개(2026-10-08), 실제 정책 승인 아님
 export_grade = "pending"
 record_kind = "contest_award"
+topic = "농식품 공공·빅데이터 창업 아이디어"
+share = true
 policy_approved_by = "test-operator"
 policy_approved_at = "2026-10-07T00:00:00+09:00"
 
@@ -88,5 +84,7 @@ layer = 2
 public_ok = true  # 데모용 임시 공개(2026-10-08), 실제 정책 승인 아님
 export_grade = "pending"
 record_kind = "contest_award"
+topic = "공공디자인 국민 아이디어"
+share = true
 policy_approved_by = "test-operator"
 policy_approved_at = "2026-10-07T00:00:00+09:00"

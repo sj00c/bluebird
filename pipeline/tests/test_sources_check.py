@@ -36,7 +36,7 @@ def test_keyless_401_is_key_required_and_audited():
 
     r = check_remote(_eg(h, rec), REM["kstartup_announcement_15125364"])
     assert r["status"] == "key_required" and r["http_status"] == 401 and not r["keyed"]
-    assert "serviceKey" not in str(seen[0].url)  # 키 없으면 키 파라미터도 없다
+    assert "serviceKey" not in str(seen[0].url)  # 키 없음 → 키 파라미터 없음
     assert rec.calls[0].purpose == "source_check" and rec.calls[0].fields_sent == []
 
 

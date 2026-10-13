@@ -1,9 +1,9 @@
-"""공고(C) 신호 — K-Startup 사업공고 15125364만 쓴다(계획 §3.4).
+"""공고(C) 신호 — K-Startup 사업공고 15125364 전용(계획 §3.4).
 
-- 키(DATA_GO_KR_KEY)가 있으면 API로 최근 공고를 적재한다(egress 경유, fields_sent=[]: 아이디어 내용 없음).
-- 키가 없으면 사람이 실제 공고 URL과 제목·기간을 넣는다(G7 대체 경로). K-Startup URL은 egress로 열어 확인한다.
-응답 필드: biz_pbanc_nm(공고명), pbanc_ntrp_nm(공고 기관), pbanc_rcpt_bgng_dt/pbanc_rcpt_end_dt(YYYYMMDD),
-detl_pg_url(상세 URL), pbanc_sn(공고번호), aply_trgt_ctnt(신청 대상 내용). 키 도착 후 첫 응답으로 재확인한다.
+- 키(DATA_GO_KR_KEY) 있음 → API로 최근 공고 적재(egress, fields_sent=[]: 아이디어 내용 없음)
+- 키 없음 → 사람이 공고 URL·제목·기간 입력(G7 대체 경로). K-Startup URL = egress 확인
+- 응답 필드: biz_pbanc_nm(공고명), pbanc_ntrp_nm(기관), pbanc_rcpt_bgng_dt/pbanc_rcpt_end_dt(YYYYMMDD),
+  detl_pg_url(상세 URL), pbanc_sn(공고번호), aply_trgt_ctnt(신청 대상). 키 도착 후 첫 응답으로 재확인
 """
 
 from __future__ import annotations
@@ -17,7 +17,7 @@ from psycopg.types.json import Jsonb
 from . import db, wording
 from .egress import Egress
 
-_URL_HOST = re.compile(r"^https?://([^/:?#@]+)(?::\d+)?(?:[/?#]|$)")  # urllib은 egress만 쓴다
+_URL_HOST = re.compile(r"^https?://([^/:?#@]+)(?::\d+)?(?:[/?#]|$)")  # urllib = egress 전용
 KSTARTUP_URL = "https://apis.data.go.kr/B552735/kisedKstartupService01/getAnnouncementInformation01"
 
 
@@ -30,7 +30,7 @@ def _ymd(s: object) -> date | None:
 
 
 class AnnounceFormatError(ValueError):
-    """응답 형식이 예상과 다름(필드 이름이 바뀌었거나 오류 응답). 0건으로 조용히 넘어가지 않는다."""
+    """응답 형식 불일치(필드명 변경·오류 응답). 0건으로 무시 금지."""
 
 
 def parse_kstartup(payload: dict) -> tuple[list[dict], int]:
@@ -113,7 +113,7 @@ def fetch(*, dsn: str, pages: int = 3, per_page: int = 100, egress: Egress | Non
 
 def add(*, dsn: str, url: str, title: str, org: str | None, apply_from: date | None, apply_to: date | None,
         summary: str | None, by: str, egress: Egress | None = None) -> str:
-    """사람이 실제 K-Startup 공고를 넣는다. URL은 k-startup.go.kr이어야 하고 egress로 열어 200을 확인한다."""
+    """사람 입력 K-Startup 공고. URL = k-startup.go.kr 필수, egress 200 확인."""
     m = _URL_HOST.match(url)
     host = m.group(1).lower() if m else ""
     if not (host == "k-startup.go.kr" or host.endswith(".k-startup.go.kr")):

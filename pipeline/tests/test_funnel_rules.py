@@ -23,7 +23,7 @@ def test_s_rule(scores, kinds, verdict, s):
 
 
 def test_s_threshold_not_rounded_up():
-    # 3.995는 반올림하면 4.0이지만 now가 아니다
+    # 3.995 = 반올림 4.0이나 now 아님
     r = score.compute({"data": 4, "policy": 4, "tech": 4, "regulation": 3.98}, {"dataset_opened"})
     assert r.verdict == "conditional"
 

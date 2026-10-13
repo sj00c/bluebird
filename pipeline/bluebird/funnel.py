@@ -1,10 +1,10 @@
 """되살리기 깔때기 엔진(계획 §3.3–§3.7): 흔적 → 막힌 이유 → 바뀐 것 → S → 검토 → 공개.
 
 원칙
-- AI(규칙·LLM)는 제안만 하고, 공개는 사람 승인(review final + publication)으로만 한다.
-- 원인·바뀐 것·S의 모든 점수에는 근거 URL이 있어야 한다(evidence + x_evidence). 근거 없는 원인은 U.
-- 사람 입력 경로가 항상 있다(키가 없을 때 extractor=human, llm_verdict=human). 사람 입력은 누가 넣었는지 남긴다.
-- 공개될 수 있는 사람 입력 글은 wording.check()를 통과해야 한다.
+- AI(규칙·LLM) = 제안만. 공개 = 사람 승인(review final + publication)만
+- 원인·바뀐 것·S 모든 점수에 근거 URL 필수(evidence + x_evidence). 근거 없는 원인 = U
+- 사람 입력 경로 상시(키 없으면 extractor=human, llm_verdict=human). 입력자 기록
+- 공개 가능 사람 입력 글: wording.check() 통과 필수
 """
 
 from __future__ import annotations
@@ -23,7 +23,7 @@ from .signals.catalog import today_kst
 
 # ----------------------------------------------------------------------------- 공통
 
-KIPRIS_SOURCE = "kipris_contest_idea_bulk"
+KIPRIS_SOURCE = "kipris_idea_api"
 PROFILE_REQUIRED = {
     # full_v1: news_web(NAVER)·ip(KIPRIS Plus)는 키가 있을 때만 필수. 키가 없으면 manual만 필수, external_search=not_done.
     "full_v1": ("news_web", "ip", "manual"),
@@ -111,7 +111,7 @@ def _save_verdict(conn, idea_id: str, profile: str, env=None) -> str:
 
 
 def trace_local(*, dsn: str) -> dict:
-    """kipris_local_v1 로컬 흔적: ip_local(벌크의 특허 연계) + similar_local(코퍼스 안 유사 제목). 외부 호출 없음."""
+    """kipris_local_v1 로컬 흔적: ip_local(아이디어DB의 특허 연계) + similar_local(코퍼스 안 유사 제목). 외부 호출 없음."""
     with db.pipeline_run(dsn, "trace-local") as stats, db.connect(dsn) as conn:
         conn.execute("SELECT set_config('pg_trgm.similarity_threshold', %s, true)", (str(SIMILAR_LOCAL_THRESHOLD),))
         ids = [r[0] for r in conn.execute(
@@ -166,7 +166,7 @@ def trace_pending(*, dsn: str) -> dict:
 
 def trace_manual(*, dsn: str, idea_id: str, result: str, status: str | None, url: str | None, note: str,
                  by: str, item: str = "manual") -> str:
-    """사람이 외부 검색을 직접 하고 결과를 넣는다. found면 근거 URL 필수. status는 최종 분류(선택)."""
+    """사람 직접 외부 검색 결과 입력. found → 근거 URL 필수. status = 최종 분류(선택)."""
     if item not in ("manual", "news_web", "ip"):
         raise ValueError("manual trace item must be manual|news_web|ip")
     if item != "manual" and status is not None:
@@ -200,8 +200,8 @@ CAUSES = ("T", "D", "R", "M", "C", "O", "U")
 
 
 def diagnose_rule(*, dsn: str) -> dict:
-    """규칙 제안: 본문이 스스로 부족 데이터를 밝힌 카드(missing_data)는 원인 D, 근거 = 그 본문 문장 + 원문 URL.
-    1단계(흔적)를 통과한 아이디어만. 사람·LLM 진단은 덮어쓰지 않는다."""
+    """규칙 제안: 카드 missing_data 있음 → 원인 D, 근거 = 해당 본문 문장 + 원문 URL.
+    대상 = 1단계(흔적) 통과 아이디어만. 사람·LLM 진단 덮어쓰기 없음."""
     n = 0
     with db.pipeline_run(dsn, "diagnose-rule") as stats, db.connect(dsn) as conn:
         rows = conn.execute(
@@ -243,7 +243,7 @@ def diagnose_set(*, dsn: str, idea_id: str, cause: str, rationale: str, by: str,
     with db.connect(dsn) as conn:
         _idea(conn, idea_id)
         prev = conn.execute('SELECT "primary" FROM core.diagnosis WHERE idea_id=%s', (idea_id,)).fetchone()
-        if prev is not None and prev[0] != cause:  # 원인이 바뀌면 이전 원인의 근거는 떼어 낸다
+        if prev is not None and prev[0] != cause:  # 원인 변경 → 이전 원인 근거 분리
             conn.execute("DELETE FROM core.x_evidence WHERE target_type='diagnosis' AND target_id=%s", (idea_id,))
         for url, excerpt in evidence:
             _evidence(conn, kind="manual", url=url, title=None, excerpt=excerpt, observed_at=today_kst(),
@@ -290,12 +290,12 @@ def verify_law(egress: Egress, *, mst: str, effective: date) -> tuple[dict, int 
 def change_add(*, dsn: str, kind: str, url: str, title: str, occurred_at: date, by: str,
                summary: str | None = None, ref_id: str | None = None, egress: Egress | None = None,
                law_mst: str | None = None) -> str:
-    """사람이 근거 URL로 바뀐 것(법령 시행·정책·기술·공고)을 넣는다. dataset_opened는 카탈로그 신호로만 생긴다.
+    """사람이 근거 URL로 바뀐 것(법령 시행·정책·기술·공고) 입력. dataset_opened = 카탈로그 신호 전용.
 
-    확인 상태(verify_status)를 남긴다:
-    - law_effective: --law-mst로 국가법령정보 API를 egress로 열어 시행일자를 대조 → api_verified. 깔때기는 이것만 쓴다.
-    - 화이트리스트 호스트 URL: egress로 열어 200이면 fetched, 아니면 거부.
-    - 그 밖의 호스트: attested(사람 진술, 열어 보지 않음)."""
+    verify_status:
+    - law_effective: --law-mst → 국가법령정보 API(egress) 시행일자 대조 → api_verified. 깔때기는 이것만 사용
+    - 화이트리스트 호스트 URL: egress 200 → fetched, 아니면 거부
+    - 그 외 호스트: attested(사람 진술, 미확인)"""
     if kind not in ("law_effective", "policy_news", "tech", "announcement"):
         raise ValueError("kind must be law_effective|policy_news|tech|announcement (dataset_opened는 카탈로그 신호만)")
     wording.check(title, summary)
@@ -374,7 +374,7 @@ def match_candidates(*, dsn: str, per_idea: int = 5, min_sim: float = 0.3) -> di
             seen: dict[str, float] = {}
             for name in names:
                 toks = specific_tokens(name)
-                if len(toks) < 2:  # '사진 정보'처럼 일반어뿐인 이름은 아무 데이터셋에나 붙으므로 후보를 만들지 않는다
+                if len(toks) < 2:  # '사진 정보' 등 일반어만인 이름 = 후보 생성 안 함(과매칭)
                     continue
                 for pk, sim in conn.execute(
                     """SELECT public_data_pk, word_similarity(%s, title) AS sim FROM core.signal_dataset
@@ -410,7 +410,7 @@ def match_candidates(*, dsn: str, per_idea: int = 5, min_sim: float = 0.3) -> di
 
 def match_set(*, dsn: str, change_id: str, idea_id: str, verdict: str, what_changed: list[str], how_now: str,
               by: str) -> int:
-    """사람 판정(llm_verdict=human 또는 yes/partial/no). 바뀐 것의 URL이 이 매칭의 근거가 된다."""
+    """사람 판정(llm_verdict=human 또는 yes/partial/no). 매칭 근거 = 바뀐 것 URL."""
     if verdict not in ("yes", "partial", "no", "human"):
         raise ValueError("verdict must be yes|partial|no|human")
     wording.check(how_now, *what_changed)
@@ -447,8 +447,8 @@ M1_INSTRUCTION = (
 
 
 def match_judge(*, dsn: str, limit: int = 50, egress: Egress | None = None) -> dict:
-    """후보 매칭을 상용 LLM이 판정(키가 있을 때만, egress 경유). 보내는 것은 아이디어 제목·문제와 바뀐 것의
-    제목뿐(이벤트 URL은 보내지 않고 근거로만 남는다). 결과는 제안: status는 candidate 그대로, 사람이 승인한다."""
+    """후보 매칭 LLM 판정(키 있을 때만, egress). 전송 = 아이디어 제목·문제 + 바뀐 것 제목만(이벤트 URL 미전송, 근거만).
+    결과 = 제안. status candidate 유지, 승인 = 사람."""
     prov = llm.provider()
     if prov is None:
         print("[match] judge: key_required (OPENAI_API_KEY/ANTHROPIC_API_KEY 없음) — `match set`으로 사람이 판정")
@@ -505,7 +505,7 @@ def match_judge(*, dsn: str, limit: int = 50, egress: Egress | None = None) -> d
 
 def score_set(*, dsn: str, idea_id: str, scores: dict[str, int | None], evidence: dict[str, str], by: str,
               as_of: date | None = None, _proposed: bool = False) -> score.Score | None:
-    """사람 채점. 점수 있는 항목마다 근거 URL 필수. 바뀐 것의 축은 승인 전 매칭(yes/partial/human)에서 가져온다."""
+    """사람 채점. 점수 항목마다 근거 URL 필수. 바뀐 것 축 = 승인 전 매칭(yes/partial/human)."""
     missing = [k for k, v in scores.items() if v is not None and not evidence.get(k)]
     if missing:
         raise ValueError(f"scored axes need evidence URL: {missing}")
@@ -515,7 +515,7 @@ def score_set(*, dsn: str, idea_id: str, scores: dict[str, int | None], evidence
         conn.execute("SELECT id FROM core.idea WHERE id=%s FOR UPDATE", (idea_id,))
         if _proposed and conn.execute(
                 "SELECT 1 FROM core.timeliness WHERE idea_id=%s LIMIT 1", (idea_id,)).fetchone():
-            return None  # 자동 채점은 날짜가 달라도 기존 사람/자동 채점을 덮어쓰지 않는다.
+            return None  # 자동 채점 = 기존 사람/자동 채점 덮어쓰기 없음(날짜 무관)
         kinds = {r[0] for r in conn.execute(
             """SELECT c.kind FROM core.change_match m JOIN core.condition_change c ON c.id = m.change_id
                  JOIN core.diagnosis d ON d.idea_id = m.idea_id
@@ -609,7 +609,7 @@ def approve(*, dsn: str, idea_id: str, by: str, note: str | None = None) -> dict
 
 
 def reject(*, dsn: str, idea_id: str, by: str, note: str) -> None:
-    """반려: 아이디어·바뀐 것 공개를 모두 철회하고, 승인된 매칭은 후보로, weekly_top에서 뺀다."""
+    """반려: 아이디어·바뀐 것 공개 철회, 승인 매칭 → 후보, weekly_top 제외."""
     wording.check(note)
     with db.connect(dsn) as conn:
         if conn.execute("SELECT 1 FROM core.idea WHERE id=%s AND retired_at IS NULL", (idea_id,)).fetchone() is None:

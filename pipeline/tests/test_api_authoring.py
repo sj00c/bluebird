@@ -137,6 +137,7 @@ def test_raw_queue_exposes_ingested_originals_without_cards(api_role, fresh, tmp
         '[[source]]\nid="official"\nadapter="mapped_contest_csv"\nfile="official.csv"\n'
         'name="공식 제안"\nlicense="l"\nlayer=2\npublic_ok=false\nexport_grade="pending"\n'
         'record_kind="contest_award"\n'
+        'topic="t"\nshare=false\n'
         '[source.columns]\ntitle="제안명"\nbody=["설명"]\n', encoding="utf-8")
     source = tmp_path / "official.csv"
     source.write_text(

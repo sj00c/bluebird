@@ -1,6 +1,7 @@
-"""상용 LLM 호출 공통부. 실제 전송은 egress.llm만 한다(본문 생성·반출 검사·감사).
+"""상용 LLM 호출 공통부. 실제 전송 = egress.llm만(본문 생성·반출 검사·감사).
 
-공급자는 키가 있는 쪽을 쓴다(BB_LLM_PROVIDER로 고정 가능). 키가 없으면 None → 호출자는 규칙·사람 경로로 간다.
+- 공급자 = 키 있는 쪽(BB_LLM_PROVIDER로 고정 가능)
+- 키 없음 → None → 호출자는 규칙·사람 경로
 """
 
 from __future__ import annotations

@@ -1,8 +1,8 @@
-"""Public National Science Museum award/project list metadata, not attachments.
+"""국립중앙과학관 공개 수상·작품 목록 메타데이터 수집. 첨부파일 제외.
 
-The two boards have different year-search fields. Follow their published ten-row
-pagination for each configured year; never infer a record's year from that filter.
-Personal columns are used transiently for masking and never written to CSV.
+- 게시판 2개 = 연도 검색 필드 상이. 설정 연도별 공식 10행 페이지네이션 준수
+- 레코드 연도 = 필터로 추정 금지
+- 개인 컬럼 = 마스킹용 임시 사용, CSV 미기록
 """
 from __future__ import annotations
 
@@ -104,7 +104,7 @@ class _ArchivePage(HTMLParser):
 
 
 def download(*, source: dict, destination: Path, egress: Egress) -> dict:
-    """Write a deterministic candidate CSV; collection wrapper validates/replaces it."""
+    """결정적 후보 CSV 작성. 검증·교체 = 수집 래퍼."""
     url = source["url"]
     if url not in _BOARDS:
         raise ValueError("science_archive requires a verified National Science Museum board URL")
@@ -169,7 +169,7 @@ def download(*, source: dict, destination: Path, egress: Egress) -> dict:
                 if _NON_PROJECT.search(title):
                     skipped += 1
                     continue
-                # Treat each name separately even where the official cell uses line breaks.
+                # 공식 셀 줄바꿈 = 이름별 분리 처리
                 for people in (teacher, recipient):
                     title = mask_team(title, ",".join(re.split(r"[\s,，、·/]+", people)))
                 key = f"{board}:{record_id}"

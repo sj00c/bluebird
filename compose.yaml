@@ -1,7 +1,7 @@
-# 파랑새 로컬 데모: DB 1개(원본·공개 DB 2개) + 백엔드 API + 포털 + 콘솔. 처리 작업은 명령으로 실행한다.
+# 파랑새 로컬 데모: DB 1개(원본·공개 DB 2개) + 백엔드 API + 포털 + 콘솔. 처리 작업 = 명령 실행.
 #   팀원 테스트 : ./demo.sh init && ./demo.sh cycle      (전부 Docker)
 #   개발        : ./demo.sh up db  후 uv run / npm run dev (README.md)
-# 키·비밀번호는 .env 하나(.env.example 참고). 런타임 파일(원본 seed·익명화 키·콘솔 토큰)은 .runtime/.
+# 키·비밀번호 = .env(.env.example 참고). 런타임 파일(원본 seed·익명화 키·콘솔 토큰) = .runtime/
 name: bluebird
 
 volumes:
@@ -28,6 +28,9 @@ x-backend-env: &backend-env
   KIPRIS_PLUS_KEY: ${KIPRIS_PLUS_KEY:-}
   LAW_OC: ${LAW_OC:-}
   BIZINFO_KEY: ${BIZINFO_KEY:-}
+  SEOUL_OPENAPI_KEY: ${SEOUL_OPENAPI_KEY:-}
+  GG_OPENAPI_KEY: ${GG_OPENAPI_KEY:-}
+  BB_ACRC_CALL_BUDGET: ${BB_ACRC_CALL_BUDGET:-9000}
 
 services:
   db:
@@ -57,6 +60,7 @@ services:
       - ./deploy/local/contest-sources.toml:/config/contest-sources.toml:ro
       - ./deploy/local/science-contest-sources.toml:/config/science-contest-sources.toml:ro
       - ./deploy/local/design-contest-sources.toml:/config/design-contest-sources.toml:ro
+      - ./deploy/local/api-sources.toml:/config/api-sources.toml:ro
       - ./.runtime/seed:/seed:ro
       - ./.runtime/secrets:/secrets:ro
       - ./.runtime/export:/export

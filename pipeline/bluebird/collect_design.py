@@ -1,4 +1,4 @@
-"""KIDP's public award gallery: project metadata only, never people or images."""
+"""KIDP 공개 수상 갤러리 수집. 프로젝트 메타데이터만. 인물·이미지 제외."""
 from __future__ import annotations
 
 import csv
@@ -40,7 +40,7 @@ def _record(item: dict, group: str) -> dict[str, str] | None:
         return None
     people = _text(item.get("apply_nm"))
     title = mask_team(title, ",".join(re.split(r"[\s,，、·/]+", people)))
-    # Labels reproduce the official gallery's winners.js, not an inferred ranking.
+    # 라벨 = 공식 갤러리 winners.js 그대로. 추정 순위 아님
     selected = "선정" if str(item.get("tp_awards")) == "1" else "입선"
     prize = _text(item.get("new_prize_nm"))
     if prize:

@@ -1,8 +1,8 @@
-"""이의 제기 왕복(G11)과 2인 독립 코딩 표본.
+"""이의 제기 왕복(G11) + 2인 독립 코딩 표본.
 
-이의: 국민 → 포털 → 공개 DB inbox.objection(INSERT만) → 처리 작업이 pull(건수·크기 상한, 검증) →
-core.objection 저장 → 접수함에서 삭제 → 콘솔에서 사람이 처리 → 수용이면 공개 철회(필요하면 원본까지 공개 중단) →
-다음 publish 주기에 반영. 포털은 원본 DB에 접속하지 않는다.
+이의 흐름: 국민 → 포털 → 공개 DB inbox.objection(INSERT만) → 처리 작업 pull(건수·크기 상한, 검증) →
+core.objection 저장 → 접수함 삭제 → 콘솔 사람 처리 → 수용 시 공개 철회(필요 시 원본까지 공개 중단) →
+다음 publish 주기 반영. 포털 = 원본 DB 접속 없음.
 """
 
 from __future__ import annotations
@@ -140,7 +140,7 @@ def make_sample(*, dsn: str, size: int = 100, seed: int, sample_id: str | None =
             strata.setdefault(st, []).append(idea_id)
         rng = random.Random(seed)
         quota = {s: max(1, round(size * len(v) / len(pop))) for s, v in strata.items()}
-        while sum(quota.values()) > size:  # 반올림 초과분은 큰 층에서 뺀다
+        while sum(quota.values()) > size:  # 반올림 초과분 = 큰 층에서 차감
             big = max((s for s in quota if quota[s] > 1), key=lambda s: quota[s])
             quota[big] -= 1
         while sum(quota.values()) < size:

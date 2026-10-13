@@ -1,8 +1,8 @@
-"""적재 시점 식별정보 처리. 팀명 원문은 이 모듈에서 소비되고 DB에 저장되지 않는다.
+"""적재 시점 식별정보 처리. 팀명 원문: 이 모듈에서만 소비, DB 저장 없음.
 
-- 익명 ID: HMAC(익명화 비밀키, source + 원천키). 비밀키는 처리 작업 비밀 경로(.runtime/secrets)에만 있고 DB에는 없다.
-- 팀명 마스킹: 본문에 팀명이 그대로 들어간 경우 ○○로 치환한다.
-- team_kind: 흔적 판정 규칙(파일럿 step1/step2)에 필요한 팀명 유형 신호. 팀명 자체는 넘기지 않는다.
+- 익명 ID: HMAC(익명화 비밀키, source + 원천키). 비밀키 = .runtime/secrets 전용, DB 없음
+- 팀명 마스킹: 본문 내 팀명 → ○○
+- team_kind: 흔적 판정 규칙(파일럿 step1/step2)용 팀명 유형 신호. 팀명 자체 전달 없음
 """
 
 from __future__ import annotations
@@ -57,8 +57,8 @@ _MASK_CHAR = re.compile(r"[○*]")
 
 
 def name_variants(team: str) -> list[str]:
-    """팀명·성명 원문에서 본문에 나올 수 있는 형태들(긴 것부터, 2자 이상). mask_team과 G10 감사가 같은 형태를 쓴다.
-    부분 마스킹된 팀('이**(브레싱스)')도 브랜드 부분은 형태로 남는다."""
+    """팀명·성명 → 본문 출현 가능 형태(긴 순, 2자 이상). mask_team·G10 감사 공용.
+    부분 마스킹 팀('이**(브레싱스)'): 브랜드 부분 유지."""
     if not team:
         return []
     cleaned = clean_team(team)
@@ -89,12 +89,32 @@ def find_name(text: str | None, variants: list[str]) -> bool:
 
 
 def mask_team(text: str, team: str) -> str:
-    """text 안의 팀명(원형·정리형)을 ○○로 치환. 2자 미만 팀명은 오탐이 커서 치환하지 않는다."""
+    """text 내 팀명(원형·정리형) → ○○. 2자 미만 팀명 = 오탐 → 치환 안 함."""
     if not text:
         return text
     for v in name_variants(team):
         text = re.sub(_name_re(v), MASK, text, flags=re.IGNORECASE)
     return text
+
+
+# 시민제안 본문 연락처·'제안자 성명' 형태. 적재 전 고정 치환
+_PHONE = re.compile(r"(?<!\d)(?:01[016789]|0[2-6]\d?)[-.\s]?\d{3,4}[-.\s]?\d{4}(?!\d)")
+_EMAIL = re.compile(r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}")
+# 명시 구분자 있는 형태만('제안자: 홍길동', '작성자(홍길동)', '신청인 홍길동 외 3명'). '제안자 본인이' 같은 일반 문장 보존
+_ROLE = r"(제안자|신청인|작성자|제안인|대표자|성명)"
+_PROPOSER = re.compile(
+    rf"{_ROLE}\s*[:：]\s*[가-힣]{{2,4}}(?![가-힣])"
+    rf"|{_ROLE}\s*[(（]\s*[가-힣]{{2,4}}\s*[)）]"
+    rf"|{_ROLE}\s+[가-힣]{{2,4}}(?=\s*(?:외|등)\s*\d*\s*(?:명|인))")
+
+
+def mask_contacts(text: str | None) -> str | None:
+    """전화·이메일·'제안자 홍길동' → 고정 토큰. 본문 나머지 원문 유지."""
+    if not text:
+        return text
+    text = _PHONE.sub("[전화]", text)
+    text = _EMAIL.sub("[이메일]", text)
+    return _PROPOSER.sub(lambda m: f"{next(g for g in m.groups() if g)} {MASK}", text)
 
 
 def _maskable_token(t: str) -> bool:

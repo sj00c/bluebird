@@ -1,6 +1,8 @@
-"""bluebird CLI. 경로·DSN은 인자 또는 환경변수(BB_*)로 받는다.
+"""bluebird CLI.
 
-처리 작업(./demo.sh job …)이 실행한다. 외부 호출은 egress 모듈(허용 호스트·기록)로만 나간다.
+- 경로·DSN: 인자 또는 환경변수(BB_*)
+- 실행 주체: 처리 작업(./demo.sh job …)
+- 외부 호출: egress 모듈만(허용 호스트·기록)
 """
 
 from __future__ import annotations
@@ -47,7 +49,9 @@ def main(argv: list[str] | None = None) -> int:
     i.add_argument("--force", action="store_true", help="같은 파일도 다시 적재")
     i.add_argument("--allow-retire", action="store_true", help="절반 넘게 사라지는 퇴역 허용")
     i.add_argument("--policy-only", action="store_true",
-                   help="파일 없이 레지스트리 정책(공개·반출·record_kind·exclude_reason)만 core.source에 맞추고 선별 재료(학생 대회·중복·제외 후보 이유) 재계산. --config 반복 가능")
+                   help="파일 없이 레지스트리 정책(공개·반출·record_kind·exclude_reason)만 동기화 + 선별 재료 재계산. --config 반복 가능")
+    i.add_argument("--retire", metavar="SOURCE_ID",
+                   help="레지스트리에서 뺀 소스의 유효 아이디어 전부 퇴역(행·사람 판단 유지, 공개·내보내기·마커에서 제외)")
 
     co = sub.add_parser("collect", help="공식 공모·제안 원천 수집(분석·공개 승인 없음)")
     cos = co.add_subparsers(dest="collection", required=True)
@@ -81,8 +85,7 @@ def main(argv: list[str] | None = None) -> int:
     ex1 = exs.add_parser("xlsx", help="아이디어 전체 + 선별 재료를 엑셀 한 파일로")
     ex1.add_argument("--dsn", default=_env("BB_DSN"))
     ex1.add_argument("--out", type=Path, required=True)
-    ex1.add_argument("--include-held", action="store_true", help="공개·외부 전송 보류 소스(KIPRIS·과학관·KIDP)도 포함 — 내부 공유용")
-    ex2 = exs.add_parser("provenance", help="어느 소스에서 언제 얼마나 받았는지 Markdown")
+    ex2 = exs.add_parser("provenance", help="docs/DATA.md: 소스별 사이트·연도·건수·주제 표")
     ex2.add_argument("--dsn", default=_env("BB_DSN"))
     ex2.add_argument("--config", type=Path, action="append", help="레지스트리 TOML, 반복 가능; 기본 BB_SOURCES+BB_CONTEST_SOURCES")
     ex2.add_argument("--out", type=Path, required=True)
@@ -121,7 +124,7 @@ def main(argv: list[str] | None = None) -> int:
     x.add_argument("--seed", type=int, required=True)
     x.add_argument("--sample-id")
 
-    x = sub.add_parser("kappa", help="G3 κ: 표본 2인 코딩 일치도(표본이 없으면 --sample·--seed로 만든다)")
+    x = sub.add_parser("kappa", help="G3 κ: 표본 2인 코딩 일치도. 표본 없으면 --sample·--seed로 생성")
     x.add_argument("--dsn", default=_env("BB_DSN"))
     x.add_argument("--sample", type=int, default=100, help="표본 크기")
     x.add_argument("--seed", type=int, required=True)
@@ -150,7 +153,7 @@ def main(argv: list[str] | None = None) -> int:
     x.add_argument("--week", type=date.fromisoformat)
     x.add_argument("--top-target", type=int, default=kpi.TOP_TARGET, help="G5 목표(E3 승인 시 조정)")
     x.add_argument("--kappa-sample", help="G3 기준 표본 id(없으면 100건 이상 중 최근)")
-    # G10 성명 일치 대조: 원본 파일·익명화 키(처리 작업에만 있음). 없으면 G10은 진행 중으로 남는다.
+    # G10 성명 대조: 원본 파일·익명화 키 필요(처리 작업 전용). 없으면 G10 진행 중
     x.add_argument("--config", type=Path, default=_p("BB_SOURCES"))
     x.add_argument("--seed-dir", type=Path, default=_p("BB_SEED_DIR"))
     x.add_argument("--secret", type=Path, default=_p("BB_ANON_SECRET"))
@@ -178,7 +181,10 @@ def main(argv: list[str] | None = None) -> int:
     elif a.cmd == "ingest":
         if a.config is None and _p("BB_SOURCES"):
             a.config = [_p("BB_SOURCES")]
-        if a.policy_only:
+        if a.retire:
+            _require(ap, a, "dsn")
+            ingest.retire_source(dsn=a.dsn, source_id=a.retire)
+        elif a.policy_only:
             _require(ap, a, "dsn", "config")
             ingest.sync_policy(dsn=a.dsn, configs=a.config)
         else:
@@ -261,7 +267,7 @@ def main(argv: list[str] | None = None) -> int:
     elif a.cmd == "export":
         _require(ap, a, "dsn")
         if a.export_cmd == "xlsx":
-            print("[export]", export.xlsx(dsn=a.dsn, out=a.out, include_held=a.include_held))
+            print("[export]", export.xlsx(dsn=a.dsn, out=a.out))
         else:
             cfgs = a.config or [p for p in (_p("BB_SOURCES"), _p("BB_CONTEST_SOURCES")) if p]
             print("[export]", export.provenance(dsn=a.dsn, configs=cfgs, out=a.out))
@@ -335,7 +341,7 @@ def _funnel_parsers(sub) -> None:
     x.add_argument("--title", required=True)
     x.add_argument("--occurred-at", type=date.fromisoformat, required=True)
     x.add_argument("--summary")
-    x.add_argument("--law-mst", help="law_effective: 국가법령정보 법령일련번호(MST). 시행일자를 API로 대조한다")
+    x.add_argument("--law-mst", help="law_effective: 국가법령정보 법령일련번호(MST). 시행일자 API 대조")
     x.add_argument("--by", **by)
 
     mt = sub.add_parser("match", help="3 바뀐 것 매칭").add_subparsers(dest="sub", required=True)

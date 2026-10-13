@@ -66,7 +66,7 @@ def test_kappa_status_follows_human_coding(fresh, monkeypatch):
         _code(c, ids[3], "T", "R")
         c.commit()
     r = kpi.kappa(dsn=fresh, sample_id="k4")
-    assert r["status"] == kpi.PROGRESS  # 다 코딩했어도 100건 미만 표본(파일럿)은 통과로 치지 않는다
+    assert r["status"] == kpi.PROGRESS  # 전량 코딩해도 100건 미만 표본(파일럿) = 미통과
     monkeypatch.setattr(kpi, "KAPPA_MIN_SAMPLE", 4)
     r = kpi.kappa(dsn=fresh, sample_id="k4")
     # po=3/4, pe=(R:1·2 + D:1·1 + M:1·1 + T:1·0)/16=4/16 → κ=(0.75-0.25)/0.75
@@ -93,7 +93,7 @@ def test_goldset_matches_by_year_title_and_reports_pending(fresh):
     assert kpi.goldset(dsn=fresh, gold_csv=gold)["status"] == kpi.KEY
     funnel.trace_manual(dsn=fresh, idea_id=IID, result="none", status=None, url=None, note="없음", by="t")
     r = kpi.goldset(dsn=fresh, gold_csv=gold)
-    assert (r["decided"], r["status"]) == (1, kpi.PROGRESS)  # 기준선이 없으면 회귀를 판정하지 않는다
+    assert (r["decided"], r["status"]) == (1, kpi.PROGRESS)  # 기준선 없음 → 회귀 판정 없음
     r = kpi.goldset(dsn=fresh, gold_csv=gold, baseline=True)
     assert (r["decided"], r["confusion"]["none"]["none"], r["macro_f1"], r["status"]) == (1, 1, 100.0, kpi.PASS)
     assert kpi.goldset(dsn=fresh, gold_csv=gold)["status"] == kpi.PASS  # 기준선 대비 하락 없음
@@ -101,7 +101,7 @@ def test_goldset_matches_by_year_title_and_reports_pending(fresh):
     funnel.trace_manual(dsn=fresh, idea_id=IID, result="found", status="realized", url="https://a.kr/x",
                         note="사업화", by="t")
     assert kpi.goldset(dsn=fresh, gold_csv=gold)["status"] == kpi.FAIL
-    with psycopg.connect(fresh) as c:  # 팀명은 어디에도 남지 않는다
+    with psycopg.connect(fresh) as c:  # 팀명 잔존 없음
         assert c.execute("SELECT count(*) FROM core.pipeline_run WHERE stats::text LIKE '%팀가나다%'").fetchone()[0] == 0
     with pytest.raises(ValueError, match="not in"):
         kpi.goldset(dsn=fresh, gold_csv="year,item,final\n2019,제목,maybe\n")
@@ -150,6 +150,12 @@ def test_top20_and_report(fresh):
     # G10: 이름 대조를 안 했으면 진행 중, 이름이 남아 있으면 FAIL
     assert rep()["G10"]["status"] == kpi.PROGRESS
     assert rep(names={**clean, "name_matches": 1})["G10"]["status"] == kpi.FAIL
+    # G10: 허용 목록에서 뺀 호스트(RETIRED_HOSTS)의 과거 허용 행 = 위반 아님. 목록 밖 호스트 = 위반
+    with psycopg.connect(fresh) as c:
+        for host in ("openapi.naver.com", "evil.example"):
+            c.execute("INSERT INTO core.egress_call(purpose, dest_host, path_template, decision) VALUES ('source_check', %s, '/', 'allowed')", (host,))
+    g10 = rep(names=clean)["G10"]
+    assert g10["status"] == kpi.FAIL and "off_whitelist_calls 1" in g10["value"]
     # G13: must 소스가 egress에서 막히면(blocked) FAIL, 범위 밖(BLOCKED 목록)은 무시, 키 대기는 통과
     from bluebird.sources_check import REMOTES
     with psycopg.connect(fresh) as c:
@@ -178,7 +184,7 @@ def test_top20_and_report(fresh):
 
 @db_only
 def test_name_leaks_end_to_end(fresh, tmp_path):
-    """원본 파일을 같은 익명화 키로 다시 읽어 공개 글에 이름이 남았는지 센다. 파일이 없거나 키가 다르면 대조 안 됨."""
+    """원본 파일 동일 익명화 키 재독 → 공개 글 이름 잔존 집계. 파일 없음·키 불일치 → 대조 안 됨."""
     import csv
 
     from bluebird import cards, db, ingest, publish
@@ -189,7 +195,8 @@ def test_name_leaks_end_to_end(fresh, tmp_path):
     cfg = tmp_path / "sources.toml"
     cfg.write_text('[[source]]\nid="d"\nadapter="design_idea_csv"\nfile="d.csv"\nname="n"\nlicense="l"\nlayer=2\n'
                    'public_ok=true\nexport_grade="O"\npolicy_approved_by="t"\npolicy_approved_at="2026-10-06"\n'
-                   'record_kind="contest_award"\n',
+                   'record_kind="contest_award"\n'
+        'topic="t"\nshare=false\n',
                    encoding="utf-8")
     with (tmp_path / "d.csv").open("w", encoding="utf-8", newline="") as f:
         w = csv.writer(f)
@@ -214,7 +221,7 @@ def test_name_leaks_end_to_end(fresh, tmp_path):
         c.execute("UPDATE publish.idea SET body = body || ' 문의: 최준영' WHERE title = '경계를 잇다'")
         c.commit()
     assert leaks()["name_matches"] == 1
-    with psycopg.connect(pub) as c:  # 공개 대상인데 publish에 없는 아이디어가 있으면 다 본 것이 아니다
+    with psycopg.connect(pub) as c:  # 공개 대상인데 publish에 없는 아이디어 존재 → 전수 대조 아님
         c.execute("DELETE FROM publish.idea WHERE title = '휠체어 충전 테이블'")
         c.commit()
     partial = leaks()
@@ -255,7 +262,7 @@ def test_report_g3_uses_100_sample_not_pilot(fresh):
     from bluebird import publish
     publish.push(core_dsn=fresh, publish_dsn=pub)
     g3 = {r["goal"]: r for r in kpi.report(dsn=fresh, publish_dsn=pub)}["G3"]
-    assert g3["status"] == kpi.HUMAN and "100건 표본 없음" in g3["value"]  # 파일럿 표본은 기준이 아니다
+    assert g3["status"] == kpi.HUMAN and "100건 표본 없음" in g3["value"]  # 파일럿 표본 = 기준 아님
     g3 = {r["goal"]: r for r in kpi.report(dsn=fresh, publish_dsn=pub, kappa_sample="nope")}["G3"]
     assert g3["status"] == kpi.HUMAN and "nope 없음" in g3["value"]
 

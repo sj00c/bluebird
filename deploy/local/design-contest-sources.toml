@@ -15,6 +15,8 @@ layer = 2
 public_ok = false
 export_grade = "pending"
 record_kind = "contest_award"
+topic = "우수디자인(GD) 선정 상품"
+share = false
 exclude_reason = "certified_product"
 host_org = "한국디자인진흥원"
 design_group = "1"
@@ -41,6 +43,8 @@ layer = 2
 public_ok = false
 export_grade = "pending"
 record_kind = "contest_award"
+topic = "대한민국디자인전람회 수상작"
+share = false
 host_org = "한국디자인진흥원"
 design_group = "2"
 [source.columns]
@@ -66,6 +70,8 @@ layer = 2
 public_ok = false
 export_grade = "pending"
 record_kind = "contest_award"
+topic = "청소년 디자인 수상작"
+share = false
 host_org = "한국디자인진흥원"
 design_group = "3"
 [source.columns]

@@ -57,8 +57,7 @@ export async function explore(q: string): Promise<{
   }
 }
 // ---------------------------------------------------------------- 카드 상세 보조: 비슷한 아이디어 수·관련 공고
-// 제목 trigram 유사도(0.3 이상). 같은 아이디어는 뺀다. 결과는 공고 매칭 화면(/match?q=제목)과 같은 기준이 아니라
-// 제목끼리의 비교라서 "비슷한 제목"으로만 표시한다.
+// 제목 trigram 유사도(≥0.3). 동일 아이디어 제외. 공고 매칭(/match?q=제목)과 기준 다름 → 제목 간 비교 = "비슷한 제목"으로만 표시
 export async function similarCount(
   id: string,
   title: string,

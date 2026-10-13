@@ -1,7 +1,8 @@
 """원본 아이디어 파일 소스 어댑터.
 
-파일은 backend-jobs의 seed 디렉터리(egress로 받은 것 또는 반입한 것)에 둔다. sources.toml이 소스 목록이다.
-각 어댑터는 award_record 행 iterator를 만든다. award_record에는 팀명·성명·원천키가 없다(AWARD_RECORD_COLUMNS 고정).
+- 파일 위치: backend-jobs seed 디렉터리(egress 수신 또는 반입)
+- 소스 목록: sources.toml
+- 어댑터 = award_record 행 iterator. 팀명·성명·원천키 없음(AWARD_RECORD_COLUMNS 고정)
 """
 
 from __future__ import annotations
@@ -47,8 +48,12 @@ class SourceSpec:
     require_any: list[str] = field(default_factory=list)
     row_equals: dict[str, str] = field(default_factory=dict)
     exclude: dict[str, list[str]] = field(default_factory=dict)
-    # 기록 종류. 선별 재료로 core.source에 둔다(거르지 않는다). docs/IDEA_POOL.md
+    # 기록 종류. 선별 재료(core.source), 필터링 없음
     record_kind: str | None = None
+    # 한 줄 주제. docs/DATA.md 표
+    topic: str = ""
+    # 외부 공유 가능(원 기관 이용조건 확인됨). 공유 xlsx share 열
+    share: bool | None = None
     # 소스 단위 제외 후보 이유(core.exclusion_reason 중 basis=source인 것). 없으면 None.
     exclude_reason: str | None = None
 
@@ -85,12 +90,18 @@ def load_sources(config: Path, seed_dir: Path) -> list[SourceSpec]:
                 row_equals=s.get("row_equals", {}),
                 exclude=s.get("exclude", {}),
                 record_kind=s.get("record_kind"),
+                topic=s.get("topic", ""),
+                share=s.get("share"),
                 exclude_reason=s.get("exclude_reason"),
             )
         )
         spec = specs[-1]
         if spec.record_kind not in RECORD_KINDS:
             raise ValueError(f"source {spec.id}: record_kind must be one of {sorted(RECORD_KINDS)}")
+        if not spec.topic.strip():
+            raise ValueError(f"source {spec.id}: topic is required")
+        if spec.share is None:
+            raise ValueError(f"source {spec.id}: share (true/false) is required")
         if spec.exclude_reason is not None and spec.exclude_reason not in SOURCE_EXCLUDE_REASONS:
             raise ValueError(f"source {spec.id}: exclude_reason must be one of {sorted(SOURCE_EXCLUDE_REASONS)}")
         if spec.adapter == "mapped_contest_csv":
@@ -141,38 +152,28 @@ def awards_csv(spec: SourceSpec, secret: bytes, names: dict[str, list[str]] | No
             }
 
 
-def _host_from_institutions(inst: str) -> str:
-    hosts = [p.split(":", 1)[1] for p in (inst or "").split(";") if p.startswith("주최:")]
-    return ", ".join(hosts)
+def kipris_idea_api(spec: SourceSpec, secret: bytes, names: dict[str, list[str]] | None = None) -> Iterator[dict]:
+    """KIPRIS Plus 아이디어DB API 수집 CSV(collect_kipris.py). 성명 필드 원래 없음. extra = ipc·patent_applno(흔적 ip_local)."""
+    from .collect_kipris import FIELDS
 
-
-def kipris_idea_master(spec: SourceSpec, secret: bytes, names: dict[str, list[str]] | None = None) -> Iterator[dict]:
-    """KIPRIS 공모전 아이디어 idea_master.csv(02_kipris_bulk 로더 산출물). 팀·개인 컬럼이 원래 없다."""
-    with spec.path.open(encoding="utf-8-sig", newline="") as f:
-        for r in csv.DictReader(f):
-            year = _year(r["CNTST_YEAR"])
-            yield {
-                "idea_id": anon_id(secret, spec.id, f"{r['CNTST_ID']}-{r['IDEA_SEQ']}", year),
-                "source_id": spec.id,
-                "contest_name": _norm(r["CNTST_NM"]),
-                "host_org": _host_from_institutions(r.get("INSTITUTIONS", "")),
-                "year": year,
-                "award": _norm(r.get("AWARD_NM")) if _norm(r.get("AWARD_NM")) not in ("", "-") else None,
-                "title": _norm(r["IDEA_NM"])[:300],
-                "body": (r.get("IDEA_CONT_TXT") or "").strip() or None,
-                "used_data": [],
-                "category": _norm(r.get("TECH_CLSS")) or None,
-                "team_kind": "empty",
-                "source_url": _norm(r.get("ORGCP_DOC_URL")) or None,
-                "extra": {
-                    "ipc": [x for x in (r.get("IPC") or "").split(";") if x],
-                    "patent_applno": [x for x in (r.get("PATENT_APPLNO") or "").split(";") if x],
-                },
-            }
+    for r in _read_csv(spec.path, required_headers=set(FIELDS)):
+        title = _norm(r["title"])
+        if not title:
+            continue
+        year = _year(r["year"])
+        yield _record(
+            spec, secret, r["key"], title=title[:300], year=year,
+            contest_name=_norm(r["contest"]) or spec.contest_name, host_org=_norm(r["host"]) or spec.host_org,
+            award=_norm(r["award"]) or None, category=_norm(r["category"]) or None,
+            body=(r["body"] or "").strip() or None,
+            source_url=_norm(r["source_url"]) or spec.url or None,
+            extra={"ipc": [x for x in r["ipc"].split(";") if x],
+                   "patent_applno": [x for x in r["patent_applno"].split(";") if x]},
+        )
 
 
 def _keep_names(names: dict[str, list[str]] | None, idea_id: str, raw: str) -> None:
-    """G10 성명 일치 감사용: 이 아이디어의 팀명·성명 형태를 호출자가 준 메모리 dict에만 담는다(DB·파일에 쓰지 않음)."""
+    """G10 성명 일치 감사용: 팀명·성명 형태 → 호출자 메모리 dict만(DB·파일 기록 없음)."""
     if names is not None and (v := audit_variants(raw)):
         names.setdefault(idea_id, []).extend(v)
 
@@ -221,13 +222,16 @@ class _StableKeys:
         return base if k == 0 else f"{base}#{k}"
 
 
-# 원본 파일에 내용 대신 들어 있는 안내 문구. 본문·활용 데이터로 취급하지 않는다.
+# 원본 파일 내 안내 문구(내용 아님). 본문·활용 데이터 제외
 _PLACEHOLDERS = frozenset({"수정 내용 반영 예정", "-", "없음", "해당없음"})
 
 
 def _text(s: str | None) -> str | None:
     s = (s or "").strip()
     return None if not s or _norm(s) in _PLACEHOLDERS else s
+
+
+_CONTROL = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f]")   # 제어문자(탭·줄바꿈 제외). 원본에 섞여 오면 xlsx 기록 불가
 
 
 def _record(spec: SourceSpec, secret: bytes, key: str, **kw) -> dict:
@@ -237,7 +241,7 @@ def _record(spec: SourceSpec, secret: bytes, key: str, **kw) -> dict:
         "year": None, "award": None, "title": "", "body": None, "used_data": [], "category": None,
         "team_kind": "empty", "source_url": spec.url or None, "extra": {},
     }
-    rec.update(kw)
+    rec.update({k: _CONTROL.sub("", v) if isinstance(v, str) else v for k, v in kw.items()})
     return rec
 
 
@@ -277,7 +281,7 @@ def startup_final_xlsx(spec: SourceSpec, secret: bytes, names: dict[str, list[st
 def science_museum_csv(spec: SourceSpec, secret: bytes, names: dict[str, list[str]] | None = None) -> Iterator[dict]:
     """국립중앙과학관 수상작(대회명, 주제, 소속명, 제목, 지도교사, 수상자, 수상명).
 
-    지도교사·수상자(성명)·소속명(학교)은 레코드에 넣지 않는다. 이름은 제목 마스킹과 G10 감사(names, 메모리)에만 쓴다.
+    지도교사·수상자(성명)·소속명(학교): 레코드 제외. 이름 = 제목 마스킹·G10 감사(names, 메모리) 전용.
     """
     key = _StableKeys()
     for r in _read_csv(spec.path):
@@ -324,8 +328,8 @@ def mafra_contest_csv(spec: SourceSpec, secret: bytes, names: dict[str, list[str
 
 
 def design_idea_csv(spec: SourceSpec, secret: bytes, names: dict[str, list[str]] | None = None) -> Iterator[dict]:
-    """공공디자인 국민아이디어공모 수상작(등록번호, 연도, 포상, 수상자, 제목, 내용). 수상자 성명은 레코드에 넣지 않고
-    본문 마스킹과 G10 감사(names, 메모리)에만 쓴다."""
+    """공공디자인 국민아이디어공모 수상작(등록번호, 연도, 포상, 수상자, 제목, 내용).
+    수상자 성명: 레코드 제외. 본문 마스킹·G10 감사(names, 메모리) 전용."""
     for r in _read_csv(spec.path):
         name = _norm(r.get("수상자"))
         title = _norm(mask_team(r["제목"], name))
@@ -453,7 +457,7 @@ def mapped_contest_csv(spec: SourceSpec, secret: bytes,
 
 ADAPTERS = {
     "awards_csv": awards_csv,
-    "kipris_idea_master": kipris_idea_master,
+    "kipris_idea_api": kipris_idea_api,
     "startup_final_xlsx": startup_final_xlsx,
     "science_museum_csv": science_museum_csv,
     "mafra_contest_csv": mafra_contest_csv,

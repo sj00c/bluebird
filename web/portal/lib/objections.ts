@@ -2,7 +2,7 @@ import "server-only";
 import { pool } from "./connection";
 import type { ObjectionKind } from "./types";
 
-// bb_portal은 inbox를 SELECT할 수 없으므로 RETURNING 없이 INSERT만 한다.
+// bb_portal = inbox SELECT 불가 → RETURNING 없이 INSERT만
 // 아이디어가 없으면 false.
 export async function insertObjection(o: {
   ideaId: string;

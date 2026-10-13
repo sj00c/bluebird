@@ -1,0 +1,148 @@
+# OpenAPI 소스(키 필요). 수집기 = pipeline/bluebird/collect_proposals.py(제안), collect_kipris.py(KIPRIS). 실측 2026-10-13.
+# 키 = .env(SEOUL_OPENAPI_KEY, DATA_GO_KR_KEY, GG_OPENAPI_KEY, KIPRIS_PLUS_KEY). 키 없음 = 수집 실패(기존 파일 유지).
+# 제안자 성명·연락처·답변·첨부 미기록. 본문 내 전화·이메일·'제안자: 성명' = 고정 치환.
+# 공개·반출 = 전부 보류(pending). 원본 라이선스 = 제한 없음(서울·경기), 공공데이터 이용정책(권익위).
+
+# 28,811건(2013~2026). 접수 본문 6섹션 + 선정 정보(2,658) 조인 → award 선정/통폐합 선정.
+[[source]]
+id = "seoul_budget_proposals"
+adapter = "mapped_contest_csv"
+collector = "seoul_budget"
+file = "seoul_budget_proposals.csv"
+name = "서울특별시 시민참여예산사업 접수정보(열린데이터광장 OA-15412, 선정 OA-15414 조인)"
+license = "이용허락범위 제한 없음"
+url = "https://data.seoul.go.kr/dataList/OA-15412/A/1/datasetView.do"
+layer = 2
+public_ok = false
+export_grade = "pending"
+record_kind = "public_proposal"
+topic = "서울 시민참여예산 제안사업(접수·선정)"
+share = true
+contest_name = "서울시 시민참여예산"
+host_org = "서울특별시"
+[source.columns]
+key = "key"
+title = "title"
+year = "year"
+award = "award"
+category = "category"
+body = ["body"]
+
+# 국민신문고 공개제안. 연 1~3만건, 조회창 ≤1년. 건별 조회 필요 → 일 한도(개발계정 10,000) 안에서 증분 수집.
+# acrc_from_year~acrc_to_year 범위를 최신 연도부터 채움. BB_ACRC_CALL_BUDGET(기본 9000)마다 1회 실행.
+[[source]]
+id = "acrc_open_proposals"
+adapter = "mapped_contest_csv"
+collector = "acrc_open_proposal"
+dataset_id = "15059423"
+file = "acrc_open_proposals.csv"
+name = "국민권익위원회 국민신문고 공개제안(공공데이터포털 15059423)"
+license = "공공데이터포털 이용정책 — 개발단계 서비스키"
+url = "https://www.data.go.kr/data/15059423/openapi.do"
+layer = 2
+public_ok = false
+export_grade = "pending"
+record_kind = "public_proposal"
+topic = "국민신문고 공개제안(중앙·지방 정책)"
+share = true
+contest_name = "국민신문고 공개제안"
+host_org = "국민권익위원회"
+acrc_from_year = 2015
+acrc_to_year = 2026
+[source.columns]
+key = "key"
+title = "title"
+year = "year"
+category = "category"
+body = ["body"]
+
+# 4,138건(2020~2025). 본문 없음. 선정여부 + 편성사업명(선정분). 브라우저 UA 필수.
+[[source]]
+id = "gyeonggi_budget_proposals"
+adapter = "mapped_contest_csv"
+collector = "gg_budget"
+file = "gyeonggi_budget_proposals.csv"
+name = "경기도 주민참여예산 주민제안사업(경기데이터드림 tbggrpbudgresdntprpbizl)"
+license = "이용허락범위 제한 없음(상업적 이용 허용·콘텐츠 변경 불가)"
+url = "https://openapi.gg.go.kr/tbggrpbudgresdntprpbizl"
+layer = 2
+public_ok = false
+export_grade = "pending"
+record_kind = "public_proposal"
+topic = "경기 주민참여예산 제안사업"
+share = true
+contest_name = "경기도 주민참여예산"
+host_org = "경기도"
+[source.columns]
+title = "title"
+year = "year"
+award = "award"
+category = "category"
+body = ["body"]
+
+# 613건(2012~2022). 시민이 낸 법령·제도 개선 제안. 현황·문제점 + 개선방안 본문. 첨부 파일명(FILEORINM)·진행 비고 미기록.
+[[source]]
+id = "seoul_law_proposals"
+adapter = "mapped_contest_csv"
+collector = "seoul_law_proposal"
+file = "seoul_law_proposals.csv"
+name = "서울특별시 법령·제도 개선 아이디어 제안(열린데이터광장 OA-15748)"
+license = "공공누리 제1유형(출처표시)"
+url = "https://data.seoul.go.kr/dataList/OA-15748/S/1/datasetView.do"
+layer = 2
+public_ok = false
+export_grade = "pending"
+record_kind = "public_proposal"
+topic = "법령·제도 개선 제안"
+share = true
+contest_name = "서울시 법령·제도 개선 제안"
+host_org = "서울특별시"
+[source.columns]
+key = "key"
+title = "title"
+year = "year"
+category = "category"
+body = ["body"]
+
+# 20,126건(2017-10~). 제목·분야·공식 상세 URL만. 본문 = 상세 페이지(미수집). url = 상세 페이지 호스트(record URL 검증용).
+[[source]]
+id = "seoul_free_suggestions"
+adapter = "mapped_contest_csv"
+collector = "seoul_free_suggestion"
+file = "seoul_free_suggestions.csv"
+name = "상상대로 서울 자유제안(열린데이터광장 OA-2563)"
+license = "공공누리 제1유형(출처표시)"
+url = "https://idea.seoul.go.kr/"
+layer = 2
+public_ok = false
+export_grade = "pending"
+record_kind = "public_proposal"
+topic = "서울 시민 자유제안(교통·환경·건강·주택)"
+share = true
+contest_name = "상상대로 서울 자유제안"
+host_org = "서울특별시"
+[source.columns]
+key = "key"
+title = "title"
+year = "year"
+category = "category"
+source_url = "source_url"
+
+# KIPRIS Plus 아이디어DB OpenAPI 전수(38,563건, 1957~2015). 벌크 zip 대체(2026-10-13). 1회 수집 = 387회 호출(월 무료 1,000회).
+# 라이선스 = KIPRIS Plus 이용약관(공개·외부 전송 보류, 10/26 게이트). source_url = 원 공모전 상세(science.go.kr 등).
+[[source]]
+id = "kipris_idea_api"
+adapter = "kipris_idea_api"
+collector = "kipris_idea_db"
+file = "kipris_idea_api.csv"
+name = "KIPRIS Plus 공모전 아이디어DB(ideaDBInfo)"
+license = "KIPRIS Plus 이용약관 — 공개·외부 전송은 약관 확인 전까지 보류(data.go.kr 15006010 표기 '제한 없음'과 충돌, 10/26 게이트)"
+url = "https://plus.kipris.or.kr/portal/data/util/DBII_000000000000228/view.do?menuNo=210007&subTab=SC002"
+layer = 1
+public_ok = false
+export_grade = "pending"
+record_kind = "contest_award"
+topic = "공모전 아이디어(발명·과학, 특허 연계)"
+share = false
+contest_name = "KIPRIS 공모전 아이디어DB"
+host_org = "한국특허정보원"

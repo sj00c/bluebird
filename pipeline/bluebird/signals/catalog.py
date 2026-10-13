@@ -1,12 +1,12 @@
 """바뀐 것 D 신호의 이벤트 쪽: 공공데이터포털 목록개방현황(15062804) 스냅샷과 diff (계획 §3.4).
 
-- 스냅샷 #0 = 우리가 처음 받은 목록. 그 안의 행은 모두 portal_registered(포털 등록일만 표기).
+- 스냅샷 #0 = 최초 수신 목록. 전 행 portal_registered(포털 등록일만 표기)
 - 이후 스냅샷에서 처음 나타난 데이터셋:
-    · (org_code, title_norm)이 이전 행과 같으면 재등록 → rereg_of 지정, 신규로 세지 않음
+    · (org_code, title_norm) 이전 행과 동일 → 재등록, rereg_of 지정, 신규 미집계
     · registered_at ≥ 기준 스냅샷일 − 7일 이면 observed_new("파랑새 관측 신규")
-    · 아니면 reappeared(오래전에 등록됐는데 이번에 목록에 다시 나타남, 약한 근거)
-- observed_new·reappeared는 core.condition_change(kind='dataset_opened')를 만든다.
-날짜만으로 과거의 부재를 주장하지 않는다(금지 문구는 wording.py). 판별은 missing_data 의미 일치 + 판정 + 사람 승인으로 한다.
+    · 그 외 reappeared(과거 등록, 목록 재출현. 약한 근거)
+- observed_new·reappeared → core.condition_change(kind='dataset_opened') 생성
+- 날짜만으로 과거 부재 주장 금지(금지 문구 = wording.py). 판별 = missing_data 의미 일치 + 판정 + 사람 승인
 """
 
 from __future__ import annotations

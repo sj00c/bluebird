@@ -1,17 +1,27 @@
-/reference/
+# 올리지 않는 것 — 원본 데이터·인수인계 자료(수상자 이름 포함, 별도 전달)
 /data/
+/reference/
+/parangsae-src*/
 /parangsae-src.zip
+*.tgz
+
+# 올리지 않는 것 — 비밀값. 양식(.env.example)만 올림
 .env
 !.env.example
 *.env.local
+
+# 올리지 않는 것 — 실행 중 생성물(시드 CSV·익명화 키·콘솔 토큰·export xlsx·로그)
+/.runtime/
+
+# 올리지 않는 것 — 빌드·도구 캐시
 __pycache__/
 .venv/
 .pytest_cache/
 node_modules/
 .next/
-/.runtime/
 *.tsbuildinfo
 next-env.d.ts
 /.gjc/
 .DS_Store
-/parangsae-src/
+
+# 올리는 것(명시): 코드(pipeline/·web/·deploy/·demo.sh·compose.yaml), 레지스트리 TOML, docs/(DATA.md·ARCHITECTURE.md·diagrams/), README, .env.example

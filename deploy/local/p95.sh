@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # 화면2(주제·공고 넣기) pg_trgm 조회 p95 측정(G8 must 대체: < 300 ms).
-# 포털 → 공개 DB 전 구간을 잰다. 초당 5건으로 보낸다.
+# 포털 → 공개 DB 전 구간 측정. 초당 5건
 # 사용: deploy/local/p95.sh [반복 수=8]  결과: .runtime/p95-<날짜>.txt
 set -euo pipefail
 cd "$(dirname "$0")/../.."

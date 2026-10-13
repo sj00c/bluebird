@@ -1,6 +1,7 @@
 """원본 적재: seed 파일 → 마스킹·익명 ID → core DB.
 
-소스별 ingest_run을 남기고, 같은 파일(sha256)이 이미 성공 적재됐으면 건너뛴다.
+- 소스별 ingest_run 기록
+- 동일 파일(sha256) 성공 적재 이력 → 건너뜀
 """
 
 from __future__ import annotations
@@ -43,21 +44,21 @@ def _validate(r: dict, spec: SourceSpec) -> None:
 def upsert_source(conn, spec: SourceSpec, body_present: bool | None) -> None:
     conn.execute(
         """INSERT INTO core.source AS existing (id, name, license, url, layer, public_ok, export_grade, body_present,
-                                    policy_approved_by, policy_approved_at, record_kind, exclude_reason)
-           VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+                                    policy_approved_by, policy_approved_at, record_kind, exclude_reason, share_ok)
+           VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
            ON CONFLICT (id) DO UPDATE SET name=EXCLUDED.name, license=EXCLUDED.license, url=EXCLUDED.url,
              layer=EXCLUDED.layer, public_ok=EXCLUDED.public_ok, export_grade=EXCLUDED.export_grade,
              body_present=COALESCE(%s, existing.body_present), policy_approved_by=EXCLUDED.policy_approved_by,
              policy_approved_at=EXCLUDED.policy_approved_at, record_kind=EXCLUDED.record_kind,
-             exclude_reason=EXCLUDED.exclude_reason, updated_at=now()""",
+             exclude_reason=EXCLUDED.exclude_reason, share_ok=EXCLUDED.share_ok, updated_at=now()""",
         (spec.id, spec.name, spec.license, spec.url, spec.layer, spec.public_ok, spec.export_grade,
          body_present if body_present is not None else False,
-         spec.policy_approved_by, spec.policy_approved_at, spec.record_kind, spec.exclude_reason, body_present),
+         spec.policy_approved_by, spec.policy_approved_at, spec.record_kind, spec.exclude_reason, spec.share, body_present),
     )
 
 
 def classify_contests(conn) -> int:
-    """아직 미확인(unknown)인 대회에 이름 근거로 초·중·고 학생 대회 표시를 붙인다. 사람이 고친 값은 건들지 않는다. docs/IDEA_POOL.md"""
+    """unknown 대회에 이름 기반 초·중·고 학생 대회 표시. 사람 수정값 유지."""
     return conn.execute(
         """WITH u AS (UPDATE core.contest SET audience = core.contest_audience(name)
                       WHERE audience = 'unknown' AND core.contest_audience(name) <> 'unknown' RETURNING 1)
@@ -66,11 +67,10 @@ def classify_contests(conn) -> int:
 
 
 def refresh_markers(conn) -> dict:
-    """선별 재료 재계산: 대회 학생 표시 → 같은 제목 묶음 → 제외 후보 이유. 어느 것도 아이디어를 거르지 않는다."""
+    """선별 재료 재계산: 대회 학생 표시 → 제외 후보 이유. 필터링 없음."""
     classified = classify_contests(conn)
-    dups = conn.execute("SELECT core.refresh_idea_dup()").fetchone()[0]
     reasons = conn.execute("SELECT core.refresh_idea_exclusion()").fetchone()[0]
-    return {"contests_classified": classified, "dup_rows": dups, "exclusion_rows": reasons}
+    return {"contests_classified": classified, "exclusion_rows": reasons}
 
 
 def _apply(conn, spec: SourceSpec, rows, run_id: int, *, allow_retire: bool = False) -> dict:
@@ -139,8 +139,8 @@ def _apply(conn, spec: SourceSpec, rows, run_id: int, *, allow_retire: bool = Fa
 
 
 def sync_policy(*, dsn: str, configs: list[Path]) -> dict:
-    """파일 없이 레지스트리의 정책 필드(공개·반출·기록 종류·제외 후보 이유)만 core.source에 맞추고 선별 재료를 다시 계산한다.
-    이미 적재된 소스만 갱신한다(새 소스는 적재가 만든다). 수집(collect) 소스는 파일이 seed에 없어 이 길만 있다."""
+    """파일 없이 레지스트리 정책 필드(공개·반출·기록 종류·제외 후보 이유)만 core.source 동기화 + 선별 재료 재계산.
+    대상 = 기적재 소스만(신규 소스 = 적재가 생성). 수집(collect) 소스 = seed 파일 없음 → 이 경로만."""
     with db.pipeline_run(dsn, "policy") as stats, db.connect(dsn) as conn:
         known = {r[0] for r in conn.execute("SELECT id FROM core.source")}
         synced, skipped = [], []
@@ -157,6 +157,24 @@ def sync_policy(*, dsn: str, configs: list[Path]) -> dict:
     print(f"[policy] synced {len(synced)} sources, markers {markers}"
           + (f", not yet ingested: {skipped}" if skipped else ""))
     return {"synced": synced, "skipped": skipped, **markers}
+
+
+def retire_source(*, dsn: str, source_id: str) -> dict:
+    """레지스트리에서 제거한 소스의 유효 아이디어 전부 퇴역. 행·카드·사람 판단 = 유지(공개·내보내기·선별 재료에서만 제외).
+    재적재 시 같은 ID = retired_at 해제. 대체 소스(예: 벌크 → API)는 별도 source_id → 별도 ID."""
+    with db.pipeline_run(dsn, "retire") as stats, db.connect(dsn) as conn:
+        if not conn.execute("SELECT 1 FROM core.source WHERE id=%s", (source_id,)).fetchone():
+            raise IngestError(f"unknown source {source_id}")
+        retired = conn.execute(
+            "WITH r AS (UPDATE core.idea SET retired_at=now(), updated_at=now()"
+            "            WHERE source_id=%s AND retired_at IS NULL RETURNING 1) SELECT count(*) FROM r", (source_id,),
+        ).fetchone()[0]
+        conn.execute("UPDATE core.source SET public_ok=false, updated_at=now() WHERE id=%s", (source_id,))
+        markers = refresh_markers(conn)
+        conn.commit()
+        stats.update({"source": source_id, "retired": retired, **markers})
+    print(f"[retire] {source_id}: {retired} ideas retired, markers {markers}")
+    return {"source": source_id, "retired": retired, **markers}
 
 
 def ingest(*, dsn: str, config: Path, seed_dir: Path, secret_path: Path, only: str | None = None,

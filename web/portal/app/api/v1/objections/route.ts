@@ -70,7 +70,7 @@ function respond(
   return seeOther(`/ideas/${ideaId}?objection=error#objection`);
 }
 
-// 상대 경로 Location: 컨테이너 안 주소(0.0.0.0:3000)가 아니라 브라우저가 연 nginx 주소 기준으로 이동한다.
+// 상대 경로 Location: 컨테이너 주소(0.0.0.0:3000) 아닌 브라우저 nginx 주소 기준 이동
 function seeOther(location: string) {
   return new NextResponse(null, {
     status: 303,

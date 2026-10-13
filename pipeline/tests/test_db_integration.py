@@ -1,4 +1,4 @@
-"""DB 통합 테스트. BB_TEST_DSN(빈 pgvector DB, superuser)이 있을 때만 실행한다.
+"""DB 통합 테스트. 실행 조건 = BB_TEST_DSN(빈 pgvector DB, superuser).
 
     docker run -d --rm --name bb-testdb -e POSTGRES_PASSWORD=t -p 55432:5432 pgvector/pgvector:pg16
     BB_TEST_DSN=postgresql://postgres:t@localhost:55432/postgres uv run pytest tests/test_db_integration.py
@@ -71,7 +71,7 @@ def test_catalog_tiers_and_reregistration(fresh, tmp_path):
     assert got == {"1": "portal_registered", "2": "portal_registered", "3": "observed_new", "4": "reappeared",
                    "5": "observed_new:1", "6": "observed_new"}
     assert changes == {"3", "4", "6"}
-    # 같은 파일은 다시 적재하지 않는다
+    # 동일 파일 재적재 없음
     assert catalog.import_snapshot(dsn=fresh, path=s1, taken_at=date(2026, 10, 19)) == {"skipped": True}
 
 
@@ -131,7 +131,7 @@ def test_publish_swap(fresh):
         assert schemas == {"publish"}
         assert c.execute("SELECT count(*) FROM meta.snapshot_log").fetchone()[0] == 2
         assert c.execute("SELECT has_table_privilege('bb_portal','publish.idea','SELECT')").fetchone()[0]
-        # 승인 안 된 카드 내용(problem)은 나가지 않는다
+        # 미승인 카드 내용(problem) 미반출
         assert c.execute("SELECT problem FROM publish.idea").fetchone()[0] is None
 
 
@@ -145,6 +145,7 @@ def test_ingest_keeps_body_metadata_on_unchanged_and_failed_attempts(fresh, tmp_
         '[[source]]\nid="official"\nadapter="mapped_contest_csv"\nfile="official.csv"\n'
         'name="공식 제안"\nlicense="l"\nlayer=2\npublic_ok=false\nexport_grade="pending"\n'
         'record_kind="contest_award"\n'
+        'topic="t"\nshare=false\n'
         '[source.columns]\ntitle="제안명"\nbody=["설명"]\n', encoding="utf-8")
     source = tmp_path / "official.csv"
     source.write_text("제안명,설명\n빗물 회수,지붕의 빗물을 저장하는 장치\n", encoding="utf-8")
@@ -172,7 +173,8 @@ def test_ingest_retires_vanished_rows_and_cards_follow(fresh, tmp_path):
     (tmp_path / "sources.toml").write_text(
         '[[source]]\nid="d"\nadapter="design_idea_csv"\nfile="d.csv"\nname="n"\nlicense="l"\nlayer=2\n'
         'public_ok=true\nexport_grade="O"\npolicy_approved_by="t"\npolicy_approved_at="2026-10-06"\n'
-        'record_kind="contest_award"\n',
+        'record_kind="contest_award"\n'
+        'topic="t"\nshare=false\n',
         encoding="utf-8")
 
     def write(rows):
@@ -268,7 +270,7 @@ def test_funnel_end_to_end_human_path(fresh, tmp_path):
     funnel.diagnose_set(dsn=fresh, idea_id=iid, cause="R", rationale="비행 규제",
                         evidence=[("https://www.law.go.kr/x", "비행 승인")], by="t")
     assert stage()[2] is True
-    # 종류 불일치(R 아이디어 ↔ 데이터 개방)는 만들 수 없다
+    # 종류 불일치(R 아이디어 ↔ 데이터 개방) 생성 불가
     with psycopg.connect(fresh) as c:
         c.execute("INSERT INTO core.condition_change (id, kind, ref_id, occurred_at, url, title)"
                   " VALUES ('dataset:1','dataset_opened','1','2020-01-01','https://www.data.go.kr/data/1','d')")
@@ -298,9 +300,9 @@ def test_funnel_end_to_end_human_path(fresh, tmp_path):
     funnel.match_set(dsn=fresh, change_id=cid, idea_id=iid, verdict="yes", what_changed=["배송 허용"],
                      how_now="이제 배송 사업 신청 가능", by="t")
     assert stage()[3] is True
-    # 바뀐 것 날짜가 as_of 스냅샷 다음 스냅샷 이후면 그 시점 기준으로는 통과하지 않는다
+    # 바뀐 것 날짜 > as_of 다음 스냅샷 → 해당 시점 기준 미통과
     with psycopg.connect(fresh) as c:
-        # 스냅샷 0(10-06)의 기준일은 다음 스냅샷(10-07). 그날 이후에 일어난 바뀐 것은 스냅샷 0 기준으로 통과하지 않는다
+        # 스냅샷 0(10-06) 기준일 = 다음 스냅샷(10-07). 그 이후 바뀐 것 = 스냅샷 0 기준 미통과
         c.execute("UPDATE core.condition_change SET occurred_at='2026-10-07' WHERE id=%s", (cid,))
         c.execute("INSERT INTO core.catalog_snapshot VALUES (1,'2026-10-07','f','x',0,1)")
         assert c.execute("SELECT s3 FROM core.funnel_stage(0) WHERE idea_id=%s", (iid,)).fetchone()[0] is False
@@ -312,14 +314,14 @@ def test_funnel_end_to_end_human_path(fresh, tmp_path):
                           evidence={"regulation": "https://www.law.go.kr/x", "tech": "https://a.kr"}, by="t")
     assert sc.verdict == "now"
     assert stage()[4] is True
-    # 다시 채점하면 근거도 바뀐다(이전 근거 연결이 남지 않는다)
+    # 재채점 → 근거 교체(이전 근거 연결 제거)
     funnel.score_set(dsn=fresh, idea_id=iid, scores={"regulation": 5, "tech": 4},
                      evidence={"regulation": "https://www.law.go.kr/x", "tech": "https://a.kr/v2"}, by="t")
     with psycopg.connect(fresh) as c:
         assert sorted(r[0] for r in c.execute(
             "SELECT e.url FROM core.x_evidence x JOIN core.evidence e ON e.id=x.evidence_id"
             " WHERE x.target_type='timeliness'")) == ["https://a.kr/v2", "https://www.law.go.kr/x"]
-    # 같은 URL을 두 축 근거로 써도 축마다 근거가 따로 생긴다(공개 가드가 막지 않게). 채점자 이름은 근거에 없다.
+    # 동일 URL 두 축 근거 → 축별 근거 행 별도(공개 가드 통과). 채점자 이름 근거에 없음
     funnel.score_set(dsn=fresh, idea_id=iid, scores={"regulation": 5, "tech": 4},
                      evidence={"regulation": "https://www.law.go.kr/x", "tech": "https://www.law.go.kr/x"},
                      by="scorer-kim")
@@ -340,11 +342,11 @@ def test_funnel_end_to_end_human_path(fresh, tmp_path):
     with psycopg.connect(pub) as c:
         url = c.execute("SELECT url FROM publish.change").fetchone()[0]
         ev = c.execute("SELECT count(*) FROM publish.evidence").fetchone()[0]
-        # v2: S 근거(채점 축마다 1개)가 공개되고 evidence 행이 실재한다
+        # v2: S 근거(채점 축당 1개) 공개 + evidence 행 실재
         tl_ev = c.execute("SELECT t.n_scored, cardinality(t.evidence_ids), (SELECT count(*) FROM publish.evidence e"
                           " WHERE e.id = ANY(t.evidence_ids)) FROM publish.timeliness t").fetchone()
     assert url.startswith("https://www.law.go.kr/") and ev >= 4 and tl_ev == (2, 2, 2)
-    with psycopg.connect(pub) as c:  # 채점자(by)는 공개되지 않는다
+    with psycopg.connect(pub) as c:  # 채점자(by) 비공개
         assert c.execute("SELECT count(*) FROM publish.evidence WHERE concat(title, excerpt) LIKE '%%scorer-kim%%'"
                          ).fetchone()[0] == 0
     rep = funnel.report(dsn=fresh)
@@ -356,7 +358,7 @@ def test_funnel_end_to_end_human_path(fresh, tmp_path):
     assert stage()[5:] == (False, False)
     res = publish.push(core_dsn=fresh, publish_dsn=pub)
     assert (res["diagnosis"], res["change"], res["timeliness"], res["weekly_top"]) == (0, 0, 0, 0)
-    # 다시 승인하면 공개, 이어서 반려하면 아이디어·바뀐 것·weekly_top 모두 내려간다
+    # 재승인 → 공개, 이후 반려 → 아이디어·바뀐 것·weekly_top 전부 내림
     funnel.approve(dsn=fresh, idea_id=iid, by="t")
     funnel.compute_top(dsn=fresh, week=date(2026, 10, 12))
     res = publish.push(core_dsn=fresh, publish_dsn=pub)
@@ -374,7 +376,7 @@ def test_funnel_end_to_end_human_path(fresh, tmp_path):
                          (iid,)).fetchone()[0] == 1  # 이전 원인(R)의 근거는 떨어졌다
 
 def test_s6_needs_applied_snapshot_and_future_change_does_not_pass(fresh):
-    """push가 공개 DB에 반영되지 않으면(applied_at 없음) 6단계가 아니다. 시행일이 미래인 바뀐 것은 3단계를 통과하지 않는다."""
+    """push 미반영(applied_at 없음) → 6단계 아님. 미래 시행일 바뀐 것 → 3단계 미통과."""
     from bluebird import funnel
 
     with psycopg.connect(fresh) as c:
@@ -422,7 +424,7 @@ def test_s6_needs_applied_snapshot_and_future_change_does_not_pass(fresh):
     with pytest.raises(publish.PublishError, match="fewer evidence than scored axes"):
         publish.push(core_dsn=fresh, publish_dsn=_pub_db())
 
-    # 예전 형식 S 근거(채점자 이름이 excerpt에 있음)는 다시 채점할 때까지 공개하지 않는다
+    # 구 형식 S 근거(excerpt에 채점자 이름) = 재채점까지 비공개
     funnel.score_set(dsn=fresh, idea_id=iid, scores={"policy": 4, "tech": 4},
                      evidence={"policy": "https://a.kr/p", "tech": "https://a.kr/t"}, by="t")
     funnel.approve(dsn=fresh, idea_id=iid, by="t")
@@ -483,12 +485,12 @@ def test_match_judge_llm_path(fresh, monkeypatch):
         row = c.execute("SELECT llm_verdict, status, how_now FROM core.change_match").fetchone()
         assert row == ("partial", "candidate", "배차 정보로 대기시간을 알린다")
         assert c.execute("SELECT count(*) FROM core.egress_call WHERE purpose='llm'").fetchone()[0] == 1
-    assert "https://www.data.go.kr" not in sent[0]  # 이벤트 URL은 보내지 않는다
+    assert "https://www.data.go.kr" not in sent[0]  # 이벤트 URL 미전송
 
 
 def test_cards_llm_path_fallback_and_full_check(fresh, tmp_path, monkeypatch):
-    """P1: 성공 → full + egress_call 연결, 전송 실패 → 규칙(local_extract)으로 남고 배치 계속, 본문 바뀌면 다시 만든다.
-    DB도 full ⇒ llm + egress_call_id를 강제한다."""
+    """P1: 성공 → full + egress_call 연결 / 전송 실패 → 규칙(local_extract) 유지, 배치 계속 / 본문 변경 → 재생성.
+    DB: full ⇒ llm + egress_call_id 강제."""
     import json as _json
 
     import httpx
@@ -528,7 +530,7 @@ def test_cards_llm_path_fallback_and_full_check(fresh, tmp_path, monkeypatch):
         md = c.execute("SELECT missing_data FROM core.idea_card WHERE idea_id='ID-2019-aaaaaaaaaa'").fetchone()[0]
         audited = c.execute("SELECT count(*) FROM core.egress_call WHERE purpose='llm'").fetchone()[0]
     assert got == {"ID-2019-aaaaaaaaaa": "full:llm:true", "ID-2019-bbbbbbbbbb": "local_extract:rule:false"}
-    assert md[0]["name"] == "저상버스 배차 데이터" and audited == 2  # 실패한 호출도 감사 행이 남는다
+    assert md[0]["name"] == "저상버스 배차 데이터" and audited == 2  # 실패 호출도 감사 행 기록
     # 본문이 바뀌면 LLM 카드도 다시 만든다(본문이 비면 title_only)
     with psycopg.connect(fresh) as c:
         c.execute("UPDATE core.idea SET body=NULL WHERE id='ID-2019-aaaaaaaaaa'")
@@ -566,7 +568,7 @@ def test_only_eligible_matches_are_approved_and_published(fresh):
     publish.push(core_dsn=fresh, publish_dsn=pub)
     with psycopg.connect(pub) as c:
         assert [r[0] for r in c.execute("SELECT url FROM publish.change")] == ["https://a.kr/now"]
-    # 승인된 뒤 강제로 미래 매칭까지 approved로 바꿔도 공개되지 않는다
+    # 승인 후 미래 매칭 강제 approved → 여전히 비공개
     with psycopg.connect(fresh) as c:
         c.execute("UPDATE core.change_match SET status='approved' WHERE change_id=%s", (later,))
         c.execute("INSERT INTO core.publication (target_type, target_id, scope, approved_by)"
@@ -623,8 +625,8 @@ def test_manual_announcement_path_reaches_stage3(fresh):
 
 
 def test_record_kind_audience_and_dup_are_markers_not_filters(fresh, tmp_path):
-    """0011·0012: 기록 종류·학생 대회 표시·같은 제목 묶음·제외 후보 이유는 선별 재료일 뿐이다. 깔때기·카드는 전부를 본다.
-    레지스트리만 바꿔도(--policy-only) record_kind·exclude_reason이 따라오고, 사람이 넣은 이유는 재계산에 살아남는다."""
+    """0011·0012: 기록 종류·학생 대회 표시·동일 제목 묶음·제외 후보 이유 = 선별 재료만. 깔때기·카드 = 전체.
+    레지스트리 변경(--policy-only) → record_kind·exclude_reason 반영. 사람 입력 이유 = 재계산 생존."""
     import csv
 
     from bluebird import cards, ingest
@@ -632,11 +634,11 @@ def test_record_kind_audience_and_dup_are_markers_not_filters(fresh, tmp_path):
     (tmp_path / "secret").write_bytes(b"s" * 32)
     cfg = tmp_path / "sources.toml"
 
-    def write_cfg(kind, reason=None):
+    def write_cfg(kind, reason=None, share=False):
         cfg.write_text(
             '[[source]]\nid="m"\nadapter="mapped_contest_csv"\nfile="m.csv"\nname="n"\nlicense="l"\nlayer=2\n'
             'public_ok=true\nexport_grade="O"\npolicy_approved_by="t"\npolicy_approved_at="2026-10-06"\n'
-            f'record_kind="{kind}"\n' + (f'exclude_reason="{reason}"\n' if reason else '')
+            f'record_kind="{kind}"\n' + f'topic="t"\nshare={str(share).lower()}\n' + (f'exclude_reason="{reason}"\n' if reason else '')
             + '[source.columns]\ntitle="제목"\ncontest="대회"\nyear="연도"\n', encoding="utf-8")
 
     def reasons():
@@ -664,30 +666,26 @@ def test_record_kind_audience_and_dup_are_markers_not_filters(fresh, tmp_path):
             "공공데이터 창업경진대회": "unknown", "제40회 전국학생과학발명품경진대회": "student", "대학창의발명대회": "unknown"}
         assert c.execute("SELECT count(*) FROM core.idea_card").fetchone()[0] == 4          # 학생 대회도 카드
         assert c.execute("SELECT count(*) FROM core.funnel_stage(-1)").fetchone()[0] == 4   # 전부 깔때기
-        dup_title, canon_year = c.execute(
-            "SELECT d.title, cn.year FROM core.idea_dup x JOIN core.idea d ON d.id = x.idea_id"
-            " JOIN core.idea cn ON cn.id = x.canonical_id").fetchone()
-        assert (dup_title, canon_year) == ("저상버스 도착알림 서비스", 2021)   # 대표 = 연도 빠른 것
         c.execute("UPDATE core.contest SET audience='general' WHERE name='대학창의발명대회'")  # 사람이 확정
         c.execute("INSERT INTO core.idea_exclusion (idea_id, reason, decided_by)"
                   " SELECT id, 'internal_activity', 'reviewer' FROM core.idea WHERE title='캠퍼스 공유 자전거'")
         c.commit()
-    assert reasons() == {"저상버스 도착 알림 서비스": [], "저상버스 도착알림 서비스": ["duplicate_title"],
+    assert reasons() == {"저상버스 도착 알림 서비스": [], "저상버스 도착알림 서비스": [],
                          "자유낙하 실험기": ["student_contest"], "캠퍼스 공유 자전거": ["internal_activity"]}
 
-    write_cfg("public_proposal", reason="certified_product")
+    write_cfg("public_proposal", reason="certified_product", share=True)
     r = ingest.sync_policy(dsn=fresh, configs=[cfg])
-    assert r["synced"] == ["m"] and r["contests_classified"] == 0 and r["dup_rows"] == 1
+    assert r["synced"] == ["m"] and r["contests_classified"] == 0 and r["exclusion_rows"] == 9   # 4건×(기록 종류+편집 판단) + 학생 1
     with psycopg.connect(fresh) as c:
-        assert c.execute("SELECT record_kind, exclude_reason FROM core.source WHERE id='m'").fetchone() == (
-            "public_proposal", "certified_product")
+        assert c.execute("SELECT record_kind, exclude_reason, share_ok FROM core.source WHERE id='m'").fetchone() == (
+            "public_proposal", "certified_product", True)
         assert c.execute("SELECT audience FROM core.contest WHERE name='대학창의발명대회'").fetchone()[0] == "general"
-        assert c.execute("SELECT count(*) FROM core.funnel_stage(-1)").fetchone()[0] == 4   # 이유가 붙어도 빠지지 않는다
+        assert c.execute("SELECT count(*) FROM core.funnel_stage(-1)").fetchone()[0] == 4   # 이유 부착해도 제외 없음
         assert c.execute("SELECT count(*) FROM core.idea_card").fetchone()[0] == 4
-    # 소스 이유 둘(기록 종류·편집 판단)은 전부에, 학생·중복은 해당 건에, 사람이 넣은 것은 살아남는다
+    # 소스 이유 2종(기록 종류·편집 판단) = 전부 / 학생·중복 = 해당 건 / 사람 입력 = 생존
     assert reasons() == {
         "저상버스 도착 알림 서비스": ["certified_product", "public_proposal"],
-        "저상버스 도착알림 서비스": ["certified_product", "duplicate_title", "public_proposal"],
+        "저상버스 도착알림 서비스": ["certified_product", "public_proposal"],
         "자유낙하 실험기": ["certified_product", "public_proposal", "student_contest"],
         "캠퍼스 공유 자전거": ["certified_product", "internal_activity", "public_proposal"]}
 
@@ -695,19 +693,21 @@ def test_record_kind_audience_and_dup_are_markers_not_filters(fresh, tmp_path):
     with pytest.raises(ValueError, match="exclude_reason must be one of"):
         ingest.sync_policy(dsn=fresh, configs=[cfg])
 
-    cfg.write_text(cfg.read_text(encoding="utf-8").replace('record_kind="contest_award"\n', ''), encoding="utf-8")
+    cfg.write_text(cfg.read_text(encoding="utf-8").replace('record_kind="contest_award"\n'
+        'topic="t"\nshare=false\n', ''), encoding="utf-8")
     with pytest.raises(ValueError, match="record_kind must be one of"):
         ingest.sync_policy(dsn=fresh, configs=[cfg])
 
 
-def test_export_xlsx_excludes_held_sources_by_default(fresh, tmp_path):
-    """export: 라이선스에 '보류'가 든 소스는 기본 xlsx에서 빠지고 --include-held 에서만 들어간다. 출처 명세는 소스 수를 맞춘다."""
+def test_export_xlsx_marks_share_from_source_flag(fresh, tmp_path):
+    """export: xlsx 1파일 전체. share 열 = core.source.share_ok(레지스트리 share). 소스 표 = 소스 수 일치."""
     from openpyxl import load_workbook
 
     from bluebird import export
 
     with psycopg.connect(fresh) as c:
         _seed_idea(c)
+        c.execute("UPDATE core.source SET share_ok = true WHERE id = 's'")
         c.execute("INSERT INTO core.source (id, name, license, url, layer, public_ok, export_grade, record_kind)"
                   " VALUES ('h','보류 소스','기관 약관 — 공개·외부 전송 보류','',2,false,'pending','contest_award')")
         c.execute("INSERT INTO core.contest (id, source_id, name, host_org, year) VALUES ('C-h','h','','',2020)")
@@ -722,18 +722,13 @@ def test_export_xlsx_excludes_held_sources_by_default(fresh, tmp_path):
 
     r = export.xlsx(dsn=fresh, out=tmp_path / "a.xlsx")
     hdr, body = ideas(tmp_path / "a.xlsx")
-    assert r["ideas"] == 1 and r["held_excluded"] == ["h"]
-    assert [b[hdr.index("source_id")] for b in body] == ["s"]
-    assert body[0][hdr.index("share")] == "가능" and body[0][hdr.index("contest")] == "대회"
-
-    r = export.xlsx(dsn=fresh, out=tmp_path / "b.xlsx", include_held=True)
-    hdr, body = ideas(tmp_path / "b.xlsx")
-    assert r["ideas"] == 2 and r["held_excluded"] == []
-    held = next(b for b in body if b[hdr.index("source_id")] == "h")
-    assert held[hdr.index("share")] == "보류" and held[hdr.index("contest")] == "보류 소스"   # 대회명 비면 소스명
+    assert r == {"path": str(tmp_path / "a.xlsx"), "ideas": 2, "sources": 2, "share_ok": 1}
+    by_source = {b[hdr.index("source_id")]: b for b in body}
+    assert by_source["s"][hdr.index("share")] == "가능" and by_source["s"][hdr.index("contest")] == "대회"
+    assert by_source["h"][hdr.index("share")] == "보류" and by_source["h"][hdr.index("contest")] == "보류 소스"   # 대회명 비면 소스명
 
     out = tmp_path / "p.md"
     r = export.provenance(dsn=fresh, configs=[], out=out)
     assert r == {"path": str(out), "sources": 2, "ideas": 2}
     md = out.read_text(encoding="utf-8")
-    assert "| 보류 소스 | 1 |" in md and "`s` |" in md and "레지스트리에 없음" in md
+    assert "아이디어 2건 · 소스 2개 · 공유 가능 1건" in md and "## 수상작 2건" in md and "| 보류 소스 | " in md and "| 보류 |" in md

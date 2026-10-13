@@ -181,8 +181,10 @@ def test_real_trace_candidates_failed_search_and_manual_override(isolated_db, mo
     monkeypatch.setenv("NAVER_CLIENT_SECRET", "test-secret")
     monkeypatch.setenv("KIPRIS_PLUS_KEY", "test-key")
     def handle(request):
-        if request.url.host == "openapi.naver.com":
+        if request.url.host == "naverapihub.apigw.ntruss.com":
             assert request.url.params["query"] == "제목"
+            assert request.headers["X-NCP-APIGW-API-KEY-ID"] == "test-id"
+            assert request.headers["X-NCP-APIGW-API-KEY"] == "test-secret"
             return httpx.Response(200, json={"total": 1, "items": [
                 {"title": "유사 사업", "description": "검색 후보", "link": "https://example.org/news"}]})
         assert request.url.params["word"] == "제목"

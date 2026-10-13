@@ -1,14 +1,10 @@
-"""처리 작업의 유일한 외부 출구(계획 §3.5, 원칙 3).
+"""처리 작업 유일 외부 출구(계획 §3.5, 원칙 3).
 
-- HTTP 클라이언트는 이 모듈이 하나만 소유한다(trust_env=False, 프록시는 BLUEBIRD_EGRESS_PROXY를 줄 때만).
-  다른 모듈은 직접 네트워크를 열지 않는다. urllib.parse 같은 순수 URL 처리는 외부 호출이 아니다.
-- 요청 본문은 이 모듈이 직접 만든다. 호출자는 "어느 소스의 어떤 필드"를 넘기고, 이 모듈이 반출 정책
-  (source.export_grade + core.export_policy)을 검사한 뒤 본문을 직렬화한다. LLM도 SDK 없이 REST로 부른다.
-- 보낸 본문의 sha256을 요청 훅에서 다시 계산해 미리 계산한 값과 다르면 막는다.
-- 허용·차단 모두 core.egress_call에 1행씩 남긴다.
-
-fields = 아이디어·원천 내용(반출 검사 대상). params = 페이지·날짜·키 같은 비내용 파라미터(검사 없이 기록만).
-params에 아이디어 내용을 넣지 않는다.
+- HTTP 클라이언트: 이 모듈 단일 소유(trust_env=False, 프록시 = BLUEBIRD_EGRESS_PROXY 지정 시만). 타 모듈 직접 네트워크 금지. urllib.parse 등 순수 URL 처리는 외부 호출 아님
+- 요청 본문: 이 모듈이 생성. 호출자 = "소스·필드" 전달 → 반출 정책(source.export_grade + core.export_policy) 검사 → 직렬화. LLM도 SDK 없이 REST
+- 전송 본문 sha256: 요청 훅에서 재계산, 사전값 불일치 시 차단
+- 허용·차단 모두 core.egress_call 1행
+- fields = 아이디어·원천 내용(반출 검사 대상) / params = 페이지·날짜·키 등 비내용(기록만). params에 아이디어 내용 금지
 """
 
 from __future__ import annotations
@@ -27,15 +23,18 @@ from . import db
 
 PURPOSES = ("collect", "signal", "trace", "llm", "source_check")
 
-# 외부 호출 허용 호스트. 목록 밖 호출은 차단하고 core.egress_call에 기록한다.
+# 외부 호출 허용 호스트. 목록 외 = 차단 + core.egress_call 기록
 ALLOWED_HOSTS = (
     "data.go.kr", "law.go.kr", "kipris.or.kr", "k-startup.go.kr", "bizinfo.go.kr",
-    "openapi.naver.com", "api.openai.com", "api.anthropic.com",
+    "naverapihub.apigw.ntruss.com", "api.openai.com", "api.anthropic.com",
     "www.science.go.kr",
     "award.kidp.or.kr",
+    "openapi.seoul.go.kr", "openapi.gg.go.kr",
 )
+# 과거 허용했다가 뺀 호스트. 새 호출 = 차단. 당시 허용 감사 행은 G10 반출 통제에서 위반으로 세지 않음
+RETIRED_HOSTS = ("openapi.naver.com",)   # 2026-10-12 NAVER 검색 API → API HUB(naverapihub.apigw.ntruss.com)
 
-# export_grade='O' 소스에서 정책 행 없이도 나갈 수 있는 내용 필드. 그 밖은 core.export_policy에 명시해야 한다.
+# export_grade='O' 소스에서 정책 행 없이 반출 가능한 내용 필드. 그 외 = core.export_policy 명시 필수
 DEFAULT_EXPORTABLE = frozenset({
     "title", "body", "problem", "solution", "used_data", "missing_data", "category", "year", "domain",
     "dataset_title", "dataset_description", "announcement_title", "announcement_summary", "law_title", "change_title",
@@ -58,7 +57,7 @@ class EgressBlocked(EgressError):
 
 
 class EgressTransportError(EgressError):
-    """네트워크·타임아웃 등 전송 실패(감사 행은 남는다)."""
+    """네트워크·타임아웃 등 전송 실패. 감사 행 유지."""
 
 
 class KeyMissing(EgressBlocked):
@@ -283,7 +282,7 @@ class Egress:
 
     def post_form(self, purpose: str, url: str, form: Mapping[str, str], *,
                   path_template: str | None = None) -> Response:
-        """비내용 폼 POST(예: 파일 다운로드 토큰 요청). 아이디어 내용을 넣지 않는다."""
+        """비내용 폼 POST(예: 파일 다운로드 토큰). 아이디어 내용 금지."""
         body = "&".join(f"{httpx.QueryParams({k: v})}" for k, v in form.items()).encode()
         return self._send(purpose, "POST", url, path_template=path_template, fields={}, params=None,
                           body=body, headers={"Content-Type": "application/x-www-form-urlencoded"})
@@ -318,7 +317,7 @@ class Egress:
         resp = self._send(purpose, "POST", url, path_template=urlsplit(url).path, fields=fields, params=None,
                           body=body, headers=headers)
         if resp.status >= 400:
-            raise EgressBlocked(f"{provider} HTTP {resp.status}")  # 본문은 키 일부를 되돌려 줄 수 있어 남기지 않는다
+            raise EgressBlocked(f"{provider} HTTP {resp.status}")  # 본문 미기록(키 일부 반환 가능)
         data = resp.json()
         text = (data["choices"][0]["message"]["content"] if provider == "openai"
                 else "".join(b.get("text", "") for b in data["content"]))

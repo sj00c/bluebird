@@ -1,11 +1,11 @@
-"""원본 DB → 공개 DB 한 방향 반영(push). 처리 작업만 공개 DB에 쓴다.
+"""원본 DB → 공개 DB 단방향 반영(push). 공개 DB 쓰기 = 처리 작업만.
 
 절차(계획 §3.8)
-1. core에서 승인·공개 허용분만 모은다(열 허용목록 = 템플릿).
-2. 템플릿 sha256이 meta.publish_template에 등록된 값과 같은지 확인한다(다르면 거부).
-3. publish_next 스키마를 템플릿으로 만들고 적재한다(별도 트랜잭션, 무거운 작업).
-4. 짧은 트랜잭션: GRANT(portal) → RENAME publish→publish_prev, publish_next→publish → meta.snapshot_log 기록.
-5. publish_prev DROP(lock_timeout + 재시도).
+1. core 승인·공개 허용분 수집(열 허용목록 = 템플릿)
+2. 템플릿 sha256 = meta.publish_template 등록값 확인(불일치 → 거부)
+3. publish_next 스키마 생성·적재(별도 트랜잭션, 무거운 작업)
+4. 짧은 트랜잭션: GRANT(portal) → RENAME publish→publish_prev, publish_next→publish → meta.snapshot_log 기록
+5. publish_prev DROP(lock_timeout + 재시도)
 """
 
 from __future__ import annotations
@@ -49,7 +49,7 @@ def register_template(migrator_dsn: str, version: str = TEMPLATE_VERSION) -> str
 
 # ---------------------------------------------------------------- core 쪽 수집
 # 각 표: (publish 테이블, 열 목록, core 조회 SQL). 열 목록은 템플릿과 같아야 한다(test_publish가 검사).
-# 아이디어 공개(카드·진단·S)가 살아 있음. 반려·철회된 아이디어의 바뀐 것·weekly_top이 남지 않게 한다.
+# 아이디어 공개(카드·진단·S) 유효. 반려·철회 아이디어의 바뀐 것·weekly_top 제외
 # + 지금도 5단계(승인 + 0–4단계 통과)인 아이디어만(collect가 만드는 pg_temp.stage5).
 _IDEA_LIVE = """(SELECT count(DISTINCT pi.scope) FROM core.publication pi
         WHERE pi.target_type = 'idea' AND pi.target_id = {idea} AND pi.revoked_at IS NULL
@@ -172,7 +172,7 @@ EVIDENCE_COLUMNS = ("id", "kind", "url", "title", "excerpt", "observed_at")
 
 
 def collect(core_conn) -> dict[str, list[tuple]]:
-    # 승인 뒤 단계 조건이 깨지면(확인 안 된 바뀐 것, 미래 시행일, S 낮아짐) 진단·바뀐 것·S·Top은 나가지 않는다.
+    # 승인 후 단계 조건 깨짐(미확인 바뀐 것, 미래 시행일, S 하락) → 진단·바뀐 것·S·Top 미반출
     core_conn.execute("DROP TABLE IF EXISTS pg_temp.stage5")
     core_conn.execute(
         """CREATE TEMP TABLE stage5 AS SELECT idea_id FROM core.funnel_stage(
@@ -193,11 +193,11 @@ def collect(core_conn) -> dict[str, list[tuple]]:
         empty = [r[0] for r in data[t] if not r[-1] and not (t == "diagnosis" and r[1] == "U")]
         if empty:
             raise PublishError(f"{t}: {len(empty)} row(s) without evidence, e.g. {empty[:3]}")
-    # S: 채점한 축 수(n_scored)만큼 근거가 있어야 한다(score_set이 축마다 별도 근거 행을 만든다). 2차 방어선.
+    # S: 근거 수 = 채점 축 수(n_scored). score_set이 축별 근거 행 생성. 2차 방어선
     short = [r[0] for r in data["timeliness"] if len(r[-1]) < r[6]]
     if short:
         raise PublishError(f"timeliness: {len(short)} row(s) with fewer evidence than scored axes, e.g. {short[:3]}")
-    # S 근거 excerpt는 축 이름만(score_set). 예전 형식(채점자 이름 포함)은 다시 채점할 때까지 내보내지 않는다.
+    # S 근거 excerpt = 축 이름만(score_set). 구 형식(채점자 이름 포함) = 재채점까지 미반출
     tl_ev = {e for r in data["timeliness"] for e in r[-1]}
     legacy = [r[0] for r in data["evidence"] if r[0] in tl_ev and not (r[4] or "").startswith(score.EVIDENCE_EXCERPT)]
     if legacy:
@@ -294,7 +294,7 @@ def push(*, core_dsn: str, publish_dsn: str, version: str = TEMPLATE_VERSION) ->
             )
             pub.commit()
             _drop_prev(pub)
-        # 공개 DB 커밋이 끝난 뒤에만 반영 완료로 기록(단계 6은 이 기록과 revived_ids를 본다)
+        # 공개 DB 커밋 완료 후에만 반영 완료 기록(단계 6 = 이 기록 + revived_ids)
         changed = {r[1] for r in data["change"]} | {r[1] for r in data["announcement_match"]}  # 둘 다 idea_id
         revived = sorted({r[0] for r in data["diagnosis"]} & {r[0] for r in data["timeliness"]} & changed)
         with db.connect(core_dsn) as core:

@@ -1,10 +1,9 @@
 """KPI 검증 도구(계획 §5 G1–G13).
 
-- kappa: κ 표본(2인 독립 코딩) 일치도. 코딩이 없으면 human_blocked.
-- goldset: 파일럿 골드셋(흔적 5클래스)과 우리 흔적 판정 비교, 혼동행렬·macro-F1.
-  골드셋 CSV에는 팀명이 있으므로 파일은 실행 때 읽기만 하고 저장하지 않는다(연도·제목으로 맞춘 id·클래스만 기록).
-- verify_top20: 주간 Top 20 = 전문가 승인 = 공개 weekly_top.
-- report: G1–G13 현황표. 사람 입력이 필요한데 아직 없으면 human_blocked, 키가 없으면 key_required.
+- kappa: κ 표본(2인 독립 코딩) 일치도. 코딩 없음 → human_blocked
+- goldset: 파일럿 골드셋(흔적 5클래스) vs 흔적 판정, 혼동행렬·macro-F1. CSV에 팀명 있음 → 실행 시 읽기만, 저장 없음(연도·제목 매칭 id·클래스만 기록)
+- verify_top20: 주간 Top 20 = 전문가 승인 = 공개 weekly_top
+- report: G1–G13 현황표. 사람 입력 대기 → human_blocked, 키 없음 → key_required
 """
 
 from __future__ import annotations
@@ -25,9 +24,9 @@ from .sources_check import BLOCKED, REMOTES
 CODES = ("T", "D", "R", "M", "C", "O", "U")
 TRACE_CLASSES = ("realized", "pivot", "similar_unlinked", "award_only", "none")
 KAPPA_TARGET = 0.7
-KAPPA_MIN_SAMPLE = 100  # 기획서 약속: 100건 2인 독립 코딩(30건 파일럿은 통과로 치지 않는다)
+KAPPA_MIN_SAMPLE = 100  # 기획서 약속: 100건 2인 독립 코딩(30건 파일럿 = 미통과)
 GOLD_F1_DROP_PT = 5.0
-GOLD_MIN_DECIDED = 0.8  # 골드셋 중 판정 난 비율이 이만큼은 돼야 회귀 비교를 한다
+GOLD_MIN_DECIDED = 0.8  # 회귀 비교 최소 판정 비율
 TOP_TARGET = 20
 G6_WINDOW = (date(2026, 10, 12), date(2026, 12, 7))  # 스냅샷 #1(월) ~ 동결(월), 양 끝 포함
 
@@ -98,8 +97,8 @@ def _norm(s: str) -> str:
 
 
 def goldset(*, dsn: str, gold_csv: str, baseline: bool = False) -> dict:
-    """gold_csv: 파일럿 결과 CSV 내용(열 year·item·final). 연도+제목(공백 정규화) 일치로 아이디어를 찾고
-    trace_verdict.status와 비교한다. pending은 '판정 전'으로 따로 세고 macro-F1에서 뺀다."""
+    """gold_csv = 파일럿 결과 CSV(열 year·item·final). 연도+제목(공백 정규화) 매칭 → trace_verdict.status 비교.
+    pending = '판정 전' 별도 집계, macro-F1 제외."""
     gold = list(csv.DictReader(io.StringIO(gold_csv.lstrip("\ufeff"))))
     missing = {"year", "item", "final"} - set(gold[0] if gold else ())
     if missing:
@@ -145,12 +144,12 @@ def goldset(*, dsn: str, gold_csv: str, baseline: bool = False) -> dict:
                 WHERE source_id IN ('naver_search_news', 'kipris_plus_patent')
                 ORDER BY source_id, checked_at DESC) x WHERE status = 'key_required'""").fetchone()[0]
         if not matched_n or len(matched) < GOLD_MIN_DECIDED * matched_n:
-            # 판정 난 건이 모자라면 비교하지 않는다. 흔적 검색 키가 없어서면 key_required.
+            # 판정 건수 부족 → 비교 안 함. 흔적 검색 키 부재 → key_required
             status = KEY if keys_waiting else PROGRESS
         elif baseline:
             status = PASS  # 이번 실행이 기준선(W4 첫 무팀명 실행)
         elif base is None:
-            status = PROGRESS  # 기준선이 없으면 회귀를 말할 수 없다
+            status = PROGRESS  # 기준선 없음 → 회귀 판단 불가
         else:
             status = PASS if base["macro_f1"] - macro <= GOLD_F1_DROP_PT else FAIL
         out = {"gold_rows": len(gold), "matched_ideas": len(gold) - unmatched, "unmatched": unmatched,
@@ -171,7 +170,7 @@ def _week(conn, week: date | None) -> date | None:
 
 
 def verify_top20(*, dsn: str, publish_dsn: str, week: date | None = None, target: int = TOP_TARGET) -> dict:
-    """target 기본 20. 공개 후보가 20 미만이면 E3 승인 뒤 --target으로 min(20, 후보 수)를 준다."""
+    """target 기본 20. 공개 후보 <20 → E3 승인 후 --target=min(20, 후보 수)."""
     with db.connect(dsn) as conn:
         week = _week(conn, week)
         if week is None:
@@ -228,9 +227,9 @@ def audit_g9(conn) -> dict[str, int]:
 
 
 def name_leaks(conn, pc, *, config, seed_dir, secret: bytes) -> dict[str, int]:
-    """G10 성명 일치: 공개 원본 파일의 팀명·수상자·지도교사 이름을 메모리에서만 다시 읽어, 같은 아이디어의 공개 글
-    (제목·본문·문제·해결)에 남아 있는지 센다. 이름은 어디에도 저장·출력하지 않고 개수만 돌려준다.
-    expected = 이름 있는 아이디어 중 core에서 공개 대상(살아 있고 보류 아님)인 것. 대조 수가 이와 같아야 다 본 것이다."""
+    """G10 성명 일치: 원본 파일 팀명·수상자·지도교사 이름을 메모리에서만 재독 → 공개 글(제목·본문·문제·해결) 잔존 집계.
+    이름 저장·출력 없음, 개수만 반환.
+    expected = 이름 있는 아이디어 중 공개 대상(유효·보류 아님). compared == expected 여야 전수 대조."""
     from .anonymize import find_name
 
     names: dict[str, list[str]] = {}
@@ -258,23 +257,23 @@ def name_leaks(conn, pc, *, config, seed_dir, secret: bytes) -> dict[str, int]:
 
 
 def names_checked(names: dict[str, int] | None) -> bool:
-    """이름 대조가 실제로 됐는가: 공개 소스 파일이 다 있고, 공개 대상인 이름 있는 아이디어를 빠짐없이 맞춰 봤다.
-    익명화 키가 적재 때와 다르면 ID가 안 맞아 expected=compared=0이 되므로 expected>0도 요구한다."""
+    """이름 대조 실제 수행 여부: 공개 소스 파일 전부 존재 + 공개 대상 이름 아이디어 전수 대조.
+    익명화 키 불일치 → expected=compared=0 → expected>0 추가 요구."""
     return bool(names) and names["missing_files"] == 0 and names["source_files"] > 0 and (
         names["ideas_with_names"] == 0 or names["compared"] == names["expected"] > 0)
 
 
 def audit_g10(conn, pc, *, names: dict[str, int] | None) -> dict[str, int | None]:
     """names = name_leaks() 결과. 원본 파일·익명화 키가 없어 이름 대조를 못 하면 None(→ G10 진행 중)."""
-    from .egress import NEVER_EXPORT, Policy, host_allowed
+    from .egress import NEVER_EXPORT, RETIRED_HOSTS, Policy, host_allowed
 
     pol = Policy.load(conn)
     calls = conn.execute(
         "SELECT dest_host, source_ids, fields_sent, purpose FROM core.egress_call WHERE decision='allowed'").fetchall()
-    off_host = sum(1 for h, *_ in calls if not host_allowed(h))
+    off_host = sum(1 for h, *_ in calls if not host_allowed(h) and h not in RETIRED_HOSTS)
     bad_field = sum(1 for _, sids, fields, purpose in calls if purpose in ("llm", "trace")
                     for s in sids for f in fields if f in NEVER_EXPORT or pol.check(s, f, purpose))
-    # card_kind=full은 허용된 LLM 호출(감사 행)로 만든 카드만. 본문 해시와 전송 해시 대조는 egress가 전송 직전에 한다.
+    # card_kind=full = 허용된 LLM 호출(감사 행) 카드만. 본문 해시·전송 해시 대조 = egress 전송 직전
     full_without_llm_call = conn.execute(
         """SELECT count(*) FROM core.idea_card k JOIN core.egress_call e ON e.id = k.egress_call_id
             WHERE k.card_kind='full' AND (e.decision <> 'allowed' OR e.purpose <> 'llm')""").fetchone()[0]
@@ -341,7 +340,7 @@ def report(*, dsn: str, publish_dsn: str, inbox_dsn: str | None = None, p95_ms: 
     with db.connect(dsn) as conn:
 
         # G4: 골드셋 CSV에 팀명이 있어 리포트 때 다시 돌리지 않고 마지막 실행을 보여 준다(실행 시각 표시).
-        # 기준선을 막 잡은 실행은 비교가 아니므로 통과로 치지 않는다.
+        # 기준선 설정 실행 = 비교 아님 → 미통과
         g4 = conn.execute("""SELECT stats, finished_at FROM core.pipeline_run WHERE stage='kpi-goldset' AND status='ok'
                               ORDER BY id DESC LIMIT 1""").fetchone()
         if g4:
@@ -361,7 +360,7 @@ def report(*, dsn: str, publish_dsn: str, inbox_dsn: str | None = None, p95_ms: 
                      f"공개 {t.get('published', 0)}", "목표 수 전부 전문가 승인·공개(E3 승인 시 --top-target 조정)"))
 
     with db.connect(dsn) as conn, db.connect(publish_dsn) as pc:
-        # G6: 실제로 공개된 바뀐 것(publish.change)만 센다. 공개 규칙(퇴역·이의 보류·3단계·공개 허용)은 publish가 이미 적용.
+        # G6: 실제 공개된 바뀐 것(publish.change)만 집계. 공개 규칙(퇴역·이의 보류·3단계·공개 허용) = publish 기적용
         pub_changes = [r[0] for r in pc.execute(
             "SELECT DISTINCT id FROM publish.change WHERE kind = 'dataset_opened'")]
         by_tier = dict(conn.execute(

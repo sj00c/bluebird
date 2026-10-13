@@ -23,7 +23,7 @@ export const VERDICT: Record<string, string> = {
   hold: "보류",
 };
 
-// 데이터 개방 신호의 근거 수준(목록개방현황 스냅샷 비교). 날짜만으로 "새로 열렸다"고 말하지 않는다.
+// 데이터 개방 신호 근거 수준(목록개방현황 스냅샷 비교). 날짜만으로 "새로 열렸다" 표현 금지
 export function tierText(c: {
   kind: string;
   tier: string | null;
@@ -54,7 +54,7 @@ export const VERDICT_PILL: Record<string, string> = {
   hold: "lo",
 };
 
-// 시의성 네 축(core.timeliness tech·data·regulation·policy). 화면 시안의 이름을 쓴다.
+// 시의성 4축(core.timeliness tech·data·regulation·policy). 명칭 = 화면 시안
 export const AXES: {
   key: "tech" | "data" | "regulation" | "policy";
   label: string;

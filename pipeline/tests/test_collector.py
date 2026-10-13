@@ -93,7 +93,7 @@ def test_design_idea_drops_winner_name(tmp_path):
     ])
     rows = list(design_idea_csv(SourceSpec("d", "design_idea_csv", f, "n", "l", "", 2, True), b"x" * 32))
     assert "최준영" not in str(rows) and "이민수" not in str(rows)
-    assert rows[0]["body"] is None  # 제목과 같은 내용은 본문으로 치지 않음
+    assert rows[0]["body"] is None  # 제목과 동일 내용 = 본문 아님
     assert rows[1]["body"] == f"{MASK}가 만든 압전 충전 테이블"
 
 
@@ -110,7 +110,7 @@ def test_mafra_splits_part_and_award(tmp_path):
 def test_list_masking_keeps_generic_short_tokens_and_word_boundaries():
     team = "AI Lab(김하나, 2명)"
     out = mask_team("AI 기반 maintain 도구, Lab 안에서 김하나가 개발. Labor 통계 2명", team)
-    # 이름(김하나)·3자 이상 팀 낱말(Lab)은 가리고, 2자 라틴 낱말(AI)·인원수(2명)·단어 속 부분(maintain, Labor)은 둔다
+    # 마스킹: 이름(김하나)·3자 이상 팀 낱말(Lab) / 유지: 2자 라틴(AI)·인원수(2명)·단어 내 부분(maintain, Labor)
     assert out == f"AI 기반 maintain 도구, {MASK} 안에서 {MASK}가 개발. Labor 통계 2명"
 
 
@@ -121,7 +121,7 @@ def test_list_masking_keeps_generic_team_words():
 
 
 def test_names_out_collects_name_forms_in_memory_only(tmp_path):
-    """G10 성명 일치 감사용: 어댑터는 요청할 때만 메모리 dict에 이름 형태를 담고, 레코드에는 이름이 없다."""
+    """G10 성명 일치 감사용: 어댑터 = 요청 시만 메모리 dict에 이름 형태, 레코드에 이름 없음."""
     from bluebird.anonymize import find_name
     from bluebird.sources import design_idea_csv, science_museum_csv
     s = _write_csv(tmp_path / "s.csv", ["대회명", "주제", "소속명", "제목", "지도교사", "수상자", "수상명"], [
@@ -131,7 +131,7 @@ def test_names_out_collects_name_forms_in_memory_only(tmp_path):
     names: dict = {}
     rows = list(science_museum_csv(SourceSpec("sm", "science_museum_csv", s, "n", "l", "", 2, True), b"x" * 32, names))
     rows += list(design_idea_csv(SourceSpec("d", "design_idea_csv", d, "n", "l", "", 2, True), b"x" * 32, names))
-    assert set(names) == {rows[0]["idea_id"], rows[1]["idea_id"]}  # 마스킹된 수상자(○○○)는 대조할 이름이 없다
+    assert set(names) == {rows[0]["idea_id"], rows[1]["idea_id"]}  # 마스킹 수상자(○○○) = 대조 이름 없음
     assert set(names[rows[0]["idea_id"]]) == {"한홍수", "김하린", "송다원"}
     assert all(not find_name(r["title"], names.get(r["idea_id"], [])) for r in rows)
     assert find_name("이민수가 만든 테이블", names[rows[1]["idea_id"]])
@@ -168,7 +168,7 @@ def test_mapped_records_mask_people_exclude_contacts_and_keep_unknown_year(tmp_p
     assert records[0]["title"] == f"{MASK}의 접이식 우산"
     assert records[0]["body"] == f"{MASK}가 제안한 빗물 회수 장치"
     assert [r["year"] for r in records] == [None, 2021]
-    assert records[0]["extra"] == {}  # record_kind는 행이 아니라 core.source에 둔다
+    assert records[0]["extra"] == {}  # record_kind = 행 아닌 core.source
     for private in ("김하나", "새봄학교", "010-1234-5678", "private@example.com"):
         assert private not in str(records)
 

@@ -108,7 +108,7 @@ def test_blind_coding(client, fresh):
                   (IID,))
         c.commit()
     assert client.post(f"/api/coding/{IID}", headers=H("ca"), json={"code": "R"}).status_code == 200
-    # 다른 코더는 상대 코드를 보지 못한다
+    # 타 코더 코드 비공개
     items = client.get("/api/coding", headers=H("cb")).json()["items"]
     assert items[0]["my_code"] is None and "R" not in json.dumps(items)
     assert client.get("/api/coding", headers=H("ca")).json()["items"][0]["my_code"] == "R"
@@ -121,7 +121,7 @@ def test_blind_coding(client, fresh):
         assert rows == [("coder_a", "lee", "M"), ("coder_b", "park", "D")]
         with pytest.raises(psycopg.errors.RaiseException, match="other coder slot"):  # DB도 같은 사람 두 슬롯 거부
             c.execute("UPDATE core.review SET reviewer='lee' WHERE round='coder_b'")
-    # 상세 화면도 코더 기록을 보여주지 않는다
+    # 상세 화면도 코더 기록 비공개
     assert client.get(f"/api/ideas/{IID}", headers=H("rev")).json()["reviews"] == []
     # 표본에 없는 아이디어는 404
     assert client.post("/api/coding/ID-2019-bbbbbbbbbb", headers=H("ca"), json={"code": "R"}).status_code == 404
@@ -196,7 +196,7 @@ def test_objection_round_trip(client, fresh):
     d = client.get(f"/api/ideas/{IID}", headers=H("rev")).json()
     assert d["stage"]["s5"] is False and d["idea"]["withheld_at"] is not None
     assert [o["status"] for o in d["objections"]] == ["accepted", "rejected"]
-    # 공개 중단된 아이디어는 깔때기·큐에서 빠지고, 다시 승인할 수 없다
+    # 공개 중단 아이디어 = 깔때기·큐 제외, 재승인 불가
     assert client.get("/api/queue?stage=s2", headers=H("rev")).json()["counts"]["s0"] == 0
     r = client.post(f"/api/ideas/{IID}/review", headers=H("rev"), json={"round": "final", "decision": "approve"})
     assert r.status_code == 409 and "withheld" in r.json()["detail"]
@@ -245,7 +245,7 @@ def test_coder_only_cannot_see_predictions_or_objections(client, fresh):
 
 
 def test_api_works_as_least_privilege_role(fresh, tmp_path, monkeypatch):
-    """backend-api는 bb_api 역할로 승인·반려·이의 처리·코딩을 할 수 있고, DDL·원본 수정은 못 한다."""
+    """backend-api(bb_api 역할): 승인·반려·이의 처리·코딩 가능, DDL·원본 수정 불가."""
     from fastapi.testclient import TestClient
 
     from bluebird import api

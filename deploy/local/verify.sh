@@ -33,11 +33,11 @@ check "모든 소스에 기록 종류(record_kind) 있음" \
 check "공개용 DB 아이디어마다 기록 종류·대회 대상자·제외 후보 이유 필드 채워짐(선별 재료)" \
   "[[ \$(pub_sql 'SELECT count(*) FROM publish.idea WHERE record_kind IS NULL OR audience IS NULL OR exclude_reasons IS NULL') -eq 0 ]]"
 excl_n="$(core_sql 'SELECT count(DISTINCT idea_id) FROM core.idea_exclusion')"
-echo "      제외 후보 이유 붙은 아이디어=$excl_n / $core_n (거르지 않음 — 깔때기·카드·공개는 전체)"
+echo "      제외 후보 이유 붙은 아이디어=$excl_n / $core_n (필터링 없음 — 깔때기·카드·공개 = 전체)"
 check "제외 후보 이유는 어휘표 안의 코드만, 이유가 있어도 깔때기에 그대로 들어감" \
   "[[ \$(core_sql 'SELECT count(*) FROM core.funnel_stage(-1) f JOIN core.idea_exclusion x ON x.idea_id=f.idea_id') -gt 0 && $excl_n -gt 0 ]]"
 check "비공개 소스(KIPRIS) 미반영" \
-  "[[ \$(pub_sql \"SELECT count(*) FROM publish.idea WHERE source_id='kipris_contest_idea_bulk'\") -eq 0 ]]"
+  "[[ \$(pub_sql \"SELECT count(*) FROM publish.idea WHERE source_id='kipris_idea_api'\") -eq 0 ]]"
 check "공개용 DB에 내부 열 없음(team_kind·extra·ingest·export_grade)" \
   "[[ \$(pub_sql \"SELECT count(*) FROM information_schema.columns WHERE table_schema='publish' AND column_name IN ('team_kind','extra','first_ingest_id','last_ingest_id','export_grade','policy_approved_by')\") -eq 0 ]]"
 check "공개 소스는 모두 정책 승인 기록 있음" \
@@ -49,16 +49,16 @@ check "snapshot_log ↔ core.publish_snapshot 최신 id 일치" \
 check "카탈로그 스냅샷 #0 적재(sha256 f63f4429)" \
   "[[ \$(core_sql \"SELECT count(*) FROM core.catalog_snapshot WHERE id=0 AND file_sha256 LIKE 'f63f4429%'\") -eq 1 ]]"
 check "egress 차단 기록 외 허용 호출은 모두 화이트리스트" \
-  "[[ \$(core_sql \"SELECT count(*) FROM core.egress_call WHERE decision='allowed' AND dest_host !~ '(data\\.go\\.kr|law\\.go\\.kr|kipris\\.or\\.kr|k-startup\\.go\\.kr|bizinfo\\.go\\.kr|openapi\\.naver\\.com|api\\.openai\\.com|api\\.anthropic\\.com|www\\.science\\.go\\.kr|award\\.kidp\\.or\\.kr)\$'\") -eq 0 ]]"
+  "[[ \$(core_sql \"SELECT count(*) FROM core.egress_call WHERE decision='allowed' AND dest_host !~ '(data\\.go\\.kr|law\\.go\\.kr|kipris\\.or\\.kr|k-startup\\.go\\.kr|bizinfo\\.go\\.kr|naverapihub\\.apigw\\.ntruss\\.com|api\\.openai\\.com|api\\.anthropic\\.com|www\\.science\\.go\\.kr|award\\.kidp\\.or\\.kr|openapi\\.seoul\\.go\\.kr|openapi\\.gg\\.go\\.kr)\$' AND dest_host NOT IN ('openapi.naver.com')\") -eq 0 ]]"   # NOT IN = 허용 목록에서 뺀 호스트의 과거 행(egress.RETIRED_HOSTS)
 
 echo "== 원본·카드·소스 점검(G1·G2·G13)"
-check "core.idea 10,000행 이상(66 소스)"                  "[[ $core_n -ge 10000 ]]"
+check "core.idea 10,000행 이상"                           "[[ $core_n -ge 10000 ]]"
 withheld_n="$(core_sql 'SELECT count(*) FROM core.idea WHERE withheld_at IS NOT NULL')"
 check "공개용 DB 아이디어 + 이의로 공개 중단 3,394 이상(G2)" "[[ \$(( pub_n + withheld_n )) -ge 3394 ]]"
 check "모든 아이디어에 카드 1개(G1 ≥ 10,000)" \
   "[[ \$(core_sql 'SELECT count(*) FROM core.idea_card k JOIN core.idea i ON i.id=k.idea_id WHERE i.retired_at IS NULL') -eq $core_n && $core_n -ge 10000 ]]"
 check "KIPRIS 카드는 모두 local_extract(반출 보류)" \
-  "[[ \$(core_sql \"SELECT count(*) FROM core.idea_card k JOIN core.idea i ON i.id=k.idea_id WHERE i.source_id='kipris_contest_idea_bulk' AND k.card_kind<>'local_extract'\") -eq 0 ]]"
+  "[[ \$(core_sql \"SELECT count(*) FROM core.idea_card k JOIN core.idea i ON i.id=k.idea_id WHERE i.source_id='kipris_idea_api' AND k.card_kind<>'local_extract'\") -eq 0 ]]"
 check "본문 없는 카드는 title_only, missing_data는 본문 근거만" \
   "[[ \$(core_sql \"SELECT count(*) FROM core.idea_card k JOIN core.idea i ON i.id=k.idea_id WHERE (coalesce(btrim(i.body),'')='') <> (k.card_kind='title_only') OR (k.card_kind='title_only' AND jsonb_array_length(k.missing_data)>0)\") -eq 0 ]]"
 check "card_kind=full은 LLM(P1)이 본문을 받은 카드만" \
@@ -177,7 +177,7 @@ check "DELETE 메서드 405" "[[ \$(curl -s -o /dev/null -w '%{http_code}' -X DE
 check "보안 헤더(CSP)" "curl -sI $portal/pool | grep -qi content-security-policy"
 
 echo "== KPI 현황표(G1–G13, bluebird kpi report)"
-# p95는 오늘 측정했고 요청 오류가 0인 최신 결과만 쓴다(오래됐거나 오류가 있으면 G8 진행 중으로 남는다).
+# p95 = 당일 측정 + 요청 오류 0 최신 결과만. 그 외 → G8 진행 중
 p95f="$(ls -t "$rt"/p95-"$(date +%Y%m%d)"-*.txt 2>/dev/null | head -1)"
 p95="$( [[ -n $p95f ]] && python3 -c "import json,sys; d=json.load(open(sys.argv[1])); print(d['p95_ms'] if d['errors'] == 0 else '')" "$p95f")"
 kpi_out="$rt/kpi-$(date +%Y%m%d-%H%M%S).txt"

@@ -1,7 +1,8 @@
 """공개 문구 규칙(계획 §2.1 원칙 1, §3.4).
 
-날짜만으로 "그때는 없었다"를 증명하지 못하므로 그런 문구를 쓰지 않는다. 사람이 입력한 how_now·rationale 등
-공개될 수 있는 글은 저장 전에 check()를 통과해야 한다. 화면 문구는 test_forbidden_phrases가 소스를 훑는다.
+- 날짜만으로 "그때는 없었다" 증명 불가 → 해당 문구 금지
+- 사람 입력 how_now·rationale 등 공개 가능 글: 저장 전 check() 통과 필수
+- 화면 문구: test_forbidden_phrases가 소스 검사
 """
 
 from __future__ import annotations
@@ -15,7 +16,7 @@ _ABSENT = (r"(?:없(?:던|었)|존재하지\s*않(?:던|았)|나오지\s*않(?:�
 FORBIDDEN = re.compile(_PAST + r"\s*(?:[가-힣A-Za-z0-9]+\s+){0,3}?" + _ABSENT
                        + r"|존재하지\s*않던|그\s*당시\s*존재하지\s*않")
 
-# 카탈로그 tier별 화면 문구(§3.10)는 web/portal/lib/labels.ts tierText 한 곳에 둔다.
+# 카탈로그 tier별 화면 문구(§3.10) = web/portal/lib/labels.ts tierText 단일 위치
 
 
 class WordingError(ValueError):

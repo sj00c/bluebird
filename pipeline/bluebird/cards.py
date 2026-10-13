@@ -1,12 +1,12 @@
 """아이디어 카드(P1) 생성 — 계획 §3.6.
 
-card_kind는 "P1이 실제로 무엇을 받았나"로 정한다(계획 §3.6).
-- full          : 본문이 egress를 거쳐 외부 LLM(P1)에 전송되어 만든 카드. export_grade=O 소스 + LLM 키가 있을 때만.
-- local_extract : 본문을 외부 호출 없이 규칙으로 추출한 카드(KIPRIS 약관 대기, 또는 LLM 키 없음).
-- title_only    : 본문이 없는 소스(제목·활용 데이터만).
-LLM 응답의 missing_data는 본문 안에 실제로 있는 문장(excerpt)만 받아들인다 — 위치(char_span)를 본문에서 다시 찾는다.
-missing_data는 본문이 스스로 밝힌 부족·미개방 데이터 문장만 담는다(D 원인·D 신호의 아이디어 쪽 키).
-경진대회 "활용 데이터"(used_data)는 이미 쓴 데이터라 missing_data가 아니다.
+card_kind = "P1이 실제로 받은 것" 기준(계획 §3.6).
+- full          : 본문 → egress → 외부 LLM(P1). export_grade=O 소스 + LLM 키 있을 때만
+- local_extract : 본문 규칙 추출, 외부 호출 없음(KIPRIS 약관 대기 또는 LLM 키 없음)
+- title_only    : 본문 없는 소스(제목·활용 데이터만)
+- LLM 응답 missing_data: 본문 실재 문장(excerpt)만 수용. char_span 본문 재탐색
+- missing_data = 본문이 스스로 밝힌 부족·미개방 데이터 문장만(D 원인·D 신호 아이디어 쪽 키)
+- 경진대회 "활용 데이터"(used_data) = 이미 쓴 데이터, missing_data 아님
 """
 
 from __future__ import annotations
@@ -22,8 +22,8 @@ from .egress import Egress, EgressError
 RULE_VERSION = "rule-v1"
 P1_VERSION = "p1-v1"
 P1_SYSTEM = (
-    "너는 공모전 아이디어 본문에서 사실만 뽑는 추출기다. 본문에 없는 내용은 만들지 않는다. "
-    "출력은 JSON 객체 하나만 낸다."
+    "역할: 공모전 아이디어 본문 사실 추출기. 본문에 없는 내용 생성 금지. "
+    "출력: JSON 객체 1개만."
 )
 P1_INSTRUCTION = (
     "아래 아이디어의 제목(title)과 본문(body)에서 다음을 뽑아 JSON으로 답하라. "
@@ -31,7 +31,7 @@ P1_INSTRUCTION = (
     '"target_user": 대상 사용자|null, "required_tech": [필요 기술], '
     '"missing_data": [{"name": 본문이 없다·부족하다·공개되지 않았다고 밝힌 데이터 이름, '
     '"excerpt": 그렇게 밝힌 본문 문장을 글자 그대로}]}. '
-    "missing_data는 본문이 스스로 부족·미개방이라고 쓴 경우만 넣고, 단지 활용한 데이터는 넣지 않는다."
+    "missing_data: 본문이 부족·미개방이라고 명시한 경우만. 단순 활용 데이터 제외."
 )
 
 _SENT = re.compile(r"(?<=[.!?。])\s+|\n+")
@@ -84,7 +84,7 @@ def card_kind(has_body: bool, sent_to_llm: bool) -> str:
     return "full" if sent_to_llm else "local_extract"
 
 
-# 부정 어미만: '없이'(장비 없이 활용)·'안전 확보' 같은 긍정 문장은 단서가 아니다.
+# 부정 어미만. '없이'(장비 없이 활용)·'안전 확보' 등 긍정 문장 = 단서 아님
 _CUE = re.compile(r"없(?:다|어|는|고|음|으며|었|습)|부족|미개방|비공개|공개되지\s*않|개방되지\s*않|구하기\s*어렵"
                   r"|확보(?:가|하기|되지)?\s*(?:어렵|안\s*되|못|불가)|제공되지\s*않|부재|흩어져|분산")
 _TOKEN = re.compile(r"[가-힣A-Za-z0-9]{2,}")
@@ -134,10 +134,10 @@ def body_sha(body: str | None) -> str:
 
 
 def build(*, dsn: str, rebuild: bool = False, egress: Egress | None = None) -> dict:
-    """카드 생성. 본문 있는 export_grade=O 소스는 LLM 키가 있으면 P1(LLM, egress 경유)로, 없으면 규칙으로 만든다.
+    """카드 생성. 본문 있는 export_grade=O 소스: LLM 키 있음 → P1(LLM, egress), 없음 → 규칙.
 
-    다시 만드는 경우: 카드 없음 / 본문 해시가 바뀜(LLM·규칙 카드 모두. 사람 카드는 본문이 바뀌어도 사람이 다시 본다) /
-    키가 생겨 규칙 카드를 LLM으로 올릴 수 있음. --rebuild는 사람 카드를 뺀 전부.
+    재생성 조건: 카드 없음 / 본문 해시 변경(LLM·규칙 카드. 사람 카드는 사람 재검토) / 키 생겨 규칙→LLM 승격 가능.
+    --rebuild = 사람 카드 제외 전부.
     """
     prov = llm.provider()
     with db.pipeline_run(dsn, "cards") as stats, db.connect(dsn) as conn:

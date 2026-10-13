@@ -18,6 +18,8 @@ layer = 2
 public_ok = false
 export_grade = "pending"
 record_kind = "contest_award"
+topic = "전남 우수제안"
+share = true
 host_org = "전남광주통합특별시"
 [source.columns]
 "title" = "제안명"
@@ -39,6 +41,8 @@ layer = 2
 public_ok = false
 export_grade = "pending"
 record_kind = "contest_submission"
+topic = "영광군 제안공모전"
+share = true
 host_org = "전남광주통합특별시 영광군"
 [source.exclude]
 "제목(BS_SUBJECT)" = ["영광군 청소년 정책제안대회 안내", "제안(붙임 파일 참고)", "제안공모", "RE:영광 군민대학 운영 제안", "2024 영광군 제안 공모신청서", "영광군정 제안서", "2024년 영광군 제안 공모", "RE:○ 관할 운동(체육)시설의 스마트 운동(체육)시설로의 전환", "RE:영광군 제안 공모(안전한 어린이 보행환경 조성)", "RE:영광 자유광장 조성", "RE:독거노인  홈캠  보급 지원", "RE:제안(붙임 파일 참고)", "RE:영광군 주간 모범식단표 제공으로 군민 건강증진", "RE:민원인 대형폐기물 배출 신고시 현금 결재 방법 개선", "RE:제안공모", "RE:와상 장애인을 위한 장애인콜택시 추가 배치", "공모합니다.", "RE:관광발전 영광", "골목 포장 부탁드립니다.", "제안 공모 신청서", "RE:영광군정 제안서", "RE:영광군 문화관광 누리집과 연동되는 QR코드 제작, 주요관광지에 부착 활용", "RE:공모합니다.", "RE:영광군 관내 도서관에 ‘아이디어야놀자(콘텐츠)’ 보급", "RE:영광군 공모 제안참여", "RE:영광군의 주요 건물에 미디어파사드 설치", "RE:영광 토요영어마을 제안서", "RE:군민증 및 전국 통용 카드 발급", "영광군 공모 제안참여", "RE:골목 포장 부탁드립니다.", "RE:백수해안도로 관광 활성화 방안", "RE:방학 중 자녀 돌봄 프로그램이 있었으면 합니다", "제안공모전제안합니다.", "2025년 영광군 제안공모", "RE:제안 공모 신청서", "RE:2024년 영광군 제안 공모", "1", "공모전에 응모합니다.", "2025년 영광군 제안 공모 응모 서류 제출 (OOO)", "RE:2024 영광군 제안 공모신청서", "RE:신규 공무원 대상 ‘새내기 휴가’ 신설", "RE:제안공모전제안합니다.", "2025년 영광군 제안 공모", "2025 영광 제안 공모전", "영광군 제안 공모 신청합니다.", "첨부파일 참조 요망", "2025년 영광군 제안_공모신청서 신청합니다!", "영광군 제안 공모", "2025년 영광군 제인 공모(OOO)", "제안 공모전 참여", "영광군에게 제안합니다!", "제안", "함께 만드는 더 나은 영광, 당신의 아이디어가 정책이 됩니다 제출"]
@@ -59,6 +63,8 @@ layer = 2
 public_ok = false
 export_grade = "pending"
 record_kind = "contest_award"
+topic = "농촌 6차산업 경진대회 수상 사례"
+share = true
 host_org = "농림수산식품교육문화정보원"
 [source.columns]
 "title" = "제목"
@@ -78,6 +84,8 @@ layer = 2
 public_ok = false
 export_grade = "pending"
 record_kind = "contest_award"
+topic = "농촌 마을 만들기 콘테스트 수상"
+share = true
 host_org = "한국농어촌공사"
 require_any = ["마을만들기_마을특징", "마을만들기_마을중장기발전방향", "마을만들기_추진성과"]
 [source.columns]
@@ -102,6 +110,8 @@ layer = 2
 public_ok = false
 export_grade = "pending"
 record_kind = "contest_submission"
+topic = "울산 공공데이터 창업 아이디어"
+share = true
 host_org = "울산광역시"
 [source.columns]
 "title" = "작품명"
@@ -123,6 +133,8 @@ layer = 2
 public_ok = false
 export_grade = "pending"
 record_kind = "public_proposal"
+topic = "세종교육청 제안사업"
+share = true
 host_org = "세종특별자치시교육청"
 [source.columns]
 "title" = "사업명"
@@ -143,6 +155,8 @@ layer = 2
 public_ok = false
 export_grade = "pending"
 record_kind = "public_proposal"
+topic = "건강가정 국민제안"
+share = true
 host_org = "한국건강가정진흥원"
 [source.row_equals]
 "삭제여부" = "N"
@@ -167,6 +181,8 @@ layer = 2
 public_ok = false
 export_grade = "pending"
 record_kind = "improvement_proposal"
+topic = "인천시설공단 아이디어 뱅크"
+share = true
 host_org = "인천시설공단"
 [source.row_equals]
 "공개여부" = "Y"
@@ -190,6 +206,8 @@ layer = 2
 public_ok = false
 export_grade = "pending"
 record_kind = "contest_award"
+topic = "노인일자리 아이디어 공모"
+share = true
 host_org = "한국노인인력개발원"
 [source.columns]
 "title" = "아이디어명"
@@ -209,6 +227,8 @@ layer = 2
 public_ok = false
 export_grade = "pending"
 record_kind = "contest_award"
+topic = "자산관리 데이터 공모전 수상작"
+share = true
 host_org = "한국자산관리공사"
 [source.columns]
 "title" = "아이디어 내용"
@@ -231,6 +251,8 @@ layer = 2
 public_ok = false
 export_grade = "pending"
 record_kind = "improvement_proposal"
+topic = "대전교통공사 전력기술 개선제안"
+share = true
 host_org = "대전교통공사"
 [source.columns]
 "title" = "제    안    명"
@@ -252,6 +274,8 @@ layer = 2
 public_ok = false
 export_grade = "pending"
 record_kind = "improvement_proposal"
+topic = "대전교통공사 제어기술 개선제안"
+share = true
 host_org = "대전교통공사"
 [source.columns]
 "title" = "제안명"
@@ -273,6 +297,8 @@ layer = 2
 public_ok = false
 export_grade = "pending"
 record_kind = "contest_award"
+topic = "품질분임조 개선활동 수상"
+share = true
 exclude_reason = "internal_activity"
 host_org = "한국수력원자력(주)"
 [source.columns]
@@ -294,6 +320,8 @@ layer = 2
 public_ok = false
 export_grade = "pending"
 record_kind = "contest_award"
+topic = "소방산업 디자인 공모 수상작"
+share = true
 host_org = "한국소방산업기술원"
 [source.columns]
 "title" = "제목"
@@ -314,6 +342,8 @@ layer = 2
 public_ok = false
 export_grade = "pending"
 record_kind = "contest_award"
+topic = "소방산업 기술 공모전 수상작"
+share = true
 host_org = "한국소방산업기술원"
 [source.columns]
 "title" = "제목"
@@ -335,6 +365,8 @@ layer = 2
 public_ok = false
 export_grade = "pending"
 record_kind = "contest_award"
+topic = "광주 공공데이터 창업 아이디어"
+share = true
 host_org = "전남광주통합특별시"
 [source.columns]
 "title" = "과제명"
@@ -357,6 +389,8 @@ layer = 2
 public_ok = false
 export_grade = "pending"
 record_kind = "contest_award"
+topic = "공공디자인대상 수상작"
+share = true
 host_org = "한국공예디자인문화진흥원"
 [source.columns]
 "title" = "제목"
@@ -380,6 +414,8 @@ layer = 2
 public_ok = false
 export_grade = "pending"
 record_kind = "improvement_proposal"
+topic = "AI 교육 교사연구회 성과물"
+share = true
 host_org = "한국과학창의재단"
 [source.columns]
 "title" = "교사연구회별 성과물"
@@ -399,6 +435,8 @@ layer = 2
 public_ok = false
 export_grade = "pending"
 record_kind = "contest_award"
+topic = "SW 수업 우수사례"
+share = true
 exclude_reason = "teaching_case"
 host_org = "한국과학창의재단"
 [source.columns]
@@ -420,6 +458,8 @@ layer = 2
 public_ok = false
 export_grade = "pending"
 record_kind = "improvement_proposal"
+topic = "한전KPS 직원 아이디어"
+share = true
 host_org = "한전케이피에스주식회사"
 [source.columns]
 "title" = "제목(IDEA_SJ)"
@@ -440,6 +480,8 @@ layer = 2
 public_ok = false
 export_grade = "pending"
 record_kind = "public_proposal"
+topic = "양평군 주민참여예산 선정사업"
+share = true
 host_org = "경기도 양평군"
 [source.columns]
 "title" = "사업명"
@@ -458,6 +500,8 @@ layer = 2
 public_ok = false
 export_grade = "pending"
 record_kind = "contest_award"
+topic = "대전 중구 정책제안 공모 수상"
+share = true
 host_org = "대전광역시 중구"
 [source.columns]
 "title" = "제안명"
@@ -478,6 +522,8 @@ layer = 2
 public_ok = false
 export_grade = "pending"
 record_kind = "public_proposal"
+topic = "국민 공공외교 프로젝트"
+share = true
 host_org = "한국국제교류재단"
 [source.columns]
 "title" = "활동명"
@@ -498,6 +544,8 @@ layer = 2
 public_ok = false
 export_grade = "pending"
 record_kind = "public_proposal"
+topic = "인천항만 국민의견·제안"
+share = true
 host_org = "인천항만공사"
 [source.row_equals]
 "공개여부" = "Y"
@@ -520,6 +568,8 @@ layer = 2
 public_ok = false
 export_grade = "pending"
 record_kind = "contest_award"
+topic = "기능성게임 수상작"
+share = true
 host_org = "한국콘텐츠진흥원"
 [source.columns]
 "title" = "게임명"
@@ -542,6 +592,8 @@ layer = 2
 public_ok = false
 export_grade = "pending"
 record_kind = "contest_award"
+topic = "부산도시공사 경영혁신 우수사례"
+share = true
 exclude_reason = "internal_activity"
 host_org = "부산도시공사"
 [source.columns]
@@ -564,6 +616,8 @@ layer = 2
 public_ok = false
 export_grade = "pending"
 record_kind = "contest_submission"
+topic = "국토교통 기술 공모전 신청작"
+share = true
 host_org = "국토교통과학기술진흥원"
 [source.exclude]
 "출품작명" = ["이건호", "ㄱㄱㄱ", "nohhy95", "국토교통기술로 바뀔 우리의 미래", "국토교통기술, 그 미래에 네가 있다!", "우리가 꿈꿔왔던 세상을 우리의 일상으로!", "더 나은 기술, 더 밝은 대한민국", "미래로 나아가는 국토교통기술", "안녕하세요! 2050년 7월 2일 교통정보입니다.", "2050, 기술의 불시착", "다 보여줄께!!", "2023년 KAIA 대국민 사전정보공개 아이디어 공모전"]
@@ -585,6 +639,8 @@ layer = 2
 public_ok = false
 export_grade = "pending"
 record_kind = "contest_award"
+topic = "성평등가족 경진대회 수상"
+share = true
 host_org = "성평등가족부"
 [source.columns]
 "title" = "수상작품제목(WNAWD_WRKS_TTL)"
@@ -607,6 +663,8 @@ layer = 2
 public_ok = false
 export_grade = "pending"
 record_kind = "public_proposal"
+topic = "광진구 주민참여예산"
+share = true
 host_org = "서울특별시 광진구"
 [source.columns]
 "title" = "사업명"
@@ -626,6 +684,8 @@ layer = 2
 public_ok = false
 export_grade = "pending"
 record_kind = "public_proposal"
+topic = "영등포구 주민참여예산"
+share = true
 host_org = "서울특별시 영등포구"
 [source.columns]
 "title" = "사업명"
@@ -645,6 +705,8 @@ layer = 2
 public_ok = false
 export_grade = "pending"
 record_kind = "public_proposal"
+topic = "서대문구 주민참여예산"
+share = true
 host_org = "서울특별시 서대문구"
 [source.columns]
 "title" = "사업명"
@@ -664,6 +726,8 @@ layer = 2
 public_ok = false
 export_grade = "pending"
 record_kind = "public_proposal"
+topic = "제주 주민참여예산 신청사업"
+share = true
 host_org = "제주특별자치도"
 [source.columns]
 "title" = "사업명"
@@ -684,6 +748,8 @@ layer = 2
 public_ok = false
 export_grade = "pending"
 record_kind = "public_proposal"
+topic = "연수구 주민참여예산"
+share = true
 host_org = "인천광역시 연수구"
 [source.columns]
 "title" = "사업명"
@@ -702,6 +768,8 @@ layer = 2
 public_ok = false
 export_grade = "pending"
 record_kind = "public_proposal"
+topic = "남동구 주민참여예산 반영결과"
+share = true
 host_org = "인천광역시 남동구"
 [source.columns]
 "title" = "사업명"
@@ -721,6 +789,8 @@ layer = 2
 public_ok = false
 export_grade = "pending"
 record_kind = "public_proposal"
+topic = "대구 서구 주민참여예산"
+share = true
 host_org = "대구광역시 서구"
 [source.columns]
 "title" = "제안사업명"
@@ -739,6 +809,8 @@ layer = 2
 public_ok = false
 export_grade = "pending"
 record_kind = "public_proposal"
+topic = "고양 주민참여예산 반영사업"
+share = true
 host_org = "경기도 고양시"
 [source.columns]
 "title" = "사 업 명"
@@ -759,6 +831,8 @@ layer = 2
 public_ok = false
 export_grade = "pending"
 record_kind = "public_proposal"
+topic = "광주 시민참여예산 제안사업"
+share = true
 host_org = "전남광주통합특별시"
 [source.exclude]
 "사업명" = ["테스트글입니다. 확인후 삭제 바랍니다."]
@@ -781,6 +855,8 @@ layer = 2
 public_ok = false
 export_grade = "pending"
 record_kind = "public_proposal"
+topic = "대구 주민참여예산 제안사업"
+share = true
 host_org = "대구광역시"
 [source.row_equals]
 "삭제여부" = "N"
@@ -802,6 +878,8 @@ layer = 2
 public_ok = false
 export_grade = "pending"
 record_kind = "public_proposal"
+topic = "대구 주민참여예산 선정사업"
+share = true
 host_org = "대구광역시"
 [source.columns]
 "title" = "사업명"
@@ -821,6 +899,8 @@ layer = 2
 public_ok = false
 export_grade = "pending"
 record_kind = "contest_award"
+topic = "대구 청소년 참여예산 우수사업"
+share = true
 host_org = "대구광역시"
 [source.columns]
 "title" = "사업명"
@@ -843,6 +923,8 @@ layer = 2
 public_ok = false
 export_grade = "pending"
 record_kind = "public_proposal"
+topic = "논산 사업부서 주민참여예산"
+share = true
 host_org = "충청남도 논산시"
 [source.columns]
 "title" = "사업명"
@@ -862,6 +944,8 @@ layer = 2
 public_ok = false
 export_grade = "pending"
 record_kind = "public_proposal"
+topic = "논산 읍면동 주민참여예산"
+share = true
 host_org = "충청남도 논산시"
 [source.columns]
 "title" = "사업명 "
@@ -881,6 +965,8 @@ layer = 2
 public_ok = false
 export_grade = "pending"
 record_kind = "public_proposal"
+topic = "거제 주민참여예산 제안사업"
+share = true
 host_org = "경상남도 거제시"
 [source.columns]
 "title" = "사업명"
@@ -900,6 +986,8 @@ layer = 2
 public_ok = false
 export_grade = "pending"
 record_kind = "public_proposal"
+topic = "남동구 구민제안"
+share = true
 host_org = "인천광역시 남동구"
 [source.columns]
 "title" = "제목"
@@ -919,6 +1007,8 @@ layer = 2
 public_ok = false
 export_grade = "pending"
 record_kind = "public_proposal"
+topic = "경북 주민참여예산"
+share = true
 host_org = "경상북도"
 [source.columns]
 "title" = "사업명"
@@ -939,6 +1029,8 @@ layer = 2
 public_ok = false
 export_grade = "pending"
 record_kind = "public_proposal"
+topic = "전북 주민참여예산"
+share = true
 host_org = "전북특별자치도"
 [source.columns]
 "title" = "사업명"
@@ -959,6 +1051,8 @@ layer = 2
 public_ok = false
 export_grade = "pending"
 record_kind = "public_proposal"
+topic = "세종 주민제안사업"
+share = true
 host_org = "세종특별자치시"
 [source.columns]
 "title" = "사업명"
@@ -979,6 +1073,8 @@ layer = 2
 public_ok = false
 export_grade = "pending"
 record_kind = "public_proposal"
+topic = "유성구 구민 사업제안"
+share = true
 host_org = "대전광역시 유성구"
 [source.columns]
 "title" = "제안사업명"
@@ -999,6 +1095,8 @@ layer = 2
 public_ok = false
 export_grade = "pending"
 record_kind = "public_proposal"
+topic = "부산 주민참여예산"
+share = true
 host_org = "부산광역시"
 [source.columns]
 "title" = "사업명"
@@ -1018,6 +1116,8 @@ layer = 2
 public_ok = false
 export_grade = "pending"
 record_kind = "public_proposal"
+topic = "충북 주민참여예산"
+share = true
 host_org = "충청북도"
 [source.columns]
 "title" = "사업명"
@@ -1038,6 +1138,8 @@ layer = 2
 public_ok = false
 export_grade = "pending"
 record_kind = "public_proposal"
+topic = "경남 주민참여예산"
+share = true
 host_org = "경상남도"
 [source.columns]
 "title" = "사업명"
@@ -1058,6 +1160,8 @@ layer = 2
 public_ok = false
 export_grade = "pending"
 record_kind = "public_proposal"
+topic = "강원 주민참여예산"
+share = true
 host_org = "강원특별자치도"
 [source.columns]
 "title" = "사업명"
@@ -1078,6 +1182,8 @@ layer = 2
 public_ok = false
 export_grade = "pending"
 record_kind = "public_proposal"
+topic = "울산 주민참여예산 제안사업"
+share = true
 host_org = "울산광역시"
 [source.exclude]
 "사업명" = ["개발제한구역내 산지 태양광 발전사업 인허가 및 지원 가능성 문의"]
@@ -1100,6 +1206,8 @@ layer = 2
 public_ok = false
 export_grade = "pending"
 record_kind = "public_proposal"
+topic = "전남 도민 제안"
+share = true
 host_org = "전남광주통합특별시"
 [source.exclude]
 "제안명" = ["유자품종명", "24년 출생신고 18년간 20만원 지급 대상"]
@@ -1121,6 +1229,8 @@ layer = 2
 public_ok = false
 export_grade = "pending"
 record_kind = "improvement_proposal"
+topic = "가스기술 연구 제안"
+share = true
 host_org = "(주)한국가스기술공사"
 [source.exclude]
 "제안명" = ["2019-A", "2019-B", "2019-C", "2019-D", "과제등록", "testTask", "신규과제 시험"]

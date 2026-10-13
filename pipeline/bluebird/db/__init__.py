@@ -1,6 +1,7 @@
-"""DB 연결과 SQL 파일 기반 마이그레이션. 스키마 소유자는 이 디렉터리 하나다.
+"""DB 연결 + SQL 파일 마이그레이션. 스키마 소유자 = 이 디렉터리.
 
-적용된 마이그레이션은 sha256과 함께 기록한다. 이미 적용된 파일 내용이 바뀌면 실패한다(0001 재작성 후에는 0002+ 추가만).
+- 적용 마이그레이션: sha256과 함께 기록
+- 적용된 파일 내용 변경 → 실패(0001 재작성 후 0002+ 추가만)
 """
 
 from __future__ import annotations
@@ -64,7 +65,7 @@ def migrate(dsn: str, target: str) -> list[str]:
 
 @contextmanager
 def pipeline_run(dsn: str, stage: str):
-    """core.pipeline_run에 단계 실행 기록. 본 작업과 별도 커넥션이라 실패도 남는다."""
+    """core.pipeline_run 단계 실행 기록. 별도 커넥션 → 실패도 기록."""
     with connect(dsn) as conn:
         run_id = conn.execute(
             "INSERT INTO core.pipeline_run (stage, status) VALUES (%s, 'running') RETURNING id", (stage,)

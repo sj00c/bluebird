@@ -16,7 +16,7 @@ export async function GET(req: Request) {
     const r = await explore(q);
     return NextResponse.json({ q, ...r });
   } catch (e) {
-    // statement_timeout(57014): 과부하로 보고 잠시 뒤 다시 시도하게 한다. 그 밖의 오류는 그대로 500.
+    // statement_timeout(57014) = 과부하 → 잠시 후 재시도 안내. 그 외 오류 = 500
     if ((e as { code?: string }).code === "57014")
       return NextResponse.json(
         { ok: false, detail: "busy, retry later" },

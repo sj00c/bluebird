@@ -1,8 +1,7 @@
-"""시의성 S 규칙(계획 §3.7). 순수 함수 — DB와 무관하게 테스트한다.
+"""시의성 S 규칙(계획 §3.7). 순수 함수, DB 무관 테스트.
 
-- 항목 tech·data·regulation·policy(0–5 또는 None). 점수 있는 항목만 쓰고 가중치를 재정규화한다(기본 0.25).
-- now(S≥4.0)·conditional(3.0≤S<4.0)은 점수 있는 항목 ≥2 이고, 매칭된 바뀐 것의 축이 점수 있는 항목에 들 때만.
-  아니면 hold("판단 불가").
+- 항목 tech·data·regulation·policy(0–5 또는 None). 점수 있는 항목만 사용, 가중치 재정규화(기본 0.25)
+- now(S≥4.0)·conditional(3.0≤S<4.0): 점수 항목 ≥2 + 매칭된 바뀐 것 축 ∈ 점수 항목. 아니면 hold("판단 불가")
 """
 
 from __future__ import annotations
@@ -10,7 +9,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 AXES = ("tech", "data", "regulation", "policy")
-EVIDENCE_EXCERPT = "시의성 축: "  # S 근거 excerpt 머리말(축 이름만, 채점자 없음). publish가 형식을 확인한다.
+EVIDENCE_EXCERPT = "시의성 축: "  # S 근거 excerpt 머리말(축 이름만, 채점자 없음). publish가 형식 검사
 AXIS_KO = {"tech": "기술", "data": "데이터", "regulation": "규제", "policy": "정책"}
 DEFAULT_WEIGHTS = dict.fromkeys(AXES, 0.25)
 # 바뀐 것 종류 → S 축(D→data, R→regulation, C·M→policy, T→tech)

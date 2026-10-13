@@ -71,7 +71,7 @@ export async function requireMe(): Promise<Me> {
   return responseData<Me>(await meResponse(token));
 }
 
-/** 서버 액션용: 오류를 던지지 않고 메시지로 돌려준다. 401만 로그인으로 이동. */
+/** 서버 액션용: 오류 throw 없이 메시지 반환. 401만 로그인 이동. */
 export async function apiTry(
   path: string,
   init?: RequestInit,
@@ -93,7 +93,7 @@ export async function apiTry(
   return r.detail;
 }
 
-/** 레이아웃용: 실패하면 null. 리다이렉트하지 않는다. */
+/** 레이아웃용: 실패 → null. 리다이렉트 없음. */
 export async function getMe(): Promise<Me | null> {
   const token = (await cookies()).get(TOKEN_COOKIE)?.value;
   if (!token) return null;
