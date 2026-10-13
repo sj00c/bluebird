@@ -31,6 +31,19 @@ SELECT i.id, s.id, s.name, s.license, s.share_ok, s.record_kind, coalesce(nullif
  ORDER BY s.id, i.year NULLS LAST, i.id
 """
 
+# 사람이 DBeaver 등에서 그대로 쓰는 조회. docs/DATA.md에 실림
+IDEA_VIEW_SQL = """
+SELECT i.id, s.name AS source, s.record_kind, CASE WHEN s.share_ok THEN '가능' ELSE '보류' END AS share,
+       c.name AS contest, c.host_org, c.audience, i.year, i.award, i.title, i.body, i.category,
+       array_to_string(i.used_data, '; ') AS used_data, i.source_url,
+       (SELECT string_agg(x.reason, ', ' ORDER BY x.reason) FROM core.idea_exclusion x WHERE x.idea_id = i.id) AS exclude_reasons
+  FROM core.idea i
+  JOIN core.source s ON s.id = i.source_id
+  JOIN core.contest c ON c.id = i.contest_id
+ WHERE i.retired_at IS NULL AND i.withheld_at IS NULL
+ ORDER BY s.id, i.year NULLS LAST, i.id
+"""
+
 SOURCE_SQL = """
 SELECT s.id, s.name, s.license, s.url, s.record_kind, s.exclude_reason,
        coalesce(i.n, 0), i.y0, i.y1, coalesce(i.with_body, 0), r.first_at, r.last_at, s.share_ok
@@ -214,5 +227,10 @@ def provenance(*, dsn: str, configs: list[Path], out: Path) -> dict:
             topic = spec.topic if spec else ""
             md.append(f"| {name} | {_site(spec, url)} | {years} | {n:,} | {topic} | {_share(r[12])} |")
         md.append("")
+    md += ["## 조회", "",
+           "- PostgreSQL(Docker) `127.0.0.1:54329` · DB `bluebird_core` · 사용자 `bluebird` · 비밀번호 = `.env` `DB_PASSWORD`",
+           "- 데이터 표 3개: `core.idea`(아이디어) · `core.source`(소스) · `core.contest`(대회). 나머지 표 = 파이프라인 작업용",
+           "- xlsx `ideas` 시트 = 아래 쿼리 결과", "",
+           "```sql", IDEA_VIEW_SQL.strip(), "```", ""]
     out.write_text("\n".join(md), encoding="utf-8")
     return {"path": str(out), "sources": len(rows), "ideas": total}

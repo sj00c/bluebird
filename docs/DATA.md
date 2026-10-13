@@ -92,3 +92,21 @@
 | 한국과학창의재단_인공지능(AI)교육 교사연구회 성과물 목록 | [공공데이터포털 파일 15091274](https://www.data.go.kr/data/15091274/fileData.do) | 2020 | 30 | AI 교육 교사연구회 성과물 | 가능 |
 | 한전케이피에스주식회사_아이디어 | [공공데이터포털 파일 15137044](https://www.data.go.kr/data/15137044/fileData.do) |  | 5 | 한전KPS 직원 아이디어 | 가능 |
 | 인천시설공단_공단 홈페이지 아이디어 뱅크 | [공공데이터포털 파일 15138358](https://www.data.go.kr/data/15138358/fileData.do) | 2009 | 2 | 인천시설공단 아이디어 뱅크 | 가능 |
+
+## 조회
+
+- PostgreSQL(Docker) `127.0.0.1:54329` · DB `bluebird_core` · 사용자 `bluebird` · 비밀번호 = `.env` `DB_PASSWORD`
+- 데이터 표 3개: `core.idea`(아이디어) · `core.source`(소스) · `core.contest`(대회). 나머지 표 = 파이프라인 작업용
+- xlsx `ideas` 시트 = 아래 쿼리 결과
+
+```sql
+SELECT i.id, s.name AS source, s.record_kind, CASE WHEN s.share_ok THEN '가능' ELSE '보류' END AS share,
+       c.name AS contest, c.host_org, c.audience, i.year, i.award, i.title, i.body, i.category,
+       array_to_string(i.used_data, '; ') AS used_data, i.source_url,
+       (SELECT string_agg(x.reason, ', ' ORDER BY x.reason) FROM core.idea_exclusion x WHERE x.idea_id = i.id) AS exclude_reasons
+  FROM core.idea i
+  JOIN core.source s ON s.id = i.source_id
+  JOIN core.contest c ON c.id = i.contest_id
+ WHERE i.retired_at IS NULL AND i.withheld_at IS NULL
+ ORDER BY s.id, i.year NULLS LAST, i.id
+```
