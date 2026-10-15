@@ -2,6 +2,7 @@
 
 - 기준일: 2026-10-14
 - 파일: `master-2026-10-15.xlsx` (시트 `master`, 141,827행 × 14열)
+- DB 접속: PostgreSQL(Docker) `127.0.0.1:54329` · DB `bluebird_master` · 사용자 `bluebird` · 비밀번호 = `.env` `DB_PASSWORD` · 표 `public.master`(정제본), `public.raw`(받은 그대로)
 - 만들기: `bluebird master xlsx --out .runtime/export/master-<날짜>.xlsx` (모든 칸 = 텍스트·숫자, 수식 없음)
 - 원본 DB: `bluebird_master` → `public.master`
 - 전처리 상세: `docs/PREPROCESS.md`
