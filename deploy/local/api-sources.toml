@@ -128,7 +128,7 @@ year = "year"
 category = "category"
 source_url = "source_url"
 
-# KIPRIS Plus 아이디어DB OpenAPI 전수(38,563건, 1957~2015). 벌크 zip 대체(2026-10-13). 1회 수집 = 387회 호출(월 무료 1,000회).
+# KIPRIS Plus 아이디어DB OpenAPI 전수(38,563건, 1957~2015). 벌크 zip 대체(2026-10-13). 1회 수집 = 387회 호출(키 호출 한도 없음).
 # 라이선스 = KIPRIS Plus 이용약관(공개·외부 전송 보류, 10/26 게이트). source_url = 원 공모전 상세(science.go.kr 등).
 [[source]]
 id = "kipris_idea_api"

@@ -38,7 +38,40 @@ def main(argv: list[str] | None = None) -> int:
 
     m = sub.add_parser("migrate", help="SQL 마이그레이션 적용 (publish는 템플릿 등록 포함)")
     m.add_argument("--target", choices=db.TARGETS, required=True)
-    m.add_argument("--dsn", default=None, help="기본: core=BB_DSN, publish=BB_PUBLISH_MIGRATOR_DSN")
+    m.add_argument("--dsn", default=None,
+                   help="기본: core=BB_DSN, publish=BB_PUBLISH_MIGRATOR_DSN, master=BB_MASTER_DSN")
+
+    ms = sub.add_parser("master", help="정제 DB(bluebird_master): raw = 받은 그대로")
+    mss = ms.add_subparsers(dest="master_cmd", required=True)
+    for name, text in (("files", "수집해 둔 CSV·xlsx → raw(소스 단위 교체)"),
+                       ("api", "API 응답 레코드 전체 → raw(국민신문고 = 일 한도 안에서 이어 받음)")):
+        x = mss.add_parser(name, help=text)
+        x.add_argument("--dsn", default=_env("BB_MASTER_DSN"))
+        x.add_argument("--config", type=Path, action="append", required=True, help="레지스트리 TOML, 반복")
+        x.add_argument("--only")
+    x = mss.add_parser("detail", help="목록에 본문 없는 소스 → 공식 상세 페이지 본문(raw '<소스>.detail', 이어 받음)")
+    x.add_argument("--dsn", default=_env("BB_MASTER_DSN"))
+    x.add_argument("--core-dsn", default=_env("BB_DSN"), help="egress 정책·감사 기록")
+    x.add_argument("--only")
+    x.add_argument("--workers", type=int, default=4)
+    x = mss.add_parser("fill", help="master LLM 컨럼(keyword·problem·feature·target·domain, 빈 contest)")
+    x.add_argument("--dsn", default=_env("BB_MASTER_DSN"))
+    x.add_argument("--core-dsn", default=_env("BB_DSN"), help="egress 정책·감사 기록")
+    x.add_argument("--config", type=Path, action="append", required=True, help="레지스트리 TOML, 반복")
+    x.add_argument("--only")
+    x.add_argument("--skip", action="append", default=[], help="제외 소스, 반복")
+    x.add_argument("--sample", type=int, help="소스별 N행만(시험)")
+    x.add_argument("--workers", type=int, default=8)
+    x = mss.add_parser("refine", help="raw → master 정제(글머리 정리·마스킹, LLM 컨럼 유지)")
+    x.add_argument("--dsn", default=_env("BB_MASTER_DSN"))
+    x.add_argument("--config", type=Path, action="append", required=True, help="레지스트리 TOML, 반복")
+    x.add_argument("--only")
+    x = mss.add_parser("xlsx", help="master 표 전체 → 엑셀 1파일(시트 master, 필드 = docs/MASTER.md)")
+    x.add_argument("--dsn", default=_env("BB_MASTER_DSN"))
+    x.add_argument("--out", type=Path, required=True)
+    mss.choices["files"].add_argument("--dir", type=Path, action="append", help="파일 찾을 디렉터리, 반복. 기본: BB_SIGNAL_DIR/contests, BB_SEED_DIR")
+    mss.choices["api"].add_argument("--core-dsn", default=_env("BB_DSN"), help="egress 정책·감사 기록")
+    mss.choices["api"].add_argument("--acrc-budget", type=int, default=int(_env("BB_ACRC_CALL_BUDGET") or 9000))
 
     i = sub.add_parser("ingest", help="seed 파일 → core 적재(마스킹·익명 ID)")
     i.add_argument("--dsn", default=_env("BB_DSN"))
@@ -172,12 +205,53 @@ def main(argv: list[str] | None = None) -> int:
         return _run_funnel(a)
 
     if a.cmd == "migrate":
-        dsn = a.dsn or _env("BB_DSN" if a.target == "core" else "BB_PUBLISH_MIGRATOR_DSN")
+        dsn = a.dsn or _env({"core": "BB_DSN", "publish": "BB_PUBLISH_MIGRATOR_DSN", "master": "BB_MASTER_DSN"}[a.target])
         if not dsn:
             ap.error("missing --dsn")
         print("applied:", db.migrate(dsn, a.target) or "nothing")
         if a.target == "publish":
             print(f"template {publish.TEMPLATE_VERSION}:", publish.register_template(dsn)[:12])
+    elif a.cmd == "master":
+        from . import master
+        from .egress import Egress
+
+        _require(ap, a, "dsn")
+        if a.master_cmd == "detail":
+            _require(ap, a, "core_dsn")
+            with Egress.from_dsn(a.core_dsn, cookies=False) as eg:
+                results = master.load_detail(dsn=a.dsn, egress=eg, only=a.only, workers=a.workers)
+            for result in results:
+                print(funnel.dumps(result))
+            return 0
+        if a.master_cmd == "xlsx":
+            print("[export]", export.master_xlsx(dsn=a.dsn, out=a.out))
+            return 0
+        sources = master.registry(a.config)
+        if a.master_cmd == "files":
+            dirs = a.dir or [p for p in ((_p("BB_SIGNAL_DIR") / "contests") if _p("BB_SIGNAL_DIR") else None,
+                                         _p("BB_SEED_DIR")) if p]
+            if not dirs:
+                ap.error("missing --dir")
+            results = master.load_files(dsn=a.dsn, sources=sources, dirs=dirs, only=a.only)
+        elif a.master_cmd == "fill":
+            from . import fill
+
+            _require(ap, a, "core_dsn")
+            with Egress.from_dsn(a.core_dsn, timeout=180.0) as eg:
+                results = fill.fill(dsn=a.dsn, egress=eg, sources=sources, only=a.only, skip=a.skip,
+                                    sample=a.sample, workers=a.workers)
+        elif a.master_cmd == "refine":
+            from . import refine
+
+            results = refine.refine(dsn=a.dsn, sources=sources, only=a.only)
+        else:
+            _require(ap, a, "core_dsn")
+            with Egress.from_dsn(a.core_dsn) as eg:
+                results = master.load_api(dsn=a.dsn, egress=eg, sources=sources, only=a.only,
+                                          acrc_budget=a.acrc_budget)
+        for result in results:
+            print(funnel.dumps(result))
+        return 1 if any(r["status"] != "ok" for r in results) else 0
     elif a.cmd == "ingest":
         if a.config is None and _p("BB_SOURCES"):
             a.config = [_p("BB_SOURCES")]

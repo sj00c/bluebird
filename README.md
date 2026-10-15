@@ -26,7 +26,7 @@
 | 포털 | http://localhost:3000 | 시민용 화면 (이번 주 재조명, 주제·공고로 찾기, 아이디어 카드, 이의 제기) |
 | 콘솔 | http://localhost:3001 | 관리자 화면 (검토, 승인, 2인 코딩, 이의 처리) |
 | 백엔드 API | http://localhost:8000 | 콘솔용 API |
-| DB | 127.0.0.1:54329 | PostgreSQL 1개. 원본 DB(`bluebird_core`) + 공개 DB(`bluebird_publish`) |
+| DB | 127.0.0.1:54329 | PostgreSQL 1개. 원본 DB(`bluebird_core`) + 공개 DB(`bluebird_publish`) + 정제 DB(`bluebird_master`) |
 | 처리 작업 | (명령 실행) | 적재, 카드 생성, 바뀐 것 수집, 소스 점검, 이의 가져오기, 공개, 성과 지표 |
 
 - 포털 = 공개 DB만 접근
@@ -127,7 +127,7 @@
 |---|---|---|
 | `OPENAI_API_KEY` 또는 `ANTHROPIC_API_KEY` | 카드 요약(P1), 근거 제한 원인 제안(P2), 시의성 제안(P3) | 각 사이트 |
 | `NAVER_CLIENT_ID` / `NAVER_CLIENT_SECRET` | 사업화 흔적: 후속 보도 | NAVER API HUB(네이버클라우드 NCP 콘솔, 결제 수단 등록 필요) |
-| `KIPRIS_PLUS_KEY` | 공모전 아이디어DB 수집(월 1,000회 중 386회), 사업화 흔적 후보: 특허·실용신안 검색 | plus.kipris.or.kr |
+| `KIPRIS_PLUS_KEY` | 공모전 아이디어DB 수집(전수 387회 호출, 키 호출 한도 없음), 사업화 흔적 후보: 특허·실용신안 검색 | plus.kipris.or.kr |
 | `DATA_GO_KR_KEY` | K-Startup 공고 수집, 국민신문고 공개제안 수집(15059423), 권익위 공모제안 연결 점검 | data.go.kr (키 1개 공용, 서비스별 활용신청) |
 | `SEOUL_OPENAPI_KEY` | 서울 시민참여예산·법령제도개선 제안·자유제안 수집 | data.seoul.go.kr 일반 인증키 |
 | `GG_OPENAPI_KEY` | 경기 주민참여예산 제안사업 수집 | data.gg.go.kr OpenAPI |

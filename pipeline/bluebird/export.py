@@ -1,6 +1,7 @@
 """공유용 내보내기.
 
 - xlsx: 아이디어 전체 + 선별 재료 → 엑셀 1파일. share 열(가능/보류) = 레지스트리 share → core.source.share_ok
+- master_xlsx: 정제 DB master 표 → 엑셀 1파일(시트 master)
 - provenance: docs/DATA.md 소스 표. 원천 = DB(core.source·idea) + 레지스트리(TOML)
 - 읽기 전용. 공개 승인·깔때기 무관, core 전체
 """
@@ -12,6 +13,8 @@ from pathlib import Path
 from urllib.parse import urlsplit
 
 from openpyxl import Workbook
+from openpyxl.cell import WriteOnlyCell
+from openpyxl.cell.cell import ILLEGAL_CHARACTERS_RE
 from openpyxl.utils import get_column_letter
 
 from . import db
@@ -57,6 +60,56 @@ SELECT s.id, s.name, s.license, s.url, s.record_kind, s.exclude_reason,
  WHERE coalesce(i.n, 0) > 0   -- 퇴역된 소스(유효 0건) 제외
  ORDER BY i.n DESC
 """
+
+
+MASTER_COLS = ("api", "key", "title", "body", "contest", "origin", "url", "year", "fetched",
+               "keyword", "problem", "feature", "target", "domain")
+
+# 목록(keyword·domain) = 쉼표 이음, fetched = KST 분 단위
+MASTER_SQL = """
+SELECT api, key, title, body, contest, origin, url, year,
+       to_char(fetched AT TIME ZONE 'Asia/Seoul', 'YYYY-MM-DD HH24:MI'),
+       array_to_string(keyword, ', '), problem, feature, target, array_to_string(domain, ', ')
+  FROM master
+ ORDER BY api, year NULLS LAST, key
+"""
+
+MASTER_WIDTHS = {"api": 24, "key": 18, "title": 40, "body": 60, "contest": 28, "origin": 7, "url": 30,
+                 "year": 7, "fetched": 17, "keyword": 24, "problem": 40, "feature": 40, "target": 16,
+                 "domain": 16}
+XLSX_CELL_MAX = 32767  # 엑셀 칸 글자 수 한도
+
+
+def _text_cell(ws, value):
+    """문자열은 항상 텍스트 칸. '='로 시작하는 본문이 수식으로 저장되면 엑셀이 '복구' 경고를 띄운다."""
+    if isinstance(value, str):
+        value = ILLEGAL_CHARACTERS_RE.sub("", value)[:XLSX_CELL_MAX]
+    cell = WriteOnlyCell(ws, value=value)
+    if isinstance(value, str):
+        cell.data_type = "s"
+    return cell
+
+
+def master_xlsx(*, dsn: str, out: Path) -> dict:
+    """bluebird_master.master 전체 → 시트 'master' 1개(MASTER_COLS). docs/MASTER.md = 필드 설명."""
+    wb = Workbook(write_only=True)
+    ws = wb.create_sheet("master")
+    for idx, name in enumerate(MASTER_COLS, start=1):
+        ws.column_dimensions[get_column_letter(idx)].width = MASTER_WIDTHS[name]
+    ws.freeze_panes = "A2"
+    ws.append(list(MASTER_COLS))
+    n = 0
+    with db.connect(dsn) as conn, conn.cursor(name="master_xlsx") as cur:
+        cur.itersize = 5000
+        cur.execute(MASTER_SQL)
+        for row in cur:
+            ws.append([_text_cell(ws, v) for v in row])
+            n += 1
+    out.parent.mkdir(parents=True, exist_ok=True)
+    tmp = out.with_suffix(".tmp.xlsx")
+    wb.save(tmp)
+    tmp.replace(out)
+    return {"path": str(out), "rows": n, "cols": len(MASTER_COLS)}
 
 
 def _autosize(ws, widths: dict[str, int]):

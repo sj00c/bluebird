@@ -1,0 +1,293 @@
+"""raw → master 정제(bluebird_master). 규칙 기반, LLM 없음.
+
+- 소스별 추출: title·body·contest·url·year. 등록 매핑([source.columns]) 소스 = 매핑 그대로, 나머지 = 아래 고정 추출기
+- 글머리 정리: 섹션 라벨([제안취지] 등) 유지. 글머리 기호·깨진 문자(사설 영역)·줄 앞뒤 짝 없는 따옴표·제목 앞 접수번호 제거, 공백 하나로
+- 개인정보: 전화·이메일·'제안자 홍길동' 고정 치환, 매핑된 성명·팀명 → [이름]
+- contest = 원본 행에 있을 때만(레지스트리 기본값으로 채우지 않음)
+- url = 행 URL, 없으면 레지스트리 출처 URL
+- 재실행: 기본 컬럼만 갱신(LLM 컬럼 유지), raw에서 빠진 행 삭제
+"""
+
+from __future__ import annotations
+
+import html
+import re
+from collections.abc import Callable
+from urllib.parse import urlsplit
+
+from . import db
+from .anonymize import MASK, mask_contacts, mask_team
+from .collect_kipris import LINK_HOSTS
+from .collect_proposals import _ACRC_SECTIONS, _SEOUL_SECTIONS
+
+Fields = dict   # title, body, contest, url, year
+Extract = Callable[[dict], Fields | None]
+
+NAME = "[이름]"
+_NULL = frozenset({"", "[NULL]", "-", "없음", "해당없음", "수정 내용 반영 예정"})
+# 깨진 문자 = 사설 영역(한글 문서 전용 기호 등) + 제어문자(탭·줄바꿈 제외) + 대체 문자
+_BROKEN = re.compile("[\ue000-\uf8ff\U000f0000-\U0010ffff\x00-\x08\x0b\x0c\x0e-\x1f\ufffd]")
+# 글머리 기호: 어디서든 제거되는 것(문장 안 쓰임 없음)
+_BULLETS = re.compile(r"[○●◎◦▪▫■□◆◇▶▷►▸•※☞➢➤✔✓❍❏]")
+# 줄 앞 글머리: '-', '·', 'ㆍ', '*', '+'(문장 중간의 하이픈·가운뎃점은 유지)
+_LEAD = re.compile(r"^[\s\-–—·ㆍ*+]+(?=\S)")
+# 제목 앞 접수번호: (SPS-2607-3012689) 같은 영문 코드-숫자 묶음
+_RECEIPT = re.compile(r"^\s*[(\[]?[A-Z]{2,5}(?:-\d{2,}){2,}[)\]]?\s*")
+_YEAR = re.compile(r"(?:19|20)\d{2}(?!\d)")
+
+
+def _val(value) -> str:
+    text = html.unescape(html.unescape(str(value if value is not None else ""))).strip()   # &amp;lt; 이중 이스케이프
+    return "" if text in _NULL else text
+
+
+def _line(line: str) -> str:
+    line = _BULLETS.sub(" ", line).strip()
+    if line.count('"') % 2:   # 짝 없는 따옴표(원본 셀 따옴표 잔재) = 줄 앞·끝만
+        line = line.removeprefix('"').removesuffix('"').strip()
+    return _LEAD.sub("", line).strip()
+
+
+def clean(text: str | None, *, title: bool = False) -> str:
+    """글머리 정리. 섹션 라벨은 그대로 남는다."""
+    text = _BROKEN.sub("", _val(text)).replace("\r\n", "\n").replace("\r", "\n")
+    out = " ".join(x for x in (_line(line) for line in text.split("\n")) if x)
+    out = re.sub(r'"{2,}', '"', " ".join(out.split()))   # CSV 이중 따옴표 잔재
+    if title:
+        out = _LEAD.sub("", _RECEIPT.sub("", out)).rstrip("* ")   # 접수번호 뒤 *강조* 표시
+    return out
+
+
+def _mask(text: str, people: list[str] = ()) -> str:
+    """정리 후 적용(정리가 ○를 지우므로 마스킹 토큰은 [이름])."""
+    if not text:
+        return text
+    for person in people:
+        if _val(person):
+            text = mask_team(text, person)
+    return (mask_contacts(text) or "").replace(MASK, NAME)
+
+
+def _year(value) -> int | None:
+    m = _YEAR.match(_val(value))
+    return int(m.group(0)) if m else None
+
+
+def _sections(row: dict, parts: list[tuple[str, list[str] | str]]) -> str:
+    """[라벨] + 분할 필드 연결(구분자 없음, 원본이 긴 글을 여러 필드로 나눔). 빈 섹션 생략."""
+    out = []
+    for label, fields in parts:
+        names = [fields] if isinstance(fields, str) else fields
+        text = clean("".join(_val(row.get(f)) for f in names))
+        if text:
+            out.append(f"[{label}] {text}")
+    return " ".join(out)
+
+
+def _fields(title: str, body: str = "", *, contest: str = "", url: str = "", year: int | None = None,
+            people: list[str] = ()) -> Fields | None:
+    title = _mask(clean(title, title=True), people)
+    if not title:
+        return None
+    body = _mask(body, people)
+    return {"title": title, "body": body if body and body != title else None,
+            "contest": clean(contest) or None, "url": _val(url) or None, "year": year}
+
+
+# ---------------------------------------------------------------- 등록 매핑 소스
+
+# 레지스트리가 본문을 매핑하지 않은 소스의 본문 열(master 전용).
+# 레지스트리에 넣으면 key 열 없는 소스의 core 원천키(내용 해시)가 바뀜 → 여기서만. 댓글·주소·진행상황 = 제외.
+EXTRA_BODY: dict[str, list[str]] = {
+    "daegu_budget_project_proposals": ["사업목적", "사업효과"],
+    "daegu_budget_selected_projects": ["사업개요"],
+    "family_support_public_proposals": ["국민 제안 내용"],
+    "incheon_port_public_proposals": ["추진배경", "제안내용", "기대효과"],
+    "jeonnam_citizen_proposals": ["공개내용"],
+    "sejong_education_public_proposals": ["사업필요성설명", "사업설명", "추진방법설명", "기대효과설명"],
+    "yeonggwang_contest_proposals": ["게시물 내용(BS_CONTENT)"],
+}
+
+
+def mapped(spec: dict) -> Extract:
+    """[source.columns] = 원본 헤더 매핑. 안내 행(require_any·row_equals·exclude)·반복 헤더 행 제외."""
+    columns = {**spec["columns"]}
+    columns["body"] = [*columns.get("body", []), *EXTRA_BODY.get(spec["id"], [])]
+    scalar = {k: v for k, v in columns.items() if k not in ("body", "people")}
+    excluded = {h: {" ".join(v.split()) for v in values} for h, values in spec.get("exclude", {}).items()}
+
+    def extract(row: dict) -> Fields | None:
+        if all(row.get(h) == h for h in scalar.values()):
+            return None
+        if spec.get("require_any") and not any(_val(row.get(h)) for h in spec["require_any"]):
+            return None
+        if any(" ".join(_val(row.get(h)).split()) != " ".join(v.split()) for h, v in spec.get("row_equals", {}).items()):
+            return None
+        if any(" ".join(_val(row.get(h)).split()) in values for h, values in excluded.items()):
+            return None
+        body = " ".join(x for h in columns.get("body", []) if (x := clean(row.get(h))))
+        url = _val(row.get(columns["source_url"])) if "source_url" in columns else ""
+        return _fields(row.get(columns["title"]), body, contest=row.get(columns.get("contest", ""), ""),
+                       url=url or spec.get("url", ""), year=_year(row.get(columns.get("year", ""))),
+                       people=[row.get(h, "") for h in columns.get("people", [])])
+    return extract
+
+
+# ---------------------------------------------------------------- 고정 추출기(시드 파일·API)
+
+def _awards(spec: dict) -> Extract:
+    """창업경진대회 예선 수상작(no, host, year, award, team, item, data, part). item 첫 줄 = 제목, 나머지 = 본문."""
+    def extract(r: dict) -> Fields | None:
+        first, _, rest = _val(r.get("item")).partition("\n")
+        return _fields(first, clean(rest), url=spec["url"], year=_year(r.get("year")), people=[r.get("team", "")])
+    return extract
+
+
+def _startup_final(spec: dict) -> Extract:
+    def extract(r: dict) -> Fields | None:
+        return _fields(r.get("아이템명"), clean(r.get("서비스 내용")), url=spec["url"],
+                       year=_year(r.get("수상연도")), people=[r.get("참가팀(팀명)", "")])
+    return extract
+
+
+def _science_museum(spec: dict) -> Extract:
+    """대회명 회차 → 연도(과학전람회 = 1954+회, 발명품경진대회 = 1978+회)."""
+    def extract(r: dict) -> Fields | None:
+        contest = _val(r.get("대회명"))
+        m = re.search(r"제\s*(\d+)\s*회", contest)
+        n = int(m.group(1)) if m else None
+        year = 1954 + n if n and "과학전람회" in contest else 1978 + n if n and "발명품" in contest else None
+        people = re.split(r"[,\s]+", f"{r.get('수상자', '')} {r.get('지도교사', '')}")
+        return _fields(r.get("제목"), contest=contest, url=spec["url"], year=year,
+                       people=[p for p in people if len(p) >= 2])
+    return extract
+
+
+def _mafra(spec: dict) -> Extract:
+    def extract(r: dict) -> Fields | None:
+        contest = _val(r.get("경진대회명"))
+        return _fields(r.get("작품명"), contest=contest, url=spec["url"], year=_year(contest))
+    return extract
+
+
+def _design_idea(spec: dict) -> Extract:
+    def extract(r: dict) -> Fields | None:
+        return _fields(r.get("제목"), clean(r.get("내용")), url=spec["url"], year=_year(r.get("연도")),
+                       people=[r.get("수상자", "")])
+    return extract
+
+
+def _seoul_budget(spec: dict) -> Extract:
+    def extract(r: dict) -> Fields | None:
+        return _fields(r.get("BIZ_NM"), _sections(r, _SEOUL_SECTIONS), url=spec["url"], year=_year(r.get("FIS_YEAR")))
+    return extract
+
+
+def _seoul_law(spec: dict) -> Extract:
+    def extract(r: dict) -> Fields | None:
+        body = _sections(r, [("현황및문제점", ["CONTROVERSIAL"]), ("개선방안", ["IMPROVEMENT"])])
+        return _fields(r.get("TITLE"), body, url=spec["url"], year=_year(r.get("RDATE")))
+    return extract
+
+
+def _seoul_free(spec: dict) -> Extract:
+    """본문 없음. CONTENT = 공식 상세 페이지 URL."""
+    def extract(r: dict) -> Fields | None:
+        link = _val(r.get("CONTENT"))
+        ok = urlsplit(link).hostname == "idea.seoul.go.kr"
+        return _fields(r.get("TITLE"), url=link if ok else spec["url"], year=_year(r.get("REG_DATE")))
+    return extract
+
+
+def _gg(spec: dict) -> Extract:
+    """본문 없음(사업명·구분·지역·선정 여부만)."""
+    def extract(r: dict) -> Fields | None:
+        return _fields(r.get("BIZ_NM"), url=spec["url"], year=_year(r.get("RCPT_YR")))
+    return extract
+
+
+def _acrc(spec: dict) -> Extract:
+    """상세(resultData) 또는 목록 항목(상세 없음 = 제목만, 목록 제목은 '..'로 잘림). 제안자 성명 = 마스킹 대상."""
+    def extract(r: dict) -> Fields | None:
+        return _fields(r.get("title"), _sections(r, _ACRC_SECTIONS), url=spec["url"],
+                       year=_year(r.get("regDate")), people=[r.get("peterName", "")])
+    return extract
+
+
+def _kipris(spec: dict) -> Extract:
+    def extract(r: dict) -> Fields | None:
+        link = _val(r.get("originalLink"))
+        return _fields(r.get("ideaName"), clean(r.get("ideaContent")), contest=r.get("contestName", ""),
+                       url=link if urlsplit(link).hostname in LINK_HOSTS else spec["url"],
+                       year=_year(r.get("contestYear")))
+    return extract
+
+
+BY_ADAPTER: dict[str, Callable[[dict], Extract]] = {
+    "awards_csv": _awards, "startup_final_xlsx": _startup_final, "science_museum_csv": _science_museum,
+    "mafra_contest_csv": _mafra, "design_idea_csv": _design_idea,
+}
+# raw source id → 추출기. seoul_budget_selected = 접수 건의 선정 정보(같은 제안) → master 행 없음.
+BY_SOURCE: dict[str, Callable[[dict], Extract]] = {
+    "seoul_budget_proposals": _seoul_budget, "seoul_law_proposals": _seoul_law,
+    "seoul_free_suggestions": _seoul_free, "gyeonggi_budget_proposals": _gg,
+    "acrc_open_proposals": _acrc, "kipris_idea_api": _kipris,
+}
+SKIP = frozenset({"seoul_budget_selected"})
+
+
+def extractor(spec: dict) -> Extract:
+    if spec["id"] in BY_SOURCE:
+        return BY_SOURCE[spec["id"]](spec)
+    if spec.get("adapter") in BY_ADAPTER:
+        return BY_ADAPTER[spec["adapter"]](spec)
+    if spec.get("columns", {}).get("title"):
+        return mapped(spec)
+    raise ValueError(f"source {spec['id']}: no extractor")
+
+
+def refine(*, dsn: str, sources: list[dict], only: str | None = None) -> list[dict]:
+    specs = {s["id"]: s for s in sources}
+    results = []
+    with db.connect(dsn) as conn:
+        present = [s for (s,) in conn.execute("SELECT DISTINCT source FROM raw ORDER BY 1")]
+        for source in present:
+            if (only and source != only) or source in SKIP or source.endswith(".detail"):
+                continue
+            if source not in specs:
+                results.append({"source": source, "status": "error", "error": "not in registry"})
+                continue
+            extract = extractor(specs[source])
+            rows, dropped = [], 0
+            # 상세 페이지 본문(master.load_detail) = 목록 본문 뒤에 이어 붙임
+            for key, payload, fetched, detail in conn.execute(
+                    "SELECT r.key, r.payload, r.fetched, d.payload->>'body' FROM raw r"
+                    " LEFT JOIN raw d ON d.source = r.source || '.detail' AND d.key = r.key"
+                    " WHERE r.source = %s", (source,)):
+                f = extract(payload)
+                if f is None:
+                    dropped += 1
+                    continue
+                if extra := _mask(clean(detail)):
+                    body = " ".join(x for x in (f["body"], extra) if x)
+                    f["body"] = body if body != f["title"] else None
+                rows.append((source, key, f["title"], f["body"], f["contest"], f["contest"], f["url"], f["year"],
+                             fetched))
+            with conn.cursor() as cur:
+                cur.executemany(
+                    # contest: 원본 값 있으면 O, 없으면 LLM 값(X) 유지
+                    "INSERT INTO master (api, key, title, body, contest, origin, url, year, fetched)"
+                    " VALUES (%s, %s, %s, %s, %s, CASE WHEN %s::text IS NOT NULL THEN 'O' END, %s, %s, %s)"
+                    " ON CONFLICT (api, key) DO UPDATE SET title = EXCLUDED.title, body = EXCLUDED.body,"
+                    " contest = coalesce(EXCLUDED.contest, CASE WHEN master.origin = 'X' THEN master.contest END),"
+                    " origin = CASE WHEN EXCLUDED.contest IS NOT NULL THEN 'O' WHEN master.origin = 'X' THEN 'X' END,"
+                    " url = EXCLUDED.url, year = EXCLUDED.year, fetched = EXCLUDED.fetched",
+                    rows)
+                cur.execute("CREATE TEMP TABLE IF NOT EXISTS keep (key text PRIMARY KEY) ON COMMIT DELETE ROWS")
+                cur.executemany("INSERT INTO keep VALUES (%s)", [(r[1],) for r in rows])
+                removed = cur.execute("DELETE FROM master m WHERE api = %s AND NOT EXISTS"
+                                      " (SELECT 1 FROM keep k WHERE k.key = m.key)", (source,)).rowcount
+            conn.commit()
+            results.append({"source": source, "status": "ok", "rows": len(rows), "dropped": dropped,
+                            "removed": removed})
+    return results

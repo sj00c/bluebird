@@ -1,5 +1,5 @@
 #!/bin/sh
-# 로컬 DB 최초 기동(볼륨이 비어 있을 때 한 번): Postgres 하나에 원본 DB(bluebird_core)와 공개 DB(bluebird_publish).
+# 로컬 DB 최초 기동(볼륨이 비어 있을 때 한 번): Postgres 하나에 원본 DB(bluebird_core)·공개 DB(bluebird_publish)·정제 DB(bluebird_master).
 # 역할은 쓰는 쪽마다 하나씩, 비밀번호는 .env의 DB_PASSWORD 하나를 같이 쓴다(로컬 데모용).
 #   bluebird        : 슈퍼유저. 처리 작업(원본 DB)·관리
 #   bb_api          : 콘솔 백엔드 API. 원본 DB 최소 권한(부여 = core 마이그레이션 0008)
@@ -15,10 +15,14 @@ CREATE ROLE bb_publisher    LOGIN PASSWORD :'pw' NOSUPERUSER NOCREATEDB NOCREATE
 CREATE ROLE bb_inbox_reader LOGIN PASSWORD :'pw' NOSUPERUSER NOCREATEDB NOCREATEROLE;
 CREATE ROLE bb_portal       LOGIN PASSWORD :'pw' NOSUPERUSER NOCREATEDB NOCREATEROLE;
 CREATE DATABASE bluebird_publish;
+CREATE DATABASE bluebird_master;
 SQL
 psql -v ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname bluebird_core <<'SQL'
 REVOKE ALL ON DATABASE bluebird_core FROM PUBLIC;
 GRANT CONNECT ON DATABASE bluebird_core TO bb_api;
+SQL
+psql -v ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname bluebird_master <<'SQL'
+REVOKE ALL ON DATABASE bluebird_master FROM PUBLIC;
 SQL
 psql -v ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname bluebird_publish <<'SQL'
 CREATE EXTENSION IF NOT EXISTS pg_trgm;

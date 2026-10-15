@@ -18,7 +18,7 @@ class Rec:
 
 POLICY = Policy(
     grades={"open": "O", "kipris": "pending", "secret": "deny"},
-    rules={("kipris", "title", "trace"): True},
+    rules={("kipris", "title", "trace"): True, ("kipris", "body", "trace"): False},
 )
 
 
@@ -41,8 +41,8 @@ def test_open_source_title_allowed_and_recorded():
 
 
 @pytest.mark.parametrize("fields,purpose,why", [
-    ({"body": ("kipris", "본문")}, "trace", "export_grade=pending"),
-    ({"title": ("kipris", "제목")}, "llm", "export_grade=pending"),   # 규칙은 trace만 허용
+    ({"body": ("kipris", "본문")}, "trace", "export_policy denies"),   # 명시 규칙 = 우선
+    ({"dataset_url": ("kipris", "x")}, "llm", "export_grade=pending"),   # 기본 반출 필드 밖
     ({"title": ("secret", "x")}, "trace", "deny"),
     ({"objection_body": ("open", "x")}, "llm", "never exported"),
     ({"team": ("open", "x")}, "trace", "never exported"),
@@ -153,3 +153,27 @@ def test_response_limit_stops_consumption_and_closes_stream():
     assert stream.reads == 2
     assert stream.closed
     assert rec.calls[-1].decision == "blocked"
+
+
+def test_pending_source_content_is_exportable():
+    assert POLICY.check("kipris", "body", "llm") is None
+    assert POLICY.check("kipris", "title", "llm") is None
+
+
+def test_concurrent_llm_calls_keep_their_own_body(monkeypatch):
+    import threading
+    from concurrent.futures import ThreadPoolExecutor
+
+    monkeypatch.setenv("OPENAI_API_KEY", "k")
+    gate = threading.Barrier(4)
+
+    def handler(request):
+        return httpx.Response(200, json={"choices": [{"message": {"content": request.content.decode()[-40:]}}]})
+
+    def call(i):
+        gate.wait()
+        return eg.llm(provider="openai", model="m", system="s", instruction="i", fields={"title": ("open", f"제목{i}")})
+
+    with _eg(handler) as eg, ThreadPoolExecutor(4) as pool:
+        texts = [t for t, _ in pool.map(call, range(4))]
+    assert all(f"제목{i}" in t for i, t in enumerate(texts))

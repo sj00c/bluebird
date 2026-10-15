@@ -1,6 +1,6 @@
 """KIPRIS Plus 아이디어DB(ideaDBInfo) 전수 수집 → kipris_idea_api 어댑터용 CSV.
 
-- `ideaName=%` 와일드카드 = 전체. docsStart 1부터 docsCount(≤100)씩. 38,563건 ≈ 386회(월 무료 1,000회)
+- `ideaName=%` 와일드카드 = 전체. docsStart 1부터 docsCount(≤100)씩. 38,563건 ≈ 387회(키 호출 한도 없음)
 - 키 = drawingPath의 CN(관리번호) → 없으면 h:해시(원문 링크·제목·공모전·연도·주최). 해시 충돌(다른 내용) = 본문 해시 덧붙임
 - 성명 필드 없음. originalLink = 원 공모전 상세 URL(허용 호스트만, 그 외 빈 값)
 """

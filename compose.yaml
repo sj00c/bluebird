@@ -13,6 +13,7 @@ x-backend-env: &backend-env
   BB_PUBLISH_DSN: postgresql://bb_publisher:${DB_PASSWORD}@db:5432/bluebird_publish
   BB_PUBLISH_MIGRATOR_DSN: postgresql://bb_migrator:${DB_PASSWORD}@db:5432/bluebird_publish
   BB_INBOX_DSN: postgresql://bb_inbox_reader:${DB_PASSWORD}@db:5432/bluebird_publish
+  BB_MASTER_DSN: postgresql://bluebird:${DB_PASSWORD}@db:5432/bluebird_master
   BB_SOURCES: /config/sources.toml
   BB_CONTEST_SOURCES: /config/contest-sources.toml
   BB_SEED_DIR: /seed

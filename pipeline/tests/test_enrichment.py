@@ -53,7 +53,7 @@ def test_field_mapping_checks_original_policy_name_and_audits_it():
     def handle(request):
         requests.append(request)
         return httpx.Response(200, json={"total": 0, "items": []})
-    with Egress(policy=Policy({"open": "O", "restricted": "pending"}), recorder=calls.append,
+    with Egress(policy=Policy({"open": "O", "restricted": "deny"}), recorder=calls.append,
                 transport=httpx.MockTransport(handle), proxy="") as eg:
         eg.get("trace", enrichment.NEWS_URL, fields={"title": ("open", "검색어")},
                field_params={"title": "query"}, params={"display": 10})

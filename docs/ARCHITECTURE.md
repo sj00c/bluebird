@@ -13,7 +13,7 @@
 
 | 서비스 | 하는 일 | 주소 |
 |---|---|---|
-| `db` | PostgreSQL 16 + pgvector 1개. DB 2개: `bluebird_core`(원본), `bluebird_publish`(공개) | 127.0.0.1:54329 |
+| `db` | PostgreSQL 16 + pgvector 1개. DB 3개: `bluebird_core`(원본), `bluebird_publish`(공개), `bluebird_master`(정제) | 127.0.0.1:54329 |
 | `api` | FastAPI(`bluebird.api`). 콘솔의 유일한 백엔드. DB 계정 `bb_api` | 127.0.0.1:8000 |
 | `portal` | 공개 화면(Next.js). 공개 DB 읽기 + 이의 제기 쓰기만. DB 계정 `bb_portal` | 127.0.0.1:3000 |
 | `console` | 담당자 검토 화면(Next.js). `api`와만 통신 | 127.0.0.1:3001 |
@@ -191,6 +191,17 @@ flowchart LR
 | `bb_portal` | publish 읽기 + inbox INSERT만 |
 
 - 갱신 = 새 스키마 생성 → RENAME. 포털 = 이전 또는 새 스냅샷만 조회
+
+### 3.5.1 정제 DB (`bluebird_master`)
+
+- 같은 Postgres 내 별도 DB. `bluebird_core`와 독립(읽지도 쓰지도 않음, egress 감사 기록만 core)
+- 표 2개(마이그레이션 `master/0001`). 컨럼명 = 영어 한 단어
+  - `raw(source, key, payload jsonb, fetched)`: 받은 그대로. 파일 = 행(원본 헤더 → 값), API = 응답 레코드 전체
+  - `master(api, key, title, body, contest, url, year, fetched, keyword, problem, feature, target, domain)`: 정제본. keyword 이하 = LLM. domain = 고정 목록(CHECK)
+- 적재: `bluebird master files`(수집해 둔 CSV·xlsx, 소스 단위 교체), `bluebird master api`(API 재수집, 1,000건마다 커밋, 국민신문고 = 일 한도 안에서 이어 받음)
+- 정제: `bluebird master refine`(`bluebird.refine`). raw → master 기본 컨럼. 소스별 추출(등록 매핑 또는 고정 추출기) + 글머리 정리(섹션 라벨 유지, 기호·깨진 문자·짝 없는 따옴표·제목 접수번호 제거, 공백 하나) + 연락처·성명 마스킹(`[전화]`·`[이메일]`·`[이름]`). contest = 원본 행 값만. 재실행 = LLM 컨럼 유지. `seoul_budget_selected` = 접수 건의 선정 정보 → master 행 없음
+- 상세 본문: `bluebird master detail`. 목록에 본문 없는 서울 자유제안·디자인진흥원 3종 = 공식 상세 페이지 본문 영역만(웹 크롤링, 쿠키 없이) → raw `<소스>.detail`, refine이 본문에 붙임. 크롤링 대체(API·파일) = 남은 과제
+- LLM 컨럼: `bluebird master fill`(`bluebird.fill`). 소스별 10행 묶음 1회 호출(egress llm), 소스 맥락(레지스트리 이름·주제·주관·대회/제도명) 포함. 근거 없는 problem·feature·target = null, domain = 고정 목록(없으면 기타), contest = 빈 행만. 재실행 = keyword 빈 행만
 
 ### 3.6 portal (web/portal)
 

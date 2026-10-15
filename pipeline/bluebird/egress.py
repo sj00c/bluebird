@@ -10,6 +10,7 @@
 from __future__ import annotations
 
 import hashlib
+import http.cookiejar
 import json
 import os
 from collections.abc import Callable, Mapping
@@ -30,11 +31,12 @@ ALLOWED_HOSTS = (
     "www.science.go.kr",
     "award.kidp.or.kr",
     "openapi.seoul.go.kr", "openapi.gg.go.kr",
+    "idea.seoul.go.kr",
 )
 # 과거 허용했다가 뺀 호스트. 새 호출 = 차단. 당시 허용 감사 행은 G10 반출 통제에서 위반으로 세지 않음
 RETIRED_HOSTS = ("openapi.naver.com",)   # 2026-10-12 NAVER 검색 API → API HUB(naverapihub.apigw.ntruss.com)
 
-# export_grade='O' 소스에서 정책 행 없이 반출 가능한 내용 필드. 그 외 = core.export_policy 명시 필수
+# deny 아닌 소스에서 정책 행 없이 반출 가능한 내용 필드(pending = 차단 아님). 그 외 = core.export_policy 명시 필수
 DEFAULT_EXPORTABLE = frozenset({
     "title", "body", "problem", "solution", "used_data", "missing_data", "category", "year", "domain",
     "dataset_title", "dataset_description", "announcement_title", "announcement_summary", "law_title", "change_title",
@@ -89,7 +91,7 @@ class Policy:
         for key in ((source_id, fname, purpose), ("*", fname, purpose)):
             if key in self.rules:
                 return None if self.rules[key] else f"export_policy denies {source_id}.{fname} for {purpose}"
-        if grade == "O" and fname in DEFAULT_EXPORTABLE:
+        if fname in DEFAULT_EXPORTABLE:
             return None
         return f"{source_id}.{fname} not allowed for {purpose} (export_grade={grade})"
 
@@ -154,15 +156,16 @@ class Response:
 class Egress:
     def __init__(self, *, policy: Policy, recorder: Callable[[Call], int | None],
                  proxy: str | None = None, transport: httpx.BaseTransport | None = None,
-                 timeout: float = 60.0, max_bytes: int = 300 * 1024 * 1024):
+                 timeout: float = 60.0, max_bytes: int = 300 * 1024 * 1024, cookies: bool = True):
         proxy = (proxy if proxy is not None else os.environ.get("BLUEBIRD_EGRESS_PROXY")) or None
         self._policy = policy
         self._record = recorder
         self._max_bytes = max_bytes
-        self._expected_sha: str | None = None
         self._client = httpx.Client(
             trust_env=False, proxy=proxy, transport=transport, timeout=timeout, follow_redirects=False,
             event_hooks={"request": [self._verify_body]},
+            # cookies=False: 요청마다 새 세션(세션 단위로 호출 수를 제한하는 상세 페이지 대량 수집)
+            cookies=None if cookies else http.cookiejar.CookieJar(http.cookiejar.DefaultCookiePolicy(allowed_domains=[])),
             headers={"User-Agent": "bluebird-egress/1"},
         )
 
@@ -184,7 +187,8 @@ class Egress:
     # ------------------------------------------------------------ 내부
     def _verify_body(self, request: httpx.Request) -> None:
         sent = hashlib.sha256(request.read()).hexdigest()
-        if self._expected_sha is not None and sent != self._expected_sha:
+        expected = request.extensions.get("bb_body_sha")   # 요청별(스레드 공유 상태 없음)
+        if expected is None or sent != expected:
             raise EgressBlocked("request body differs from the body egress built")
 
     def _gate(self, purpose: str, fields: Mapping[str, Field]) -> tuple[list[str], list[str], str | None]:
@@ -214,17 +218,17 @@ class Egress:
         call.payload_sha256 = hashlib.sha256(body).hexdigest() if body is not None else None
         call.bytes_out = len(body) if body is not None else 0
         q = {**(params or {}), **(secret_params or {})}
-        self._expected_sha = hashlib.sha256(body or b"").hexdigest()
         resp = None
         try:
             request = self._client.build_request(method, url, params=q or None, content=body, headers=headers)
+            request.extensions["bb_body_sha"] = hashlib.sha256(body or b"").hexdigest()
             resp = self._client.send(request, stream=True)
             hops = 0
             while resp.is_redirect and hops < 5:
                 nxt = resp.next_request
                 if nxt is None or not host_allowed(nxt.url.host):
                     raise EgressBlocked(f"redirect to {nxt.url.host if nxt else '?'} not in allowlist")
-                self._expected_sha = hashlib.sha256(nxt.read()).hexdigest()
+                nxt.extensions["bb_body_sha"] = hashlib.sha256(nxt.read()).hexdigest()
                 resp.close()
                 resp = self._client.send(nxt, stream=True)
                 hops += 1
@@ -245,7 +249,6 @@ class Egress:
             self._record(call)
             raise EgressTransportError(call.reason) from e
         finally:
-            self._expected_sha = None
             if resp is not None:
                 resp.close()
         call.http_status, call.bytes_in = resp.status_code, len(content)
