@@ -1,4 +1,3 @@
-import Link from "next/link";
 import type { Detail, Me } from "@/lib/contracts";
 import { when } from "@/lib/labels";
 import { ReviewForm } from "./workflow-forms";
@@ -89,16 +88,6 @@ export function ApprovalSection({ detail: d, me }: { detail: Detail; me: Me }) {
           )}
         </>
       )}
-      <div className="publication-note">
-        <b>공개 배치 필요</b>
-        <ul className="instructions">
-          <li>최종 승인 ≠ 즉시 공개</li>
-          <li>jobs 공개 배치 → 공개 DB 반영</li>
-        </ul>
-        <Link className="lnk" href="/overview">
-          공개 배치 상태 확인 →
-        </Link>
-      </div>
     </section>
   );
 }

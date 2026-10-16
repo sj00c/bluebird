@@ -13,7 +13,7 @@ from importlib import resources
 
 import psycopg
 
-TARGETS = ("core", "publish", "master")
+TARGETS = ("core", "master")
 
 
 class MigrationChecksumError(RuntimeError):

@@ -10,7 +10,7 @@ from datetime import date
 import psycopg
 import pytest
 
-from bluebird import db, publish, wording
+from bluebird import db, export, wording
 from bluebird.db import MigrationChecksumError
 from bluebird.signals import catalog
 
@@ -105,36 +105,6 @@ def test_diagnosis_requires_evidence_and_missing_data(fresh):
         c.commit()
 
 
-def test_publish_swap(fresh):
-    """publish 템플릿 교체: 두 번 push해도 publish 하나만 남고, 미등록 템플릿·역행 스냅샷은 거부."""
-    pub = fresh.rsplit("/", 1)[0] + "/bbtest_pub"
-    with psycopg.connect(DSN, autocommit=True) as c:
-        c.execute("DROP DATABASE IF EXISTS bbtest_pub WITH (FORCE)")
-        c.execute("CREATE DATABASE bbtest_pub")
-        for role in ("bb_portal", "bb_publisher", "bb_inbox_reader"):
-            if not c.execute("SELECT 1 FROM pg_roles WHERE rolname=%s", (role,)).fetchone():
-                c.execute(f"CREATE ROLE {role}")
-    with psycopg.connect(pub, autocommit=True) as c:
-        c.execute("CREATE EXTENSION pg_trgm")
-    db.migrate(pub, "publish")
-    with psycopg.connect(fresh) as c:
-        _seed_idea(c)
-        c.commit()
-    with pytest.raises(publish.PublishError, match="not the registered"):
-        publish.push(core_dsn=fresh, publish_dsn=pub)
-    publish.register_template(pub)
-    r1 = publish.push(core_dsn=fresh, publish_dsn=pub)
-    r2 = publish.push(core_dsn=fresh, publish_dsn=pub)
-    assert r1["idea"] == r2["idea"] == 1 and r2["snapshot_id"] > r1["snapshot_id"]
-    with psycopg.connect(pub) as c:
-        schemas = {r[0] for r in c.execute("SELECT nspname FROM pg_namespace WHERE nspname LIKE 'publish%'")}
-        assert schemas == {"publish"}
-        assert c.execute("SELECT count(*) FROM meta.snapshot_log").fetchone()[0] == 2
-        assert c.execute("SELECT has_table_privilege('bb_portal','publish.idea','SELECT')").fetchone()[0]
-        # 미승인 카드 내용(problem) 미반출
-        assert c.execute("SELECT problem FROM publish.idea").fetchone()[0] is None
-
-
 def test_ingest_keeps_body_metadata_on_unchanged_and_failed_attempts(fresh, tmp_path):
     from bluebird import ingest
 
@@ -211,21 +181,6 @@ def test_ingest_retires_vanished_rows_and_cards_follow(fresh, tmp_path):
     assert rep["by_kind"]["local_extract"]["with_missing_data"] == 5  # 키 없음 → full 아님
 
 
-def _pub_db(name="bbtest_pub2"):
-    pub = DSN.rsplit("/", 1)[0] + f"/{name}"
-    with psycopg.connect(DSN, autocommit=True) as c:
-        c.execute(f"DROP DATABASE IF EXISTS {name} WITH (FORCE)")
-        c.execute(f"CREATE DATABASE {name}")
-        for role in ("bb_portal", "bb_publisher", "bb_inbox_reader"):
-            if not c.execute("SELECT 1 FROM pg_roles WHERE rolname=%s", (role,)).fetchone():
-                c.execute(f"CREATE ROLE {role}")
-    with psycopg.connect(pub, autocommit=True) as c:
-        c.execute("CREATE EXTENSION pg_trgm")
-    db.migrate(pub, "publish")
-    publish.register_template(pub)
-    return pub
-
-
 LAW_XML = ("<?xml version='1.0' encoding='UTF-8'?><법령><기본정보><법령명_한글><![CDATA[드론법]]></법령명_한글>"
            "<공포일자>20251001</공포일자><공포번호>12345</공포번호><시행일자>20260101</시행일자></기본정보></법령>")
 
@@ -245,7 +200,7 @@ def _law_egress(dsn):
 
 
 def test_funnel_end_to_end_human_path(fresh, tmp_path):
-    """키 없는 경로: 사람 흔적·진단(근거) → 사람이 넣은 바뀐 것 → 사람 판정 → S → 승인 → push → 6단계."""
+    """키 없는 경로: 사람 흔적·진단(근거) → 사람이 넣은 바뀐 것 → 사람 판정 → S → 승인 → 5단계."""
     from bluebird import funnel
 
     s0 = _csv(tmp_path / "s0.csv", [_row("1", "드론 비행 데이터")])
@@ -257,10 +212,10 @@ def test_funnel_end_to_end_human_path(fresh, tmp_path):
 
     def stage():
         with psycopg.connect(fresh) as c:
-            return c.execute("SELECT s0,s1,s2,s3,s4,s5,s6 FROM core.revival_candidate WHERE idea_id=%s",
+            return c.execute("SELECT s0,s1,s2,s3,s4,s5 FROM core.revival_candidate WHERE idea_id=%s",
                              (iid,)).fetchone()
 
-    assert stage() == (True, False, False, False, False, False, False)
+    assert stage() == (True, False, False, False, False, False)
     funnel.trace_pending(dsn=fresh)  # 사람 manual 없으면 pending
     assert stage()[1] is False
     funnel.trace_manual(dsn=fresh, idea_id=iid, result="none", status=None, url=None, note="검색 결과 없음", by="t")
@@ -330,43 +285,23 @@ def test_funnel_end_to_end_human_path(fresh, tmp_path):
                          " ON e.id=x.evidence_id WHERE x.target_type='timeliness'").fetchall()
     assert len(rows) == 2 and all("scorer-kim" not in f"{t}{e}" for _, t, e in rows)
     funnel.approve(dsn=fresh, idea_id=iid, by="t")
-    assert stage()[5] is True and stage()[6] is False
-    with psycopg.connect(fresh) as c:  # 공개는 public_ok 소스만, push 후에만 6단계
-        c.execute("UPDATE core.source SET public_ok = true WHERE id='s'")
-        c.commit()
-    pub = _pub_db()
-    funnel.compute_top(dsn=fresh, week=date(2026, 10, 12))
-    res = publish.push(core_dsn=fresh, publish_dsn=pub)
-    assert (res["diagnosis"], res["change"], res["timeliness"], res["weekly_top"]) == (1, 1, 1, 1)
-    assert stage()[6] is True
-    with psycopg.connect(pub) as c:
-        url = c.execute("SELECT url FROM publish.change").fetchone()[0]
-        ev = c.execute("SELECT count(*) FROM publish.evidence").fetchone()[0]
-        # v2: S 근거(채점 축당 1개) 공개 + evidence 행 실재
-        tl_ev = c.execute("SELECT t.n_scored, cardinality(t.evidence_ids), (SELECT count(*) FROM publish.evidence e"
-                          " WHERE e.id = ANY(t.evidence_ids)) FROM publish.timeliness t").fetchone()
-    assert url.startswith("https://www.law.go.kr/") and ev >= 4 and tl_ev == (2, 2, 2)
-    with psycopg.connect(pub) as c:  # 채점자(by) 비공개
-        assert c.execute("SELECT count(*) FROM publish.evidence WHERE concat(title, excerpt) LIKE '%%scorer-kim%%'"
-                         ).fetchone()[0] == 0
-    rep = funnel.report(dsn=fresh)
-    assert rep["total"]["s6"] == 1
+    assert stage()[5] is True
+    assert funnel.report(dsn=fresh)["total"]["s5"] == 1
 
-    # 승인 뒤 진단을 고치면 공개가 철회되고, 다시 push해도 나가지 않는다(검토한 내용만 공개)
+    def live():
+        with psycopg.connect(fresh) as c:
+            return c.execute("SELECT count(*) FROM core.publication WHERE revoked_at IS NULL").fetchone()[0]
+
+    assert live() == 4  # 카드·진단·S + 바뀐 것 매칭
+    # 승인 뒤 진단을 고치면 승인이 철회된다(검토한 내용만 승인 유지)
     funnel.diagnose_set(dsn=fresh, idea_id=iid, cause="R", rationale="비행 규제(수정)",
                         evidence=[("https://www.law.go.kr/x", "비행 승인")], by="t2")
-    assert stage()[5:] == (False, False)
-    res = publish.push(core_dsn=fresh, publish_dsn=pub)
-    assert (res["diagnosis"], res["change"], res["timeliness"], res["weekly_top"]) == (0, 0, 0, 0)
-    # 재승인 → 공개, 이후 반려 → 아이디어·바뀐 것·weekly_top 전부 내림
+    assert stage()[5] is False
+    # 재승인 → 5단계, 이후 반려 → 아이디어·바뀐 것 승인 전부 철회
     funnel.approve(dsn=fresh, idea_id=iid, by="t")
-    funnel.compute_top(dsn=fresh, week=date(2026, 10, 12))
-    res = publish.push(core_dsn=fresh, publish_dsn=pub)
-    assert (res["diagnosis"], res["change"], res["weekly_top"]) == (1, 1, 1) and stage()[6] is True
+    assert stage()[5] is True
     funnel.reject(dsn=fresh, idea_id=iid, by="t", note="근거 부족")
-    res = publish.push(core_dsn=fresh, publish_dsn=pub)
-    assert (res["diagnosis"], res["change"], res["timeliness"], res["weekly_top"]) == (0, 0, 0, 0)
-    assert stage()[5:] == (False, False)
+    assert stage()[5] is False and live() == 0
     # 원인을 바꾸면 맞지 않는 매칭은 rejected로 빠진다
     funnel.diagnose_set(dsn=fresh, idea_id=iid, cause="T", rationale="기술", evidence=[("https://a.kr/t", "기술")],
                         by="t")
@@ -375,8 +310,9 @@ def test_funnel_end_to_end_human_path(fresh, tmp_path):
         assert c.execute("SELECT count(*) FROM core.x_evidence WHERE target_type='diagnosis' AND target_id=%s",
                          (iid,)).fetchone()[0] == 1  # 이전 원인(R)의 근거는 떨어졌다
 
-def test_s6_needs_applied_snapshot_and_future_change_does_not_pass(fresh):
-    """push 미반영(applied_at 없음) → 6단계 아님. 미래 시행일 바뀐 것 → 3단계 미통과."""
+
+def test_future_change_does_not_pass(fresh):
+    """미래 시행일 바뀐 것 → 3단계 미통과. 시행일이 지나면 통과 → 승인 → 5단계."""
     from bluebird import funnel
 
     with psycopg.connect(fresh) as c:
@@ -400,52 +336,9 @@ def test_s6_needs_applied_snapshot_and_future_change_does_not_pass(fresh):
         assert c.execute("SELECT s3 FROM core.revival_candidate WHERE idea_id=%s", (iid,)).fetchone()[0] is True
     funnel.score_set(dsn=fresh, idea_id=iid, scores={"policy": 4, "tech": 4},
                      evidence={"policy": "https://a.kr/p", "tech": "https://a.kr/t"}, by="t")
-    with psycopg.connect(fresh) as c:
-        c.execute("UPDATE core.source SET public_ok = true WHERE id='s'")
-        c.commit()
-    funnel.approve(dsn=fresh, idea_id=iid, by="t")
-    with psycopg.connect(fresh) as c:  # push가 기록만 하고 반영 전에 실패한 경우
-        c.execute("INSERT INTO core.publish_snapshot (template_version, template_sha256, rows) VALUES ('v1','x','{}')")
-        c.commit()
-        assert c.execute("SELECT s5, s6 FROM core.revival_candidate WHERE idea_id=%s", (iid,)).fetchone() == (True, False)
-    publish.push(core_dsn=fresh, publish_dsn=_pub_db())
-    with psycopg.connect(fresh) as c:
-        assert c.execute("SELECT s6 FROM core.revival_candidate WHERE idea_id=%s", (iid,)).fetchone()[0] is True
-        assert c.execute("SELECT revived_ids FROM core.publish_snapshot WHERE applied_at IS NOT NULL"
-                         " ORDER BY id DESC LIMIT 1").fetchone()[0] == [iid]
-
-    # S 근거가 채점 축보다 적으면: 트리거가 공개를 철회하고(1차), 트리거를 우회해도 publish가 거부한다(2차, G9)
-    with psycopg.connect(fresh) as c:
-        c.execute("ALTER TABLE core.x_evidence DISABLE TRIGGER x_evidence_revoke")
-        c.execute("DELETE FROM core.x_evidence WHERE target_type='timeliness' AND evidence_id ="
-                  " (SELECT min(evidence_id) FROM core.x_evidence WHERE target_type='timeliness')")
-        c.execute("ALTER TABLE core.x_evidence ENABLE TRIGGER x_evidence_revoke")
-        c.commit()
-    with pytest.raises(publish.PublishError, match="fewer evidence than scored axes"):
-        publish.push(core_dsn=fresh, publish_dsn=_pub_db())
-
-    # 구 형식 S 근거(excerpt에 채점자 이름) = 재채점까지 비공개
-    funnel.score_set(dsn=fresh, idea_id=iid, scores={"policy": 4, "tech": 4},
-                     evidence={"policy": "https://a.kr/p", "tech": "https://a.kr/t"}, by="t")
     funnel.approve(dsn=fresh, idea_id=iid, by="t")
     with psycopg.connect(fresh) as c:
-        c.execute("UPDATE core.evidence SET excerpt='by 홍길동' WHERE id = (SELECT min(evidence_id)"
-                  " FROM core.x_evidence WHERE target_type='timeliness')")
-        c.commit()
-    with pytest.raises(publish.PublishError, match="old format"):
-        publish.push(core_dsn=fresh, publish_dsn=_pub_db())
-
-
-def test_publish_refuses_forbidden_wording_in_own_text(fresh):
-    with psycopg.connect(fresh) as c:
-        _seed_idea(c)
-        c.execute("UPDATE core.source SET public_ok = true WHERE id='s'")
-        c.execute("UPDATE core.idea_card SET problem='그때까지 없던 데이터로 푼다'")
-        c.execute("INSERT INTO core.publication (target_type, target_id, scope, approved_by)"
-                  " VALUES ('idea','ID-2019-aaaaaaaaaa','card','t')")
-        c.commit()
-        with pytest.raises(publish.PublishError, match="forbidden wording"):
-            publish.collect(c)
+        assert c.execute("SELECT s5 FROM core.revival_candidate WHERE idea_id=%s", (iid,)).fetchone()[0] is True
 
 
 def test_match_judge_llm_path(fresh, monkeypatch):
@@ -541,8 +434,8 @@ def test_cards_llm_path_fallback_and_full_check(fresh, tmp_path, monkeypatch):
                          " WHERE idea_id='ID-2019-aaaaaaaaaa'").fetchone() == ("title_only", "rule", [])
 
 
-def test_only_eligible_matches_are_approved_and_published(fresh):
-    """적격 매칭 하나 + 미래 날짜 매칭 하나: 승인·공개되는 것은 적격 매칭뿐."""
+def test_only_eligible_matches_are_approved(fresh):
+    """적격 매칭 하나 + 미래 날짜 매칭 하나: 승인되는 것은 적격 매칭뿐."""
     from bluebird import funnel
 
     with psycopg.connect(fresh) as c:
@@ -564,19 +457,12 @@ def test_only_eligible_matches_are_approved_and_published(fresh):
     funnel.score_set(dsn=fresh, idea_id=iid, scores={"policy": 4, "tech": 4},
                      evidence={"policy": "https://a.kr/now", "tech": "https://a.kr/t"}, by="t")
     assert len(funnel.approve(dsn=fresh, idea_id=iid, by="t")["changes"]) == 1
-    pub = _pub_db()
-    publish.push(core_dsn=fresh, publish_dsn=pub)
-    with psycopg.connect(pub) as c:
-        assert [r[0] for r in c.execute("SELECT url FROM publish.change")] == ["https://a.kr/now"]
-    # 승인 후 미래 매칭 강제 approved → 여전히 비공개
+    # 승인 후 미래 매칭 강제 approved
     with psycopg.connect(fresh) as c:
         c.execute("UPDATE core.change_match SET status='approved' WHERE change_id=%s", (later,))
         c.execute("INSERT INTO core.publication (target_type, target_id, scope, approved_by)"
                   " SELECT 'change_match', id::text, 'change', 't' FROM core.change_match WHERE change_id=%s", (later,))
         c.commit()
-    publish.push(core_dsn=fresh, publish_dsn=pub)
-    with psycopg.connect(pub) as c:
-        assert [r[0] for r in c.execute("SELECT url FROM publish.change")] == ["https://a.kr/now"]
     # 후보에서만 쓰는 바뀐 것을 고쳐도 공개는 그대로, 승인 매칭이 쓰는 바뀐 것의 확인 상태가 바뀌면 철회
     def live():
         with psycopg.connect(fresh) as c:
@@ -763,8 +649,6 @@ def test_export_xlsx_marks_share_from_source_flag(fresh, tmp_path):
     """export: xlsx 1파일 전체. share 열 = core.source.share_ok(레지스트리 share). 소스 표 = 소스 수 일치."""
     from openpyxl import load_workbook
 
-    from bluebird import export
-
     with psycopg.connect(fresh) as c:
         _seed_idea(c)
         c.execute("UPDATE core.source SET share_ok = true WHERE id = 's'")
@@ -788,8 +672,47 @@ def test_export_xlsx_marks_share_from_source_flag(fresh, tmp_path):
     assert by_source["h"][hdr.index("share")] == "보류" and by_source["h"][hdr.index("contest")] == "보류 소스"   # 대회명 비면 소스명
     assert by_source["s"][hdr.index("canonical_id")] is None                                   # 묶음 없음 = 빈 값
 
-    out = tmp_path / "p.md"
-    r = export.provenance(dsn=fresh, configs=[], out=out)
-    assert r == {"path": str(out), "sources": 2, "ideas": 2}
+
+def test_provenance_groups_by_platform_and_contest(tmp_path):
+    """DATA.md: 수집처·대회·제도별 행 = master 중복 제외 실제 건수. KIPRIS = 행의 대회명으로 나눔."""
+    name = "bbtest_master"
+    with psycopg.connect(DSN, autocommit=True) as c:
+        c.execute(f"DROP DATABASE IF EXISTS {name} WITH (FORCE)")
+        c.execute(f"CREATE DATABASE {name}")
+    dsn = DSN.rsplit("/", 1)[0] + f"/{name}"
+    db.migrate(dsn, "master")
+    with psycopg.connect(dsn) as c:
+        c.execute("INSERT INTO raw (source, key, payload, fetched) VALUES"
+                  " ('kipris_idea_api','1','{}','2026-10-14'), ('kipris_idea_api','2','{}','2026-10-14'),"
+                  " ('kipris_idea_api','3','{}','2026-10-14'), ('seoul_budget_proposals','1','{}','2026-10-12'),"
+                  " ('seoul_budget_proposals.detail','1','{}','2026-10-12'), ('seoul_budget_selected','1','{}','2026-10-12')")
+        c.execute("INSERT INTO master (api, key, title, body, contest, origin, url, year, fetched, award) VALUES"
+                  " ('kipris_idea_api','1','가','본문','제69회 전국과학전람회','O','u',2020,now(),'대상'),"
+                  " ('kipris_idea_api','2','가','본문','전국과학전람회','O','u',2021,now(),'대상'),"
+                  " ('kipris_idea_api','3','나',NULL,'2015 대한민국학생발명전시회','O','u',2015,now(),NULL),"
+                  " ('seoul_budget_proposals','1','다','본문',NULL,NULL,'u',2019,now(),NULL)")
+        c.execute("UPDATE master SET exclude_reasons = '{duplicate}', canonical_api = 'kipris_idea_api',"
+                  " canonical_key = '1' WHERE key = '2'")
+    reg = tmp_path / "r.toml"
+    entry = ('[[source]]\nid = "{id}"\nadapter = "awards_csv"\nfile = "x.csv"\nname = "{id}"\nlicense = "x"\n'
+             'layer = 1\npublic_ok = true\nrecord_kind = "{kind}"\ntopic = "t"\nshare = true\ncollector = "{col}"\n'
+             'url = "{url}"\n')
+    reg.write_text(entry.format(id="kipris_idea_api", kind="contest_award", col="kipris_idea_db",
+                                url="https://plus.kipris.or.kr/x")
+                   + entry.format(id="seoul_budget_proposals", kind="public_proposal", col="seoul_budget",
+                                  url="https://data.seoul.go.kr/x"), encoding="utf-8")
+    from bluebird import master, programs
+
+    assert programs.classify(dsn=dsn, sources=master.registry([reg])) == {
+        "status": "ok", "rows": 4, "programs": 3, "removed_programs": 0, "unclassified_rows": 0}
+    out = tmp_path / "DATA.md"
+    assert export.provenance(dsn=dsn, configs=[reg], out=out) == {"path": str(out), "platforms": 2, "programs": 3,
+                                                                  "rows": 3}
     md = out.read_text(encoding="utf-8")
-    assert "아이디어 2건 · 소스 2개 · 공유 가능 1건" in md and "## 수상작 2건" in md and "| 보류 소스 | " in md and "| 보류 |" in md
+    assert "- 기준: 2026-10-14" in md and "원본(raw) 6행 = 목록 5 + 상세 페이지 본문 1" in md
+    assert "정제(master) 4행 = 중복 제외 3 + 중복 1" in md and "## 수집처 2곳 · 데이터셋 2개" in md
+    assert "| KIPRIS Plus | API 1 | 0 | 2 |" in md and "| 서울 열린데이터광장 | API 1 | 1 | 1 |" in md
+    assert "| 공모전 | 과학·발명 | 2 | 2 | 1 | 1 |" in md and "| 시민 제안 | 주민참여예산 | 1 | 1 | 1 | 0 |" in md
+    assert "| 전국과학전람회 | 2020 | 1 | 1 | 1 | KIPRIS Plus |" in md
+    assert "| 대한민국학생발명전시회 | 2015 | 1 | 0 | 0 | KIPRIS Plus |" in md
+    assert "- `seoul_budget_selected` 1행" in md

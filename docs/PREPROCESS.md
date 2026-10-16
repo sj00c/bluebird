@@ -2,32 +2,34 @@
 
 - 기준일: 2026-10-14
 - 브랜치: `feat/final-architecture`
-- 코드: `pipeline/bluebird/master.py`(적재·상세 본문), `refine.py`(정제), `fill.py`(LLM)
+- 코드: `pipeline/bluebird/master.py`(적재·상세 본문), `budget_detail.py`(참여예산 사이트 매칭), `refine.py`(정제), `fill.py`(LLM), `dedup.py`(전처리 사유), `programs.py`(대회·제도 분류)
 
 ## 1. 개요
 
 - 출처가 다른 공모전·시민제안 데이터 → 정제 DB 1개, 표 2개로 통합
 - 흐름: 수집 원본 그대로 `raw` 적재 → 규칙 정제 `master` → LLM 필드 채움
-- 기존 `bluebird_core`(앱용 DB) 변경 없음. 참고용으로만 사용
+- 같은 서버 DB의 `core` 스키마(앱용 원본) 변경 없음. 참고용으로만 사용
 
 | 단계 | 명령 | 결과 |
 |---|---|---|
 | 1. 원본 적재(파일) | `bluebird master files` | `raw` |
 | 2. 원본 적재(API) | `bluebird master api` | `raw` |
-| 3. 상세 본문 수집 | `bluebird master detail` | `raw`(`<소스>.detail`) |
+| 3. 상세 본문 수집 | `bluebird master detail` | `raw`(`<소스>.detail`). 서울 자유제안·디자인진흥원 3·과학관 아카이브 2·광주·경기·울산·유성 참여예산 |
 | 4. 규칙 정제 | `bluebird master refine` | `master` 기본 컬럼 |
 | 5. LLM 필드 | `bluebird master fill` | `master` LLM 컬럼 |
+| 6. 전처리 사유 | `bluebird master reasons` | `master.exclude_reasons`(`duplicate`·`no_body`)·`canonical_*` (`docs/DEDUP_PLAN.md`) |
+| 7. 대회·제도 분류 | `bluebird master classify` | `program` 표, `master.program_id` |
 
 ## 2. DB 위치
 
 | 항목 | 값 |
 |---|---|
-| 서버 | `127.0.0.1:54329` (Docker `bluebird-db-1`) |
-| DB | `bluebird_master` |
+| 서버 | `161.122.152.68:5432` (`.env` `BB_DB_URL`) |
+| DB | `parangsae` |
 | 스키마 | `public` |
-| 표 | `raw`, `master` |
-| 계정 | `bluebird` / `.env`의 `DB_PASSWORD` |
-| 바로 접속 | `docker exec -it bluebird-db-1 psql -U bluebird -d bluebird_master` |
+| 표 | `raw`, `master`, `exclusion_reason`(사유 뜻), `program`(대회·제도) |
+| 계정 | `aix` / 비밀번호 = 담당자 전달, `.env`의 `BB_DB_URL`에만 입력 |
+| 바로 접속 | `psql -h 161.122.152.68 -p 5432 -U aix -d parangsae` |
 
 - `migrations.applied`: 구조 변경 이력 장부. 데이터 아님
 
@@ -52,6 +54,7 @@
 | `body` | text | 원본 + 정제 | 본문 |
 | `contest` | text | 원본 또는 LLM | 공모전·대회·제도명 |
 | `origin` | char(1) | 표시 | `contest` 출처. `O` 원본, `X` LLM |
+| `award` | text | 원본 | 수상 등급(원본 값 그대로). 수상 필드 없는 소스 = NULL |
 | `url` | text | 원본 | 상세·출처 링크 |
 | `year` | smallint | 원본 | 원 데이터 시기(제안·출품·수상 연도) |
 | `fetched` | timestamptz | 원본 | 받은 시각 |
@@ -60,6 +63,8 @@
 | `feature` | text | LLM | 핵심 기능·방법 |
 | `target` | text | LLM | 주 대상 |
 | `domain` | text[] | LLM | 분야(고정 11개 중 복수) |
+| `exclude_reasons` | text[] | 계산 | 전처리 사유 코드(`exclusion_reason` 표). `{}` = 해당 없음 |
+| `canonical_api`·`canonical_key` | text | 계산 | 중복일 때 대표 행(`master(api, key)` 참조) |
 
 - 키: `(api, key)` → `raw(source, key)` 참조
 
@@ -113,6 +118,7 @@
 | 컬럼 | 규칙 |
 |---|---|
 | `contest` | 원본 행에 있을 때만(레지스트리 기본값으로 채우지 않음) → `origin = O` |
+| `award` | 소스별 수상 열 1개(`refine.AWARD`) 값 그대로, 공백만 정리. 수상자·시상금·훈격·분야 열 제외. 23개 소스, 52,956행 |
 | `url` | 행의 공식 링크, 없으면 레지스트리 출처 URL. 공식 호스트 아닌 링크 버림 |
 | `year` | 원본 연도 칸 앞 4자리. 과학관 = 회차 환산(과학전람회 1954+회, 발명품경진대회 1978+회) |
 

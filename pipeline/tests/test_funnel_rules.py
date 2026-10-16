@@ -77,10 +77,9 @@ def test_allowed_phrases():
 def test_no_forbidden_phrase_in_screens_or_pipeline_text():
     root = pathlib.Path(__file__).resolve().parents[2]
     offenders = []
-    for base, pat in ((root / "web/portal", "**/*.tsx"), (root / "web/portal", "**/*.ts"),
-                      (root / "pipeline/bluebird", "**/*.py"), (root / "pipeline/bluebird", "**/*.sql")):
+    for base, pat in ((root / "pipeline/bluebird", "**/*.py"), (root / "pipeline/bluebird", "**/*.sql")):
         for f in base.glob(pat):
-            if "node_modules" in f.parts or f.name == "wording.py":
+            if f.name == "wording.py":
                 continue
             for n, line in enumerate(f.read_text(encoding="utf-8").splitlines(), 1):
                 if wording.FORBIDDEN.search(line):

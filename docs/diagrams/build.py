@@ -1,6 +1,6 @@
 """파랑새 시스템 구성도 → architecture.html + architecture.pdf
 
-로컬 데모(내 PC · Docker) 구성도. 문구·좌표를 고친 뒤 `python3 docs/diagrams/build.py`.
+내 PC(Docker: 콘솔 · API · 처리 작업) + 서버 PostgreSQL 구성도. 문구·좌표를 고친 뒤 `python3 docs/diagrams/build.py`.
 """
 import argparse
 import os
@@ -104,53 +104,43 @@ def note(x, y, w, h, title, body, numbered=False):
 
 
 # ---------------- 틀 ----------------
-zone(32, 96, 1536, 500, "내 PC (Docker)", FILL_ZONE)
-zone(860, 130, 300, 430, "PostgreSQL (한 개)", "#ffffff")
+zone(32, 96, 800, 500, "내 PC (Docker)", FILL_ZONE)
+zone(880, 96, 688, 500, "서버 PostgreSQL 161.122.152.68:5432/parangsae", "#ffffff")
 
 # ---------------- 브라우저 ----------------
-parts.append(icon("laptop", 70, 150, 48, "#1f2937"))
-parts.append(t(94, 222, "브라우저", 14, "#111827", "middle", 600))
-parts.append(t(94, 240, "(시민)", 11, GRAY, "middle"))
 parts.append(icon("user", 70, 396, 48, "#1f2937"))
 parts.append(t(94, 468, "브라우저", 14, "#111827", "middle", 600))
 parts.append(t(94, 486, "(관리자)", 11, GRAY, "middle"))
 
 # ---------------- 구성요소 ----------------
-card(240, 130, 260, 88, "own", [("server", "포털 (Next.js)")], ["화면 · 조회 · 이의 접수"])
-card(240, 380, 260, 88, "own", [("server", "콘솔 (Next.js)")], ["검토 · 승인 · 이의 처리"])
+card(560, 140, 240, 110, "own", [("server", "처리 작업")], ["적재 · 카드 · 판정 · 정제"])
+card(240, 380, 260, 88, "own", [("server", "콘솔 (Next.js)")], ["검토 · 승인 · 2인 코딩"])
 card(560, 380, 240, 88, "own", [("server", "백엔드 API (FastAPI)")], ["토큰 확인 · 역할별 권한"])
-card(876, 180, 268, 96, "own", [("database", "공개 DB")], ["공개 원본 · 승인 분석 · 이의함"])
-card(876, 420, 268, 96, "own", [("database", "원본 DB")], ["아이디어 · 진단 카드 · 근거 URL"])
-card(1370, 250, 180, 190, "own", [("server", "처리 작업")], ["적재 · 카드 · 판정", "공개 · 이의 가져오기"])
-card(900, 650, 650, 130, "plain", [("internet", "외부 공공 · 상용 API")],
+card(1000, 150, 300, 96, "own", [("database", "정제 DB (public)")], ["master 정제본 · raw 받은 그대로"])
+card(1000, 400, 300, 96, "own", [("database", "원본 DB (core 스키마)")], ["아이디어 · 진단 카드 · 근거 URL"])
+card(240, 650, 580, 130, "plain", [("internet", "외부 공공 · 상용 API")],
      ["공공데이터포털 · 법제처 · KIPRIS", "네이버 · K-Startup · LLM", "접속 키는 .env 파일에 보관"])
 
 # ---------------- 흐름 ----------------
-arrow("M 150,178 H 236", NEW)                       # ① 시민 → 포털
-step(193, 178, 1)
-arrow("M 500,200 H 872", NEW, both=True)            # ② 포털 ↔ 공개 DB
-step(580, 200, 2)
-label(730, 190, "읽기 · 이의 접수", "middle", NEW, FILL_ZONE)
-arrow("M 150,424 H 236", NEW)                       # ⑤ 관리자 → 콘솔
-step(193, 424, 5)
+arrow("M 580,250 V 310 H 530 V 646", GRAY)          # ① 처리 작업 → 외부 API
+step(530, 560, 1)
+label(518, 526, "허용 목록 · 기록", "end", "#374151", FILL_ZONE)
+arrow("M 800,195 H 996", GRAY, both=True)           # ② 처리 작업 ↔ 정제 DB
+step(940, 195, 2)
+arrow("M 800,230 H 850 V 430 H 996", GRAY, both=True)  # ② 처리 작업 ↔ 원본 DB
+label(850, 330, "읽기 · 쓰기", "middle", "#374151", FILL_ZONE)
+arrow("M 150,424 H 236", NEW)                       # ③ 관리자 → 콘솔
+step(193, 424, 3)
 arrow("M 500,424 H 556", NEW)                       # 콘솔 → API
-arrow("M 804,448 H 872", GRAY, both=True)           # API ↔ 원본 DB
-arrow("M 1366,430 H 1148", GRAY, both=True)         # 처리 작업 ↔ 원본 DB
-label(1257, 412, "읽기 · 쓰기", "middle", "#374151", FILL_ZONE)
-arrow("M 1366,270 H 1148", GRAY, both=True)         # ④ 처리 작업 → 공개 DB
-step(1257, 270, 4)
-label(1257, 252, "공개 반영 · 이의 가져오기", "middle", "#374151", FILL_ZONE)
-arrow("M 1460,440 V 646", GRAY)                     # ③ 처리 작업 → 외부 API
-step(1460, 540, 3)
-label(1448, 506, "허용 목록 · 기록", "end", "#374151", FILL_ZONE)
+arrow("M 804,460 H 996", NEW, both=True)            # ④ API ↔ 원본 DB
+step(940, 460, 4)
 
 # ---------------- 설명 ----------------
-note(32, 626, 800, 190, "<처리 흐름>", [
-    "시민은 브라우저로 포털을 보고 이의를 냅니다.",
-    "포털은 공개 DB만 읽습니다. 원본 DB는 볼 수 없습니다.",
-    "처리 작업이 외부 API에서 자료를 모아 원본 DB에 저장합니다.",
-    "공개 허용 원본과 사람이 승인한 분석을 옮기고, 이의를 가져옵니다.",
+note(880, 626, 688, 190, "<처리 흐름>", [
+    "처리 작업이 외부 API에서 자료를 모읍니다.",
+    "모은 자료를 서버 DB(원본 core · 정제 master/raw)에 저장합니다.",
     "관리자는 콘솔에서 검토 · 승인합니다. 콘솔은 API만 부릅니다.",
+    "API가 서버 원본 DB를 읽고 씁니다. 접속 = .env BB_DB_URL",
 ], numbered=True)
 
 symbols = "\n".join(
@@ -167,7 +157,7 @@ def marker(mid, color):
 
 svg = f"""<svg viewBox="0 0 {W} {H}" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="bb-title bb-desc" font-family="'Pretendard', 'Noto Sans KR', 'Apple SD Gothic Neo', sans-serif">
 <title id="bb-title">파랑새 시스템 구성도</title>
-<desc id="bb-desc">내 PC의 Docker 안에서 모두 돌아간다. 시민은 브라우저로 포털을 보고, 포털은 PostgreSQL의 공개 DB만 읽으며 이의를 접수함에 넣는다. 관리자는 브라우저로 콘솔에 접속하고, 콘솔은 백엔드 API만 부르며 API는 원본 DB를 쓴다. 처리 작업은 허용 목록에 있는 외부 공공·상용 API에서 자료를 모아 원본 DB에 저장하고, 공개 허용 원본과 사람이 승인한 분석을 공개 DB로 옮기며 이의를 가져온다. 외부 API 키는 .env 파일에 둔다.</desc>
+<desc id="bb-desc">콘솔, 백엔드 API, 처리 작업은 내 PC의 Docker 안에서 돌고, DB는 서버 PostgreSQL(161.122.152.68:5432, DB parangsae) 하나다. 처리 작업은 허용 목록에 있는 외부 공공·상용 API에서 자료를 모아 서버 DB의 원본(core 스키마)과 정제 DB(public.master, public.raw)에 저장한다. 관리자는 브라우저로 콘솔에 접속하고, 콘솔은 백엔드 API만 부르며 API는 서버 원본 DB를 쓴다. 접속 문자열과 외부 API 키는 .env 파일에 둔다.</desc>
 <defs>
 <filter id="shadow" x="-10%" y="-10%" width="120%" height="130%"><feDropShadow dx="0" dy="1" stdDeviation="2" flood-color="#000" flood-opacity="0.16"/></filter>
 {marker("a", GRAY)}{marker("a-new", NEW)}

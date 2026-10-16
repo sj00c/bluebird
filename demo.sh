@@ -1,17 +1,15 @@
 #!/usr/bin/env bash
 # 파랑새 로컬 데모 실행기. 상세 = README.md
 #   ./demo.sh init            처음 한 번: .env·익명화 키·콘솔 토큰·원본 seed 준비
-#   ./demo.sh cycle [ingest 인수]  빌드 → 원본 적재·소스 점검·카탈로그 → 승인분 공개 → 화면 기동
-#   ./demo.sh up [서비스…]     서비스 켜기(기본 전부, 개발 때는 `up db`)
-#   ./demo.sh down            끄기(데이터 유지). 데이터 삭제 = docker compose down -v
+#   ./demo.sh cycle [ingest 인수]  빌드 → 원본 적재·소스 점검·카탈로그 → 화면 기동
+#   ./demo.sh up [서비스…]     서비스 켜기(기본 api·console). DB = 서버(.env BB_DB_URL)
+#   ./demo.sh down            끄기(DB = 서버, 영향 없음)
 #   ./demo.sh check           외부 API·원본 파일 연결 점검표
 #   ./demo.sh collect [인수…]   검증된 공식 공모전·제안 원본 수집 → 비공개 DB 적재
 #   ./demo.sh policy          레지스트리 정책·선별 재료(기록 종류·제외 후보 이유)만 DB에 반영, 파일 재수집 없음
 #   ./demo.sh schedule [off]  국민신문고 공개제안 매일 00:30 수집(launchd). off = 해제
 #   ./demo.sh export          공유용 xlsx(전체, share 열로 가능/보류 구분) + 소스 표(docs/DATA.md) → .runtime/export/
 #   ./demo.sh job <명령…>      처리 작업 1회 실행(예: job trace auto, job kpi report)
-#   ./demo.sh verify          데모 동작 점검(deploy/local/verify.sh)
-#   ./demo.sh publish         이의 가져오기 → 주간 재조명 계산 → 현재 승인분 공개
 #   ./demo.sh status          서비스와 DB 연결 상태 확인(데이터 변경 없음)
 #   ./demo.sh env             로컬 개발용 접속 정보 출력: eval "$(./demo.sh env)"
 #   ./demo.sh tokens          콘솔 로그인 토큰 보기
@@ -27,19 +25,9 @@ cmd_init() {
   # 원본 파일 위치. 기본 data/seed/ (git 밖). 인수인계 zip 사용 = ./demo.sh init <zip 풀린 디렉터리>
   local ref="${1:-}"
   mkdir -p "$rt"/{secrets,seed,console}
-  # .env: 예시 복사 + 빈 DB 비밀번호만 생성. 기존 값·키 유지
+  # .env: 없을 때만 예시 복사. 기존 값·키 유지. DB 접속 = BB_DB_URL 직접 입력
   [[ -f .env ]] || cp .env.example .env
   chmod 600 .env
-  if [[ -z "$(env_get DB_PASSWORD)" ]]; then
-    local pw; pw="$(openssl rand -hex 16)"
-    python3 - "$pw" <<'PY'
-import re, sys
-s = open(".env").read()
-s = re.sub(r"(?m)^DB_PASSWORD=.*$", "DB_PASSWORD=" + sys.argv[1], s) if re.search(r"(?m)^DB_PASSWORD=", s) else s + f"DB_PASSWORD={sys.argv[1]}\n"
-open(".env", "w").write(s)
-PY
-    echo "[init] DB_PASSWORD created"
-  fi
   # 익명화 비밀키: 익명 ID(HMAC) 기준. 변경 시 전 ID 변경 → 1회 생성 후 유지
   if [[ ! -f "$rt/secrets/anon_secret" ]]; then
     openssl rand -hex 32 > "$rt/secrets/anon_secret"
@@ -80,22 +68,19 @@ PY
   # 컨테이너 uid 10001. 읽기 권한 부여
   chmod -R a+rX "$rt/seed"
   chmod 755 "$rt/secrets" "$rt/console"; chmod 644 "$rt/secrets/anon_secret" "$rt/console/console_users.json"
-  echo "[init] done. 키 → .env, 다음 ./demo.sh cycle"
+  echo "[init] done. .env BB_DB_URL 비밀번호·키 입력 → ./demo.sh cycle"
 }
 
 cmd_cycle() {
   dc build -q
-  dc up -d --wait db
   job migrate --target core
-  job migrate --target publish
   job ingest "$@"
   # 분석·분류·매칭 = 명시적 별도 job. 원본 적재 = 판정 생성 없음
   job sources check || echo "[cycle] sources check: must 소스 일부 실패(표 참고)"
   if [[ -f "$rt/seed/catalog_snapshot0_2026-10-06.csv" ]]; then
     job signals catalog-import --file /seed/catalog_snapshot0_2026-10-06.csv --taken-at 2026-10-06
   fi
-  cmd_publish
-  dc up -d --wait api portal console
+  dc up -d --wait api console
   echo "[cycle] done."
   urls
 }
@@ -156,20 +141,12 @@ cmd_policy() {
     --config /config/api-sources.toml
 }
 
-cmd_publish() {
-  job objections pull
-  job top
-  job publish
-  echo "[publish] 현재 승인분 반영 완료. 미승인 분석 비공개."
-}
-
 cmd_status() {
   dc ps
   local service port path failed=0
-  for service in api portal console; do
+  for service in api console; do
     case "$service" in
       api) port="$(env_get BB_API_PORT)"; path=/healthz ;;
-      portal) port="$(env_get BB_PORTAL_PORT)"; path=/healthz ;;
       console) port="$(env_get BB_CONSOLE_PORT)"; path=/login ;;
     esac
     if curl --fail --silent --show-error --max-time 10 -o /dev/null "http://127.0.0.1:$port$path"; then
@@ -183,24 +160,17 @@ cmd_status() {
 }
 
 urls() {
-  echo "  포털 : http://localhost:$(env_get BB_PORTAL_PORT)/"
   echo "  콘솔 : http://localhost:$(env_get BB_CONSOLE_PORT)/  (토큰: ./demo.sh tokens)"
   echo "  API  : http://localhost:$(env_get BB_API_PORT)/healthz"
 }
 
 cmd_env() {
-  # 호스트 uv run bluebird / npm run dev 용 접속 정보(DB = 127.0.0.1:BB_DB_PORT)
-  local pw port; pw="$(env_get DB_PASSWORD)"; port="$(env_get BB_DB_PORT)"
-  local h="127.0.0.1:${port:-54329}"
+  # 호스트 uv run bluebird / npm run dev 용 접속 정보. DB = .env BB_DB_URL(서버) 하나
   cat <<EOF
 set -a; . "$root/.env"; set +a
-export BB_DSN=postgresql://bluebird:$pw@$h/bluebird_core
-export BB_PUBLISH_DSN=postgresql://bb_publisher:$pw@$h/bluebird_publish
-export BB_PUBLISH_MIGRATOR_DSN=postgresql://bb_migrator:$pw@$h/bluebird_publish
-export BB_INBOX_DSN=postgresql://bb_inbox_reader:$pw@$h/bluebird_publish
+export BB_DSN="\$BB_DB_URL" BB_MASTER_DSN="\$BB_DB_URL"
 export BB_SOURCES=$root/deploy/local/sources.toml BB_SEED_DIR=$rt/seed BB_SIGNAL_DIR=$rt/signals BB_ANON_SECRET=$rt/secrets/anon_secret
 export BB_CONTEST_SOURCES=$root/deploy/local/contest-sources.toml
-export PORTAL_DATABASE_URL=postgresql://bb_portal:$pw@$h/bluebird_publish
 export BB_API_URL=http://127.0.0.1:$(env_get BB_API_PORT) BB_API_USERS=$rt/console/console_users.json
 EOF
 }
@@ -216,11 +186,9 @@ case "${1:-}" in
   schedule) shift; cmd_schedule "$@" ;;
   export) shift; cmd_export "$@" ;;
   job)    shift; job "$@" ;;
-  verify) exec "$root/deploy/local/verify.sh" ;;
-  publish) cmd_publish ;;
   status) cmd_status ;;
   env)    cmd_env ;;
   tokens) cat "$rt/console_tokens" ;;
   logs)   shift; dc logs -f "$@" ;;
-  *)      sed -n '2,14p' "$0"; exit 1 ;;
+  *)      sed -n '2,15p' "$0"; exit 1 ;;
 esac

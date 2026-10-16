@@ -13,6 +13,7 @@ import hashlib
 import http.cookiejar
 import json
 import os
+import ssl
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from io import BytesIO
@@ -32,6 +33,8 @@ ALLOWED_HOSTS = (
     "award.kidp.or.kr",
     "openapi.seoul.go.kr", "openapi.gg.go.kr",
     "idea.seoul.go.kr",
+    # 참여예산 원본 사이트 상세 본문(master detail)
+    "yesan.gwangju.go.kr", "www.gg.go.kr", "www.ulsan.go.kr", "www.yuseong.go.kr",
 )
 # 과거 허용했다가 뺀 호스트. 새 호출 = 차단. 당시 허용 감사 행은 G10 반출 통제에서 위반으로 세지 않음
 RETIRED_HOSTS = ("openapi.naver.com",)   # 2026-10-12 NAVER 검색 API → API HUB(naverapihub.apigw.ntruss.com)
@@ -42,7 +45,7 @@ DEFAULT_EXPORTABLE = frozenset({
     "dataset_title", "dataset_description", "announcement_title", "announcement_summary", "law_title", "change_title",
 })
 # 어떤 정책으로도 나갈 수 없는 필드.
-NEVER_EXPORT = frozenset({"team", "person_name", "objection_body", "contact", "review_note"})
+NEVER_EXPORT = frozenset({"team", "person_name", "contact", "review_note"})
 
 LLM_ENDPOINTS = {
     "openai": ("https://api.openai.com/v1/chat/completions", "OPENAI_API_KEY"),
@@ -161,8 +164,11 @@ class Egress:
         self._policy = policy
         self._record = recorder
         self._max_bytes = max_bytes
+        # trust_env=False(프록시 환경변수 무시)여도 PC 지정 CA 묶음(SSL_CERT_FILE, 사내 TLS 검사 등)은 따름
+        cafile = os.environ.get("SSL_CERT_FILE")
         self._client = httpx.Client(
             trust_env=False, proxy=proxy, transport=transport, timeout=timeout, follow_redirects=False,
+            verify=ssl.create_default_context(cafile=cafile) if cafile else True,
             event_hooks={"request": [self._verify_body]},
             # cookies=False: 요청마다 새 세션(세션 단위로 호출 수를 제한하는 상세 페이지 대량 수집)
             cookies=None if cookies else http.cookiejar.CookieJar(http.cookiejar.DefaultCookiePolicy(allowed_domains=[])),

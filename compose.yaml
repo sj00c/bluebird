@@ -1,19 +1,15 @@
-# 파랑새 로컬 데모: DB 1개(원본·공개 DB 2개) + 백엔드 API + 포털 + 콘솔. 처리 작업 = 명령 실행.
+# 파랑새: 백엔드 API + 콘솔. DB = 서버 1개(.env BB_DB_URL). 처리 작업 = 명령 실행.
 #   팀원 테스트 : ./demo.sh init && ./demo.sh cycle      (전부 Docker)
-#   개발        : ./demo.sh up db  후 uv run / npm run dev (README.md)
-# 키·비밀번호 = .env(.env.example 참고). 런타임 파일(원본 seed·익명화 키·콘솔 토큰) = .runtime/
+#   개발        : eval "$(./demo.sh env)" 후 uv run / npm run dev (README.md)
+# 키·DB 접속 = .env(.env.example 참고). 런타임 파일(원본 seed·익명화 키·콘솔 토큰) = .runtime/
 name: bluebird
 
 volumes:
-  db: {}
   signals: {}
 
 x-backend-env: &backend-env
-  BB_DSN: postgresql://bluebird:${DB_PASSWORD:?run ./demo.sh init}@db:5432/bluebird_core
-  BB_PUBLISH_DSN: postgresql://bb_publisher:${DB_PASSWORD}@db:5432/bluebird_publish
-  BB_PUBLISH_MIGRATOR_DSN: postgresql://bb_migrator:${DB_PASSWORD}@db:5432/bluebird_publish
-  BB_INBOX_DSN: postgresql://bb_inbox_reader:${DB_PASSWORD}@db:5432/bluebird_publish
-  BB_MASTER_DSN: postgresql://bluebird:${DB_PASSWORD}@db:5432/bluebird_master
+  BB_DSN: ${BB_DB_URL:?set BB_DB_URL in .env (DB 서버)}
+  BB_MASTER_DSN: ${BB_DB_URL}
   BB_SOURCES: /config/sources.toml
   BB_CONTEST_SOURCES: /config/contest-sources.toml
   BB_SEED_DIR: /seed
@@ -34,27 +30,11 @@ x-backend-env: &backend-env
   BB_ACRC_CALL_BUDGET: ${BB_ACRC_CALL_BUDGET:-9000}
 
 services:
-  db:
-    image: pgvector/pgvector:pg16
-    environment:
-      POSTGRES_DB: bluebird_core
-      POSTGRES_USER: bluebird
-      POSTGRES_PASSWORD: ${DB_PASSWORD:?run ./demo.sh init}
-    ports: ["127.0.0.1:${BB_DB_PORT:-54329}:5432"]
-    volumes:
-      - db:/var/lib/postgresql/data
-      - ./deploy/local/initdb:/docker-entrypoint-initdb.d:ro
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U bluebird -d bluebird_core && psql -U bluebird -d bluebird_publish -c 'select 1' -q"]
-      interval: 3s
-      retries: 30
-
-  # 처리 작업(적재·카드·신호·공개·이의 가져오기 등). 리스너 없음. ./demo.sh job <명령>
+  # 처리 작업(적재·카드·신호·내보내기 등). 리스너 없음. ./demo.sh job <명령>
   jobs:
     image: bluebird/pipeline:dev
     build: ./pipeline
     profiles: ["jobs"]
-    depends_on: { db: { condition: service_healthy } }
     environment: *backend-env
     volumes:
       - ./deploy/local/sources.toml:/config/sources.toml:ro
@@ -71,9 +51,8 @@ services:
     image: bluebird/pipeline:dev
     build: ./pipeline
     entrypoint: ["python", "-m", "bluebird.api"]
-    depends_on: { db: { condition: service_healthy } }
     environment:
-      BB_DSN: postgresql://bb_api:${DB_PASSWORD}@db:5432/bluebird_core
+      BB_DSN: ${BB_DB_URL:?set BB_DB_URL in .env (DB 서버)}
       BB_API_USERS: /secrets/console_users.json
     ports: ["127.0.0.1:${BB_API_PORT:-8000}:8000"]
     volumes:
@@ -83,21 +62,6 @@ services:
       interval: 3s
       retries: 30
     restart: unless-stopped
-
-  portal:
-    image: bluebird/portal:dev
-    build: ./web/portal
-    depends_on: { db: { condition: service_healthy } }
-    environment:
-      PORTAL_DATABASE_URL: postgresql://bb_portal:${DB_PASSWORD}@db:5432/bluebird_publish
-    ports: ["127.0.0.1:${BB_PORTAL_PORT:-3000}:3000"]
-    restart: unless-stopped
-    healthcheck:
-      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000/healthz').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
-      interval: 5s
-      timeout: 5s
-      start_period: 20s
-      retries: 12
 
   console:
     image: bluebird/console:dev

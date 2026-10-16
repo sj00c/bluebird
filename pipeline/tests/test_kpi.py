@@ -1,13 +1,12 @@
-"""G006: KPI 도구(κ·골드셋·Top 20·G1–G13 현황표)."""
+"""G006: KPI 도구(κ·골드셋·현황표)."""
 
 import io
-from datetime import date
 
 import psycopg
 import pytest
 
 from bluebird import kpi
-from tests.test_db_integration import DSN, _pub_db, _seed_idea
+from tests.test_db_integration import DSN, _seed_idea
 
 IID = "ID-2019-aaaaaaaaaa"
 db_only = pytest.mark.skipif(not DSN, reason="BB_TEST_DSN not set")
@@ -108,44 +107,24 @@ def test_goldset_matches_by_year_title_and_reports_pending(fresh):
 
 
 @db_only
-def test_top20_and_report(fresh):
-    from bluebird import funnel, publish
-    from tests.test_console_objection import _to_stage4
+def test_report(fresh):
+    from bluebird import funnel
+    from tests.test_console import _to_stage4
 
     _to_stage4(fresh)
     funnel.approve(dsn=fresh, idea_id=IID, by="t")
-    week = date(2026, 10, 12)
-    funnel.compute_top(dsn=fresh, week=week)
-    pub = _pub_db()
-    publish.push(core_dsn=fresh, publish_dsn=pub)
-    t = kpi.verify_top20(dsn=fresh, publish_dsn=pub, week=week)
-    assert (t["core_top"], t["published"], t["status"]) == (1, 1, kpi.PROGRESS)  # 1건 < 목표 20
-    t = kpi.verify_top20(dsn=fresh, publish_dsn=pub, week=week, target=1)  # E3 조정 목표
-    assert (t["expert_approved"], t["status"]) == (0, kpi.HUMAN)
-    with psycopg.connect(fresh) as c:
-        c.execute("INSERT INTO core.review (target_type, target_id, reviewer, round, decision)"
-                  " VALUES ('idea',%s,'jung','expert','approve')", (IID,))
-        c.commit()
-    assert kpi.verify_top20(dsn=fresh, publish_dsn=pub, week=week, target=1)["status"] == kpi.PASS
-    with psycopg.connect(pub) as c:  # 공개본이 core Top과 다르면 FAIL
-        c.execute("DELETE FROM publish.weekly_top")
-        c.commit()
-    assert kpi.verify_top20(dsn=fresh, publish_dsn=pub, week=week, target=1)["status"] == kpi.FAIL
-    publish.push(core_dsn=fresh, publish_dsn=pub)
 
     def rep(**kw):
-        return {r["goal"]: r for r in kpi.report(dsn=fresh, publish_dsn=pub, inbox_dsn=pub, p95_ms=50.0, week=week,
-                                                 top_target=1, **kw)}
+        return {r["goal"]: r for r in kpi.report(dsn=fresh, **kw)}
 
-    clean = {"name_matches": 0, "compared": 1, "expected": 1, "ideas_with_names": 1, "source_files": 1, "missing_files": 0}
+    clean = {"name_matches": 0, "compared": 1, "ideas_with_names": 1, "source_files": 1, "missing_files": 0}
     rows = rep(names=clean)
-    assert list(rows) == [f"G{n}" for n in range(1, 14)]
+    # 공개 DB·포털·이의 접수함이 있어야 재는 G2·G5–G8·G11 = 제외
+    assert list(rows) == ["G1", "G3", "G4", "G9", "G10", "G12", "G13"]
     assert rows["G1"]["status"] == kpi.FAIL  # 테스트 DB는 카드 1건(<10,000)
-    assert rows["G2"]["status"] == kpi.PASS and rows["G5"]["status"] == kpi.PASS
     assert rows["G3"]["status"] == kpi.HUMAN and rows["G12"]["status"] == kpi.HUMAN
-    assert rows["G8"]["status"] == kpi.PASS and rows["G9"]["status"] == kpi.PASS
+    assert rows["G9"]["status"] == kpi.PASS
     assert rows["G10"]["status"] == kpi.PASS, rows["G10"]
-    assert rows["G11"]["status"] == kpi.PROGRESS  # 처리된 이의 0
     assert rows["G13"]["status"] == kpi.PROGRESS  # must 원격 소스 점검 기록 없음
     # G10: 이름 대조를 안 했으면 진행 중, 이름이 남아 있으면 FAIL
     assert rep()["G10"]["status"] == kpi.PROGRESS
@@ -184,10 +163,10 @@ def test_top20_and_report(fresh):
 
 @db_only
 def test_name_leaks_end_to_end(fresh, tmp_path):
-    """원본 파일 동일 익명화 키 재독 → 공개 글 이름 잔존 집계. 파일 없음·키 불일치 → 대조 안 됨."""
+    """원본 파일 동일 익명화 키 재독 → 원본 DB 글 이름 잔존 집계. 파일 없음·키 불일치 → 대조 안 됨."""
     import csv
 
-    from bluebird import cards, db, ingest, publish
+    from bluebird import cards, db, ingest
     from bluebird.funnel import dumps
 
     (tmp_path / "secret").write_bytes(b"s" * 32)
@@ -205,51 +184,26 @@ def test_name_leaks_end_to_end(fresh, tmp_path):
         w.writerow(["2", "2022", "상", "최준영", "경계를 잇다", "길 위의 벤치"])
     ingest.ingest(dsn=fresh, config=cfg, seed_dir=tmp_path, secret_path=tmp_path / "secret")
     cards.build(dsn=fresh)
-    pub = _pub_db()
-    publish.push(core_dsn=fresh, publish_dsn=pub)
     secret = (tmp_path / "secret").read_bytes()
 
     def leaks(**kw):
-        with db.connect(fresh) as conn, db.connect(pub) as pc:
-            return kpi.name_leaks(conn, pc, **{"config": cfg, "seed_dir": tmp_path, "secret": secret, **kw})
+        with db.connect(fresh) as conn:
+            return kpi.name_leaks(conn, **{"config": cfg, "seed_dir": tmp_path, "secret": secret, **kw})
 
     clean = leaks()
-    assert (clean["name_matches"], clean["compared"], clean["expected"], clean["source_files"],
-            clean["missing_files"]) == (0, 2, 2, 1, 0)
+    assert (clean["name_matches"], clean["compared"], clean["source_files"], clean["missing_files"]) == (0, 2, 1, 0)
     assert kpi.names_checked(clean) and "이민수" not in dumps(clean)
-    with psycopg.connect(pub) as c:  # 공개 글에 이름이 새어 나간 경우
-        c.execute("UPDATE publish.idea SET body = body || ' 문의: 최준영' WHERE title = '경계를 잇다'")
+    with psycopg.connect(fresh) as c:  # 원본 DB 글에 이름이 남은 경우
+        c.execute("UPDATE core.idea SET body = body || ' 문의: 최준영' WHERE title = '경계를 잇다'")
         c.commit()
     assert leaks()["name_matches"] == 1
-    with psycopg.connect(pub) as c:  # 공개 대상인데 publish에 없는 아이디어 존재 → 전수 대조 아님
-        c.execute("DELETE FROM publish.idea WHERE title = '휠체어 충전 테이블'")
-        c.commit()
-    partial = leaks()
-    assert (partial["compared"], partial["expected"]) == (1, 2) and not kpi.names_checked(partial)
     wrong = leaks(secret=(tmp_path / "other").read_bytes())  # 키가 다르면 ID가 안 맞아 대조 0
     assert wrong["compared"] == 0 and not kpi.names_checked(wrong)
     (tmp_path / "d.csv").rename(tmp_path / "gone.csv")
     gone = leaks()
     assert gone["missing_files"] == 1 and not kpi.names_checked(gone)
-    with db.connect(fresh) as conn, db.connect(pub) as pc:
-        assert kpi.audit_g10(conn, pc, names=gone)["name_matches"] is None
-
-
-@db_only
-def test_g6_counts_published_window_changes_and_fails_after_window(fresh, monkeypatch):
-    from datetime import date
-
-    with psycopg.connect(fresh) as c:
-        _seed_idea(c)
-        c.commit()
-    pub = _pub_db()
-    from bluebird import publish
-    publish.push(core_dsn=fresh, publish_dsn=pub)
-    rows = {r["goal"]: r for r in kpi.report(dsn=fresh, publish_dsn=pub)}
-    assert rows["G6"]["status"] == kpi.PROGRESS and "창 안 신규 0건" in rows["G6"]["value"]
-    monkeypatch.setattr(kpi, "today_kst", lambda: date(2026, 12, 8))
-    rows = {r["goal"]: r for r in kpi.report(dsn=fresh, publish_dsn=pub)}
-    assert rows["G6"]["status"] == kpi.FAIL  # 창이 닫혔는데 10건 미만
+    with db.connect(fresh) as conn:
+        assert kpi.audit_g10(conn, names=gone)["name_matches"] is None
 
 
 @db_only
@@ -258,12 +212,9 @@ def test_report_g3_uses_100_sample_not_pilot(fresh):
         _seed_idea(c)
         c.execute("INSERT INTO core.coding_sample VALUES ('pilot30',%s,'s:-',1)", (IID,))
         c.commit()
-    pub = _pub_db()
-    from bluebird import publish
-    publish.push(core_dsn=fresh, publish_dsn=pub)
-    g3 = {r["goal"]: r for r in kpi.report(dsn=fresh, publish_dsn=pub)}["G3"]
+    g3 = {r["goal"]: r for r in kpi.report(dsn=fresh)}["G3"]
     assert g3["status"] == kpi.HUMAN and "100건 표본 없음" in g3["value"]  # 파일럿 표본 = 기준 아님
-    g3 = {r["goal"]: r for r in kpi.report(dsn=fresh, publish_dsn=pub, kappa_sample="nope")}["G3"]
+    g3 = {r["goal"]: r for r in kpi.report(dsn=fresh, kappa_sample="nope")}["G3"]
     assert g3["status"] == kpi.HUMAN and "nope 없음" in g3["value"]
 
 
@@ -281,28 +232,21 @@ def test_cli_exit_codes(fresh):
         assert cli.main(["eval", "goldset", "--dsn", fresh, "--gold", "-"]) == 0  # 진행 중
     finally:
         sys.stdin = old
-    pub = _pub_db()
-    from bluebird import publish
-    publish.push(core_dsn=fresh, publish_dsn=pub)
-    assert cli.main(["verify", "top20", "--dsn", fresh, "--publish-dsn", pub]) == 0  # Top 없음 → 진행 중
-    assert cli.main(["kpi", "report", "--dsn", fresh, "--publish-dsn", pub, "--secret", "/nonexistent"]) == 1  # G1 FAIL
+    assert cli.main(["kpi", "report", "--dsn", fresh, "--secret", "/nonexistent"]) == 1  # G1 FAIL
 
 
 @db_only
 def test_report_g4_baseline_run_is_progress_then_compare_passes(fresh):
-    from bluebird import publish
     with psycopg.connect(fresh) as c:
         _seed_idea(c)
         c.execute("INSERT INTO core.trace_verdict (idea_id, status, profile_version, external_search)"
                   " VALUES (%s,'none','full_v1','not_done') ON CONFLICT (idea_id) DO UPDATE SET status='none'", (IID,))
         c.commit()
-    pub = _pub_db()
-    publish.push(core_dsn=fresh, publish_dsn=pub)
     gold = "year,item,final\n2019,제목,none\n"
     base = kpi.goldset(dsn=fresh, gold_csv=gold, baseline=True)
-    g4 = {r["goal"]: r for r in kpi.report(dsn=fresh, publish_dsn=pub)}["G4"]
+    g4 = {r["goal"]: r for r in kpi.report(dsn=fresh)}["G4"]
     assert base["status"] == kpi.PASS and base["decided"] == 1
     assert g4["status"] == kpi.PROGRESS and "이번이 기준선" in g4["value"] and "KST" in g4["value"]
     kpi.goldset(dsn=fresh, gold_csv=gold)
-    g4 = {r["goal"]: r for r in kpi.report(dsn=fresh, publish_dsn=pub)}["G4"]
+    g4 = {r["goal"]: r for r in kpi.report(dsn=fresh)}["G4"]
     assert g4["status"] == kpi.PASS and "이번이 기준선" not in g4["value"]

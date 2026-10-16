@@ -400,9 +400,7 @@ button.small,
   margin-bottom: 3px;
 }
 .msg,
-.pending,
-.publication-note,
-.resolution {
+.pending {
   padding: 12px 14px;
   border: 1px solid var(--line);
   border-radius: 6px;
@@ -429,9 +427,7 @@ button.small,
   border-style: dashed;
 }
 .msg > :last-child,
-.pending > :last-child,
-.publication-note > :last-child,
-.resolution > :last-child {
+.pending > :last-child {
   margin-bottom: 0;
 }
 
@@ -703,14 +699,6 @@ dd {
 .publication-count strong {
   font-size: 24px;
   margin-right: 4px;
-}
-.publish-facts {
-  display: grid;
-  gap: 6px;
-  margin: 12px 0;
-}
-.publish-facts dd {
-  font-size: 12px;
 }
 .stage-flow {
   grid-template-columns: minmax(0, 1fr);
@@ -1022,13 +1010,6 @@ td details {
   display: block;
   height: 100%;
   background: var(--ink);
-}
-.objection-item {
-  border-top: 1px solid var(--line);
-  padding: 20px 0;
-}
-.objection-item:last-child {
-  padding-bottom: 0;
 }
 .login-card {
   width: 100%;

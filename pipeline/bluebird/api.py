@@ -1,7 +1,7 @@
 """Console backend composition and stable ASGI/module entrypoints.
 
 HTTP authentication, request schemas, routes and read projections live in
-bluebird.http. Domain writes use funnel and objections, never HTTP-specific SQL.
+bluebird.http. Domain writes use funnel and coding, never HTTP-specific SQL.
 The backend makes no external calls and does not use the egress client.
 """
 

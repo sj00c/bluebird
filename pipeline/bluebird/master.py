@@ -20,14 +20,14 @@ import xml.etree.ElementTree as ET
 from collections.abc import Callable, Iterator
 from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime
-from html.parser import HTMLParser
 from pathlib import Path
 from urllib.parse import urlsplit
 
 import openpyxl
 
-from . import db
+from . import budget_detail, db
 from .egress import Egress, EgressTransportError, KeyMissing
+from .html_text import block, th_sections
 
 Row = tuple[str, dict]   # (key, payload)
 
@@ -293,39 +293,6 @@ API_COLLECTORS = frozenset({*API, "acrc_open_proposal"})
 # 목록(API·크롤링)에 본문이 없는 소스 = 공식 상세 페이지에서 본문 영역 텍스트만.
 # raw source = "<소스>.detail", key = 원 행 key, payload = {"url", "body"}(없으면 ""). 받은 key는 다시 안 받음.
 
-class _Block(HTMLParser):
-    """첫 <tag class="cls"> 요소 안 텍스트. 블록 요소 경계 = 줄바꿈."""
-    _BREAK = frozenset({"div", "p", "br", "li", "tr"})
-
-    def __init__(self, tag: str, cls: str):
-        super().__init__(convert_charrefs=True)
-        self.tag, self.cls, self.depth, self.done, self.parts = tag, cls, 0, False, []
-
-    def handle_starttag(self, tag, attrs):
-        if self.done:
-            return
-        if self.depth:
-            self.depth += tag == self.tag
-            if tag in self._BREAK:
-                self.parts.append("\n")
-        elif tag == self.tag and self.cls in (dict(attrs).get("class") or "").split():
-            self.depth = 1
-
-    def handle_endtag(self, tag):
-        if self.depth and tag == self.tag:
-            self.depth -= 1
-            self.done = self.depth == 0
-
-    def handle_data(self, data):
-        if self.depth and not self.done:
-            self.parts.append(data)
-
-
-def _block(page: str, tag: str, cls: str) -> str:
-    parser = _Block(tag, cls)
-    parser.feed(page)
-    return "".join(parser.parts).strip()
-
 
 _KIDP_FEATURE = re.compile(r"상품 주요특징\s*</th>\s*<td[^>]*>\s*한글\s*</td>\s*<td[^>]*>(.*?)</td>", re.DOTALL)
 
@@ -337,12 +304,20 @@ def _kidp_body(page: str) -> str:
 
 # 소스 → (허용 호스트, 원 행에서 상세 URL, 페이지에서 본문)
 _KIDP = ("award.kidp.or.kr", lambda p: p.get("source_url", ""), _kidp_body)
+# 과학관: 탐구·제작 요약(write-contents)만. 학교·수상자·지도교사 칸·첨부 = 받지 않음
+_SCIENCE = ("www.science.go.kr", lambda p: p.get("source_url", ""),
+            lambda page: block(page, "div", "write-contents"))
+_GWANGJU = "https://yesan.gwangju.go.kr/pg/pgHomePPView.do?bpSn={}&pageId=yesan22"   # 제안순번 = bpSn
 DETAIL: dict[str, tuple[str, Callable[[dict], str], Callable[[str], str]]] = {
     "seoul_free_suggestions": ("idea.seoul.go.kr", lambda p: p.get("CONTENT", ""),
-                               lambda page: _block(page, "div", "txt-block")),
+                               lambda page: block(page, "div", "txt-block")),
     "kidp_good_design_projects": _KIDP,
     "kidp_korea_design_projects": _KIDP,
     "kidp_youth_design_projects": _KIDP,
+    "science_exhibition_archive_2015_onward": _SCIENCE,
+    "science_invention_archive_2015_onward": _SCIENCE,
+    "gwangju_budget_proposals": ("yesan.gwangju.go.kr", lambda p: _GWANGJU.format(p.get("제안순번", "")),
+                                 lambda page: th_sections(page, ("사업목적", "사업내용", "사업효과"))),
 }
 
 
@@ -396,6 +371,29 @@ def load_detail(*, dsn: str, egress: Egress, only: str | None = None, workers: i
             done += len(batch)
         results.append({"source": target, "status": "ok" if not failed else "partial", "fetched": done,
                         "empty": empty, "failed": failed})
+    for source, (host, crawl, fields_of, pair) in budget_detail.SOURCES.items():
+        if only and source != only:
+            continue
+        # 사이트 번호 ≠ 원 행 key → 매번 사이트 전수 수집 후 다시 매칭(소스 단위 교체)
+        target = f"{source}.detail"
+        with db.connect(dsn) as conn:
+            rows = [(k, fields_of(p)) for k, p in conn.execute("SELECT key, payload FROM raw WHERE source = %s",
+                                                               (source,))]
+        cands = crawl(egress, workers)
+        if any(urlsplit(c["url"]).hostname != host for c in cands):
+            raise ValueError(f"{source}: candidate URL outside {host}")
+        paired = pair(rows, cands)
+        out = [(k, {"url": c["url"] if c else "", "body": c["body"] if c else "", "match": how})
+               for k, (c, how) in paired.items()]
+        with db.connect(dsn) as conn:
+            conn.execute("DELETE FROM raw WHERE source = %s", (target,))
+            _upsert(conn, target, out, datetime.now(UTC))
+            conn.commit()
+        by_how: dict[str, int] = {}
+        for _k, p in out:
+            by_how[p["match"]] = by_how.get(p["match"], 0) + 1
+        results.append({"source": target, "status": "ok", "site": len(cands), "rows": len(rows), **by_how,
+                        "empty": sum(not p["body"] for _k, p in out)})
     return results
 
 

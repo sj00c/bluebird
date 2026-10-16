@@ -34,6 +34,7 @@ _LEAD = re.compile(r"^[\s\-–—·ㆍ*+]+(?=\S)")
 # 제목 앞 접수번호: (SPS-2607-3012689) 같은 영문 코드-숫자 묶음
 _RECEIPT = re.compile(r"^\s*[(\[]?[A-Z]{2,5}(?:-\d{2,}){2,}[)\]]?\s*")
 _YEAR = re.compile(r"(?:19|20)\d{2}(?!\d)")
+_YY = re.compile(r"^\(?'?(\d{2})년")   # '21년 상반기', "('22년) 감자밭" = 2000년대 두 자리
 
 
 def _val(value) -> str:
@@ -69,8 +70,10 @@ def _mask(text: str, people: list[str] = ()) -> str:
 
 
 def _year(value) -> int | None:
-    m = _YEAR.match(_val(value))
-    return int(m.group(0)) if m else None
+    text = _val(value)
+    if m := _YEAR.match(text):
+        return int(m.group(0))
+    return 2000 + int(m.group(1)) if (m := _YY.match(text)) else None
 
 
 def _sections(row: dict, parts: list[tuple[str, list[str] | str]]) -> str:
@@ -108,6 +111,42 @@ EXTRA_BODY: dict[str, list[str]] = {
     "yeonggwang_contest_proposals": ["게시물 내용(BS_CONTENT)"],
 }
 
+# 레지스트리에 연도 열이 없는 소스의 연도 열(master 전용, 이유 = EXTRA_BODY와 같음)
+EXTRA_YEAR: dict[str, str] = {"rural_sixth_industry_awards": "제목"}   # 제목 앞 ('22년)
+
+# 수상 등급 열(raw payload 헤더). 원본 값 그대로(등급외·선정 등 포함). 수상자·시상금·훈격·분야 열 = 제외.
+AWARD: dict[str, str] = {
+    "busan_urban_innovation_awards": "구분",
+    "daegu_youth_budget_awards": "수상이름",
+    "daejeon_junggu_policy_awards": "등급",
+    "fire_industry_design_awards": "수상구분",
+    "fire_industry_technology_awards": "수상구분",
+    "gov_startup_final_awards": "수상내역",
+    "gov_startup_prelim_awards": "award",
+    "gwangju_open_data_contest_awards": "수상구분",
+    "happy_rural_community_awards": "수상등급",
+    "jeonnam_awarded_proposals": "등급",
+    "kamco_data_contest_awards": "수상내역",
+    "khnp_quality_circle_awards": "수상내역",
+    "kidp_good_design_projects": "award",
+    "kidp_korea_design_projects": "award",
+    "kidp_youth_design_projects": "award",
+    "kipris_idea_api": "awardInformation",
+    "mafra_agrifood_contest": "분야_포상",
+    "science_exhibition_archive_2015_onward": "award",
+    "science_invention_archive_2015_onward": "award",
+    "science_museum_awards": "수상명",
+    "senior_employment_idea_awards": "수상내역",
+    "serious_game_awards": "수상구분",
+    "youth_data_contest_awards": "수상명(WNAWD_NM)",
+}
+
+
+def award(source: str, payload: dict) -> str | None:
+    if source not in AWARD:
+        return None
+    return " ".join(_val(payload.get(AWARD[source])).split()) or None
+
 
 def mapped(spec: dict) -> Extract:
     """[source.columns] = 원본 헤더 매핑. 안내 행(require_any·row_equals·exclude)·반복 헤더 행 제외."""
@@ -128,7 +167,8 @@ def mapped(spec: dict) -> Extract:
         body = " ".join(x for h in columns.get("body", []) if (x := clean(row.get(h))))
         url = _val(row.get(columns["source_url"])) if "source_url" in columns else ""
         return _fields(row.get(columns["title"]), body, contest=row.get(columns.get("contest", ""), ""),
-                       url=url or spec.get("url", ""), year=_year(row.get(columns.get("year", ""))),
+                       url=url or spec.get("url", ""),
+                       year=_year(row.get(columns.get("year", ""))) or _year(row.get(EXTRA_YEAR.get(spec["id"], ""))),
                        people=[row.get(h, "") for h in columns.get("people", [])])
     return extract
 
@@ -271,17 +311,17 @@ def refine(*, dsn: str, sources: list[dict], only: str | None = None) -> list[di
                 if extra := _mask(clean(detail)):
                     body = " ".join(x for x in (f["body"], extra) if x)
                     f["body"] = body if body != f["title"] else None
-                rows.append((source, key, f["title"], f["body"], f["contest"], f["contest"], f["url"], f["year"],
-                             fetched))
+                rows.append((source, key, f["title"], f["body"], f["contest"], f["contest"], award(source, payload),
+                             f["url"], f["year"], fetched))
             with conn.cursor() as cur:
                 cur.executemany(
                     # contest: 원본 값 있으면 O, 없으면 LLM 값(X) 유지
-                    "INSERT INTO master (api, key, title, body, contest, origin, url, year, fetched)"
-                    " VALUES (%s, %s, %s, %s, %s, CASE WHEN %s::text IS NOT NULL THEN 'O' END, %s, %s, %s)"
+                    "INSERT INTO master (api, key, title, body, contest, origin, award, url, year, fetched)"
+                    " VALUES (%s, %s, %s, %s, %s, CASE WHEN %s::text IS NOT NULL THEN 'O' END, %s, %s, %s, %s)"
                     " ON CONFLICT (api, key) DO UPDATE SET title = EXCLUDED.title, body = EXCLUDED.body,"
                     " contest = coalesce(EXCLUDED.contest, CASE WHEN master.origin = 'X' THEN master.contest END),"
                     " origin = CASE WHEN EXCLUDED.contest IS NOT NULL THEN 'O' WHEN master.origin = 'X' THEN 'X' END,"
-                    " url = EXCLUDED.url, year = EXCLUDED.year, fetched = EXCLUDED.fetched",
+                    " award = EXCLUDED.award, url = EXCLUDED.url, year = EXCLUDED.year, fetched = EXCLUDED.fetched",
                     rows)
                 cur.execute("CREATE TEMP TABLE IF NOT EXISTS keep (key text PRIMARY KEY) ON COMMIT DELETE ROWS")
                 cur.executemany("INSERT INTO keep VALUES (%s)", [(r[1],) for r in rows])

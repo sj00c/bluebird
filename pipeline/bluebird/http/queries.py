@@ -1,8 +1,7 @@
 """Read-only console projections; no HTTP, request models, or role resolution.
 
 Callers authorize access before invoking these queries. Idea detail never includes
-coder rounds; blind coding only returns the requesting person's own code. The
-objection projection is opt-in because its text can contain personal information.
+coder rounds; blind coding only returns the requesting person's own code.
 """
 
 from __future__ import annotations
@@ -11,7 +10,7 @@ import psycopg
 
 from .. import db, score
 
-STAGES = ("s0", "s1", "s2", "s3", "s4", "s5", "s6")
+STAGES = ("s0", "s1", "s2", "s3", "s4", "s5")
 
 
 def _rows(cur: psycopg.Cursor) -> list[dict]:
@@ -50,12 +49,9 @@ def overview(*, dsn: str) -> dict:
         checks = _rows(conn.execute(
             """SELECT DISTINCT ON (source_id) source_id, status, checked_at FROM core.source_check
                 ORDER BY source_id, checked_at DESC, id DESC"""))
-        latest = _rows(conn.execute(
-            "SELECT id, created_at, applied_at FROM core.publish_snapshot ORDER BY id DESC LIMIT 1"))
         runs = _rows(conn.execute(
             "SELECT stage, status, started_at, finished_at FROM core.pipeline_run ORDER BY id DESC LIMIT 20"))
-    return {"counts": counts, "sources": sources,
-            "latest_publish": latest[0] if latest else None, "runs": runs, "checks": checks}
+    return {"counts": counts, "sources": sources, "runs": runs, "checks": checks}
 
 
 def changes(*, dsn: str, q: str, limit: int) -> dict:
@@ -85,7 +81,7 @@ def queue(*, dsn: str, stage: str, q: str, limit: int, offset: int) -> dict:
                      ORDER BY i.id LIMIT %s OFFSET %s""",
                 (search, search, limit, offset)))
         else:
-            nxt = STAGES[STAGES.index(stage) + 1] if stage != "s6" else None
+            nxt = STAGES[STAGES.index(stage) + 1] if stage != STAGES[-1] else None
             where = f"f.{stage} " + (f"AND NOT f.{nxt} " if nxt else "")
             where += "AND (i.title ILIKE %s OR i.id ILIKE %s)"
             total = conn.execute(
@@ -104,7 +100,7 @@ def queue(*, dsn: str, stage: str, q: str, limit: int, offset: int) -> dict:
     return {"items": items, "counts": counts, "total": total, "limit": limit, "offset": offset}
 
 
-def idea_detail(*, dsn: str, idea_id: str, include_objections: bool = False) -> dict | None:
+def idea_detail(*, dsn: str, idea_id: str) -> dict | None:
     with db.connect(dsn) as conn:
         snap = _snapshot_id(conn)
         idea = _rows(conn.execute(
@@ -156,9 +152,6 @@ def idea_detail(*, dsn: str, idea_id: str, include_objections: bool = False) -> 
             """SELECT round, reviewer, decision, code, note, created_at FROM core.review
                 WHERE target_type='idea' AND target_id=%s AND round NOT IN ('coder_a','coder_b')
                 ORDER BY created_at""", (idea_id,)))
-        objection_items = _rows(conn.execute(
-            """SELECT id, kind, body, status, resolution, submitted_at, resolved_at, resolved_by FROM core.objection
-                WHERE idea_id=%s ORDER BY id""", (idea_id,))) if include_objections else []
     if diag:
         diag[0]["evidence"] = diag_ev
     if trace:
@@ -166,8 +159,7 @@ def idea_detail(*, dsn: str, idea_id: str, include_objections: bool = False) -> 
     return {"idea": idea[0], "card": card[0] if card else None, "trace": trace[0] if trace else None,
             "diagnosis": diag[0] if diag else None, "matches": matches,
             "timeliness": timeliness[0] if timeliness else None,
-            "stage": stage[0] if stage else dict.fromkeys(STAGES, False), "reviews": reviews,
-            "objections": objection_items}
+            "stage": stage[0] if stage else dict.fromkeys(STAGES, False), "reviews": reviews}
 
 
 def coding(*, dsn: str, reviewer: str) -> dict:
@@ -183,13 +175,3 @@ def coding(*, dsn: str, reviewer: str) -> dict:
                  LEFT JOIN core.idea_card k ON k.idea_id = cs.idea_id
                 WHERE cs.sample_id=%s ORDER BY cs.idea_id""", (reviewer, sid[0])))
     return {"sample_id": sid[0], "items": items}
-
-
-def objections(*, dsn: str, status: str) -> dict:
-    with db.connect(dsn) as conn:
-        items = _rows(conn.execute(
-            """SELECT o.id, o.idea_id, i.title, o.kind, o.body, o.status, o.submitted_at, o.pulled_at, o.resolution,
-                      o.resolved_at, o.resolved_by
-                 FROM core.objection o LEFT JOIN core.idea i ON i.id = o.idea_id
-                WHERE o.status=%s ORDER BY o.id""", (status,)))
-    return {"items": items}

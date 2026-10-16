@@ -9,7 +9,7 @@ import "./globals.css";
 
 export const metadata: Metadata = {
   title: "파랑새 운영 콘솔",
-  description: "검토 대기열, 분석 작성, 승인 및 공개 상태 관리",
+  description: "검토 대기열, 분석 작성, 검토·승인 관리",
   robots: { index: false, follow: false },
 };
 export const dynamic = "force-dynamic";
@@ -37,9 +37,6 @@ export default async function RootLayout({
       : []),
     ...(me?.roles.includes("coder")
       ? [{ href: "/coding", label: "독립 코딩", index: "03" }]
-      : []),
-    ...(me?.roles.some((role) => ["reviewer", "auditor"].includes(role))
-      ? [{ href: "/objections", label: "이의 관리", index: "04" }]
       : []),
   ];
   return (
@@ -87,7 +84,7 @@ export default async function RootLayout({
             <main id="main" className="wrap">
               {children}
             </main>
-            <footer className="footer">저장 → 검토·승인 → 공개 배치</footer>
+            <footer className="footer">저장 → 검토·승인</footer>
           </div>
         </div>
       </body>

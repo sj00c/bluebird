@@ -84,9 +84,7 @@ export async function review(
     `/api/ideas/${encodeURIComponent(id)}/review`,
     { round, decision, note },
     `/ideas/${encodeURIComponent(id)}`,
-    decision === "approve"
-      ? "승인 기록 완료 · 공개 반영: 별도 배치"
-      : "반려 기록 완료",
+    decision === "approve" ? "승인 기록 완료" : "반려 기록 완료",
   );
 }
 export async function code(
@@ -103,27 +101,6 @@ export async function code(
     { code: c, note },
     "/coding",
     "코드 저장 완료 · 다른 코더에게 비공개",
-  );
-}
-export async function resolveObjection(
-  _state: ActionState,
-  f: FormData,
-): Promise<ActionState> {
-  if (!(await allowed("reviewer"))) return denied;
-  const id = str(f, "objection_id"),
-    decision = str(f, "decision"),
-    resolution = str(f, "resolution");
-  const withhold = f.get("withhold") === "on";
-  if (!/^\d+$/.test(id) || !["accepted", "rejected"].includes(decision))
-    return { error: "처리 대상·결정 확인 필요" };
-  if (!resolution) return { error: "처리 내용 필수" };
-  if (withhold && decision !== "accepted")
-    return { error: "원본 공개 중단: 이의 수용 시에만 가능" };
-  return save(
-    `/api/objections/${id}/resolve`,
-    { decision, resolution, withhold },
-    "/objections",
-    "이의 처리 완료 · 공개 반영: 다음 배치",
   );
 }
 export async function author(

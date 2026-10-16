@@ -11,11 +11,6 @@ export type Overview = {
     check_status: string | null;
     checked_at: string | null;
   }[];
-  latest_publish: {
-    id: string | number;
-    created_at: string;
-    applied_at: string | null;
-  } | null;
   runs: {
     stage: string;
     status: string;
@@ -52,21 +47,6 @@ export type CodingItem = {
   my_code: string | null;
 };
 export type Coding = { sample_id: string | null; items: CodingItem[] };
-
-export type Objection = {
-  id: number | string;
-  idea_id: string;
-  title: string | null;
-  kind: string;
-  body: string;
-  status: string;
-  submitted_at: string;
-  pulled_at: string | null;
-  resolution: string | null;
-  resolved_at: string | null;
-  resolved_by: string | null;
-};
-export type Objections = { items: Objection[] };
 
 export type Change = {
   id: string;
@@ -152,14 +132,5 @@ export type Detail = {
     code: string | null;
     note: string | null;
     created_at: string;
-  }[];
-  objections: {
-    id: number | string;
-    kind: string;
-    body: string;
-    status: string;
-    resolution: string | null;
-    submitted_at: string;
-    resolved_at: string | null;
   }[];
 };

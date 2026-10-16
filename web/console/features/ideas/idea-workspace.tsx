@@ -23,16 +23,14 @@ export function IdeaWorkspace({
   const { idea } = d;
   const current = [...STAGES].reverse().find((s) => d.stage[s]);
   const next = idea.withheld_at
-    ? "공개 중단 · 다음 공개 배치 반영"
+    ? "원본 공개 중단 · 승인 불가"
     : !canAuthor
       ? "역할별 검토 기록"
-      : current === "s6"
-        ? "이의·근거 최신성 확인"
-        : current === "s5"
-          ? "공개 배치 반영 대기"
-          : current
-            ? STAGE_NAMES[STAGES[STAGES.indexOf(current) + 1]]
-            : "수집 원본 확인 · 카드 미생성";
+      : current === "s5"
+        ? "승인 완료 · 분석 수정 시 재승인"
+        : current
+          ? STAGE_NAMES[STAGES[STAGES.indexOf(current) + 1]]
+          : "수집 원본 확인 · 카드 미생성";
   const nextAnchor = idea.withheld_at
     ? "history"
     : !canAuthor
@@ -47,7 +45,6 @@ export function IdeaWorkspace({
               s3: "score",
               s4: "approval",
               s5: "approval",
-              s6: "history",
             } as Record<string, string>
           )[current];
   return (
@@ -69,8 +66,8 @@ export function IdeaWorkspace({
         <span className={`tag ${idea.withheld_at ? "warning" : ""}`}>
           {idea.withheld_at
             ? "원본 공개 중단"
-            : d.stage.s6
-              ? "공개 스냅샷 반영"
+            : d.stage.s5
+              ? "최종 승인"
               : !d.card
                 ? "수집 원본 · 카드 미생성"
                 : "분석 검토 중"}
@@ -114,7 +111,7 @@ export function IdeaWorkspace({
           {canAuthor ? "검토자 작성 모드" : "근거 열람 모드"} · 분석 수정 시
           기존 공개 승인 철회 가능
         </li>
-        <li>저장 → 재검토·승인 → 별도 공개 배치</li>
+        <li>저장 → 재검토·승인</li>
       </ul>
       <div className="workspace-grid">
         <div>
@@ -131,7 +128,7 @@ export function IdeaWorkspace({
           <ApprovalSection detail={d} me={me} />
         </aside>
       </div>
-      <ReviewHistory detail={d} me={me} />
+      <ReviewHistory detail={d} />
     </>
   );
 }

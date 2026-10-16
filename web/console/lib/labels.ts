@@ -22,20 +22,6 @@ export const VERDICTS: Record<string, string> = {
   hold: "보류",
 };
 
-export const OBJECTION_KINDS: Record<string, string> = {
-  fact: "사실 오류",
-  cause: "막힌 이유 이견",
-  change: "바뀐 것 이견",
-  privacy: "개인정보",
-  other: "기타",
-};
-
-export const OBJECTION_STATUS: Record<string, string> = {
-  open: "처리 대기",
-  accepted: "수용",
-  rejected: "기각",
-};
-
 export const ROUNDS: Record<string, string> = {
   final: "최종",
   expert: "전문가",
@@ -49,7 +35,7 @@ export const DECISIONS: Record<string, string> = {
   reject: "반려",
 };
 
-export const STAGES = ["s0", "s1", "s2", "s3", "s4", "s5", "s6"] as const;
+export const STAGES = ["s0", "s1", "s2", "s3", "s4", "s5"] as const;
 export const QUEUE_STAGES = ["raw", ...STAGES] as const;
 
 export const STAGE_NAMES: Record<string, string> = {
@@ -60,7 +46,6 @@ export const STAGE_NAMES: Record<string, string> = {
   s3: "변화 연결",
   s4: "시의성 평가",
   s5: "최종 승인",
-  s6: "공개 반영",
 };
 export const TRACE_STATUS: Record<string, string> = {
   realized: "실현·사업화 확인",

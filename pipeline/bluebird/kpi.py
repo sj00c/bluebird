@@ -1,9 +1,8 @@
-"""KPI 검증 도구(계획 §5 G1–G13).
+"""KPI 검증 도구(계획 §5 G1–G13 중 원본 DB로 잴 수 있는 것).
 
 - kappa: κ 표본(2인 독립 코딩) 일치도. 코딩 없음 → human_blocked
 - goldset: 파일럿 골드셋(흔적 5클래스) vs 흔적 판정, 혼동행렬·macro-F1. CSV에 팀명 있음 → 실행 시 읽기만, 저장 없음(연도·제목 매칭 id·클래스만 기록)
-- verify_top20: 주간 Top 20 = 전문가 승인 = 공개 weekly_top
-- report: G1–G13 현황표. 사람 입력 대기 → human_blocked, 키 없음 → key_required
+- report: G1·G3·G4·G9·G10·G12·G13 현황표. 사람 입력 대기 → human_blocked, 키 없음 → key_required
 """
 
 from __future__ import annotations
@@ -11,13 +10,11 @@ from __future__ import annotations
 import csv
 import io
 from collections import Counter
-from datetime import date
 
 from psycopg.types.json import Jsonb
 
 from . import db
-from .publish import QUERIES, columns
-from .signals.catalog import KST, today_kst
+from .signals.catalog import KST
 from .sources import ADAPTERS, load_sources
 from .sources_check import BLOCKED, REMOTES
 
@@ -27,8 +24,6 @@ KAPPA_TARGET = 0.7
 KAPPA_MIN_SAMPLE = 100  # 기획서 약속: 100건 2인 독립 코딩(30건 파일럿 = 미통과)
 GOLD_F1_DROP_PT = 5.0
 GOLD_MIN_DECIDED = 0.8  # 회귀 비교 최소 판정 비율
-TOP_TARGET = 20
-G6_WINDOW = (date(2026, 10, 12), date(2026, 12, 7))  # 스냅샷 #1(월) ~ 동결(월), 양 끝 포함
 
 PASS, FAIL, PROGRESS, HUMAN, KEY = "pass", "fail", "in_progress", "human_blocked", "key_required"
 
@@ -163,43 +158,6 @@ def goldset(*, dsn: str, gold_csv: str, baseline: bool = False) -> dict:
     return out
 
 
-# ----------------------------------------------------------------------------- G5 Top 20
-
-def _week(conn, week: date | None) -> date | None:
-    return week or conn.execute("SELECT max(week) FROM core.weekly_top").fetchone()[0]
-
-
-def verify_top20(*, dsn: str, publish_dsn: str, week: date | None = None, target: int = TOP_TARGET) -> dict:
-    """target 기본 20. 공개 후보 <20 → E3 승인 후 --target=min(20, 후보 수)."""
-    with db.connect(dsn) as conn:
-        week = _week(conn, week)
-        if week is None:
-            return {"week": None, "status": PROGRESS, "detail": "weekly_top 없음"}
-        top = {r[0] for r in conn.execute(
-            "SELECT idea_id FROM core.weekly_top WHERE week=%s AND rank <= 20", (week,))}
-        expert = {r[0] for r in conn.execute(
-            """SELECT DISTINCT r.target_id FROM core.review r JOIN core.weekly_top t
-                 ON t.idea_id = r.target_id AND t.week = %s AND t.rank <= 20
-                WHERE r.round='expert' AND r.target_type='idea' AND r.decision='approve'""", (week,))}
-    with db.connect(publish_dsn) as pc:
-        pub = {r[0] for r in pc.execute("SELECT idea_id FROM publish.weekly_top WHERE week=%s AND rank <= 20",
-                                        (week,))}
-    if not top:
-        status = PROGRESS
-    elif top != pub:
-        status = FAIL  # 공개본이 core Top과 다르다
-    elif len(top) < target:
-        status = PROGRESS  # 후보가 목표 수에 못 미침(E3에서 목표 조정 필요)
-    elif expert != top:
-        status = HUMAN  # 전문가 승인 대기
-    else:
-        status = PASS
-    return {"week": week, "core_top": len(top), "expert_approved": len(expert), "published": len(pub),
-            "target": target, "same_set": top == expert == pub, "missing_expert": sorted(top - expert),
-            "not_published": sorted(top - pub), "published_not_top": sorted(pub - top),
-            "status": status}
-
-
 # ----------------------------------------------------------------------------- G1–G13
 
 def _row(g: str, name: str, status: str, value: str, check: str) -> dict:
@@ -226,10 +184,9 @@ def audit_g9(conn) -> dict[str, int]:
     return {k: conn.execute(v).fetchone()[0] for k, v in q.items()}
 
 
-def name_leaks(conn, pc, *, config, seed_dir, secret: bytes) -> dict[str, int]:
-    """G10 성명 일치: 원본 파일 팀명·수상자·지도교사 이름을 메모리에서만 재독 → 공개 글(제목·본문·문제·해결) 잔존 집계.
-    이름 저장·출력 없음, 개수만 반환.
-    expected = 이름 있는 아이디어 중 공개 대상(유효·보류 아님). compared == expected 여야 전수 대조."""
+def name_leaks(conn, *, config, seed_dir, secret: bytes) -> dict[str, int]:
+    """G10 성명 일치: 원본 파일 팀명·수상자·지도교사 이름을 메모리에서만 재독 → 원본 DB 글(제목·본문·카드 문제·해결)
+    잔존 집계. 공개 허용 소스, 유효·보류 아님 대상. 이름 저장·출력 없음, 개수만 반환."""
     from .anonymize import find_name
 
     names: dict[str, list[str]] = {}
@@ -243,27 +200,25 @@ def name_leaks(conn, pc, *, config, seed_dir, secret: bytes) -> dict[str, int]:
         for _ in ADAPTERS[spec.adapter](spec, secret, names):
             pass
         files += 1
-    expected = conn.execute(
-        """SELECT count(*) FROM core.idea WHERE id = ANY(%s) AND retired_at IS NULL AND withheld_at IS NULL""",
-        (list(names),)).fetchone()[0]
     hits = compared = 0
-    for iid, title, body, problem, solution in pc.execute(
-            "SELECT id, title, body, problem, solution FROM publish.idea WHERE id = ANY(%s)", (list(names),)):
+    for iid, title, body, problem, solution in conn.execute(
+            """SELECT i.id, i.title, i.body, k.problem, k.solution FROM core.idea i
+                 LEFT JOIN core.idea_card k ON k.idea_id = i.id
+                WHERE i.id = ANY(%s) AND i.retired_at IS NULL AND i.withheld_at IS NULL""", (list(names),)):
         compared += 1
         if any(find_name(t, names[iid]) for t in (title, body, problem, solution)):
             hits += 1
-    return {"name_matches": hits, "compared": compared, "expected": expected, "ideas_with_names": len(names),
+    return {"name_matches": hits, "compared": compared, "ideas_with_names": len(names),
             "source_files": files, "missing_files": missing}
 
 
 def names_checked(names: dict[str, int] | None) -> bool:
-    """이름 대조 실제 수행 여부: 공개 소스 파일 전부 존재 + 공개 대상 이름 아이디어 전수 대조.
-    익명화 키 불일치 → expected=compared=0 → expected>0 추가 요구."""
+    """이름 대조 실제 수행 여부: 공개 소스 파일 전부 존재 + 대조 1건 이상(익명화 키가 다르면 ID가 안 맞아 0건)."""
     return bool(names) and names["missing_files"] == 0 and names["source_files"] > 0 and (
-        names["ideas_with_names"] == 0 or names["compared"] == names["expected"] > 0)
+        names["ideas_with_names"] == 0 or names["compared"] > 0)
 
 
-def audit_g10(conn, pc, *, names: dict[str, int] | None) -> dict[str, int | None]:
+def audit_g10(conn, *, names: dict[str, int] | None) -> dict[str, int | None]:
     """names = name_leaks() 결과. 원본 파일·익명화 키가 없어 이름 대조를 못 하면 None(→ G10 진행 중)."""
     from .egress import NEVER_EXPORT, RETIRED_HOSTS, Policy, host_allowed
 
@@ -279,27 +234,15 @@ def audit_g10(conn, pc, *, names: dict[str, int] | None) -> dict[str, int | None
             WHERE k.card_kind='full' AND (e.decision <> 'allowed' OR e.purpose <> 'llm')""").fetchone()[0]
     full_without_llm_call += conn.execute(
         "SELECT count(*) FROM core.idea_card WHERE card_kind='full' AND egress_call_id IS NULL").fetchone()[0]
-    allowed_cols = {t: set(columns(t)) for t in (*QUERIES, "evidence")}
-    extra_cols = 0
-    for t, cols in allowed_cols.items():
-        live = {r[0] for r in pc.execute(
-            "SELECT column_name FROM information_schema.columns WHERE table_schema='publish' AND table_name=%s", (t,))}
-        extra_cols += len(live - cols)
-    name_cols = pc.execute(
-        """SELECT count(*) FROM information_schema.columns WHERE table_schema='publish'
-             AND column_name IN ('team', 'team_name', 'team_kind', 'member', 'members', 'leader',
-                                 'person_name', 'contact')""").fetchone()[0]
     return {"off_whitelist_calls": off_host, "forbidden_fields_sent": bad_field,
-            "full_card_without_llm_call": full_without_llm_call, "publish_columns_outside_template": extra_cols,
-            "publish_name_columns": name_cols, "name_matches": names["name_matches"] if names_checked(names) else None}
+            "full_card_without_llm_call": full_without_llm_call,
+            "name_matches": names["name_matches"] if names_checked(names) else None}
 
 
-def report(*, dsn: str, publish_dsn: str, inbox_dsn: str | None = None, p95_ms: float | None = None,
-           week: date | None = None, top_target: int = TOP_TARGET, kappa_sample: str | None = None,
-           names: dict[str, int] | None = None) -> list[dict]:
+def report(*, dsn: str, kappa_sample: str | None = None, names: dict[str, int] | None = None) -> list[dict]:
     """names = name_leaks() 결과(없으면 G10 이름 대조 미실행 → 진행 중). kappa_sample = G3 기준 표본 id."""
     rows: list[dict] = []
-    with db.connect(dsn) as conn, db.connect(publish_dsn) as pc:
+    with db.connect(dsn) as conn:
         kinds = dict(conn.execute(
             """SELECT k.card_kind, count(*) FROM core.idea_card k JOIN core.idea i ON i.id=k.idea_id
                 WHERE i.retired_at IS NULL GROUP BY 1"""))
@@ -310,14 +253,6 @@ def report(*, dsn: str, publish_dsn: str, inbox_dsn: str | None = None, p95_ms: 
         rows.append(_row("G1", "구조화 카드", PASS if total >= 10_000 and no_card == 0 else FAIL,
                          f"{total:,} ({', '.join(f'{k} {v:,}' for k, v in sorted(kinds.items()))}), 카드 없음 {no_card}",
                          "≥10,000, 살아 있는 아이디어 전부 카드"))
-
-        allowed = conn.execute(
-            """SELECT count(*) FROM core.idea i JOIN core.source s ON s.id=i.source_id
-                WHERE s.public_ok AND i.retired_at IS NULL AND i.withheld_at IS NULL""").fetchone()[0]
-        pub = pc.execute("SELECT count(*) FROM publish.idea").fetchone()[0]
-        rows.append(_row("G2", "공개 카드", PASS if pub == allowed and pub > 0 else FAIL,
-                         f"publish {pub:,} = core 공개 허용 {allowed:,}", "publish.idea = core public_ok"))
-
         # G3: 기준 표본(지정 또는 100건 이상 중 가장 최근)을 지금 코딩으로 다시 계산한다(지난 실행 기록이 아니라).
         sid = kappa_sample or (conn.execute(
             """SELECT sample_id FROM core.coding_sample GROUP BY sample_id HAVING count(*) >= %s
@@ -338,7 +273,6 @@ def report(*, dsn: str, publish_dsn: str, inbox_dsn: str | None = None, p95_ms: 
                          f"표본 ≥{KAPPA_MIN_SAMPLE}, κ ≥{KAPPA_TARGET}"))
 
     with db.connect(dsn) as conn:
-
         # G4: 골드셋 CSV에 팀명이 있어 리포트 때 다시 돌리지 않고 마지막 실행을 보여 준다(실행 시각 표시).
         # 기준선 설정 실행 = 비교 아님 → 미통과
         g4 = conn.execute("""SELECT stats, finished_at FROM core.pipeline_run WHERE stage='kpi-goldset' AND status='ok'
@@ -353,66 +287,17 @@ def report(*, dsn: str, publish_dsn: str, inbox_dsn: str | None = None, p95_ms: 
         else:
             rows.append(_row("G4", "골드셋 회귀", PROGRESS, "미실행(bluebird eval goldset)", "기준선 대비 macro-F1 하락 ≤5pt"))
 
-        week = _week(conn, week)
-    t = verify_top20(dsn=dsn, publish_dsn=publish_dsn, week=week, target=top_target)
-    rows.append(_row("G5", "재조명 Top 20", t["status"],
-                     f"주 {t['week']} Top {t.get('core_top', 0)}/{top_target}, 전문가 승인 {t.get('expert_approved', 0)}, "
-                     f"공개 {t.get('published', 0)}", "목표 수 전부 전문가 승인·공개(E3 승인 시 --top-target 조정)"))
-
-    with db.connect(dsn) as conn, db.connect(publish_dsn) as pc:
-        # G6: 실제 공개된 바뀐 것(publish.change)만 집계. 공개 규칙(퇴역·이의 보류·3단계·공개 허용) = publish 기적용
-        pub_changes = [r[0] for r in pc.execute(
-            "SELECT DISTINCT id FROM publish.change WHERE kind = 'dataset_opened'")]
-        by_tier = dict(conn.execute(
-            """SELECT CASE WHEN s.tier = 'observed_new' AND s.rereg_of IS NULL
-                            AND s.first_seen_at BETWEEN %s AND %s THEN 'window_new' ELSE s.tier END,
-                      count(DISTINCT c.id)
-                 FROM core.change_match m JOIN core.condition_change c ON c.id = m.change_id
-                 JOIN core.signal_dataset s ON s.public_data_pk = c.ref_id
-                WHERE m.id = ANY(%s) GROUP BY 1""", (*G6_WINDOW, pub_changes)))
-        g6 = by_tier.get("window_new", 0)
-        snaps = conn.execute("SELECT count(*) FROM core.catalog_snapshot WHERE taken_at >= %s",
-                             (G6_WINDOW[0],)).fetchone()[0]
-        closed = today_kst() > G6_WINDOW[1]
-        rows.append(_row("G6", "바뀐 것 데모(신규 개방)", PASS if g6 >= 10 else (FAIL if closed else PROGRESS),
-                         f"창 안 신규 {g6}건 (창 {G6_WINDOW[0]}~{G6_WINDOW[1]}, 스냅샷 {snaps}개; 그 밖 공개 "
-                         f"{', '.join(f'{k} {v}' for k, v in sorted(by_tier.items()) if k != 'window_new') or '0'})",
-                         "≥10 [W4 확정]"))
-
-        demo = pc.execute(
-            """SELECT coalesce(max(n), 0) FROM (SELECT count(*) n FROM publish.announcement_match
-                GROUP BY announcement_id) x""").fetchone()[0]
-        ks = conn.execute(
-            """SELECT status FROM core.source_check WHERE source_id='kstartup_announcement_15125364'
-                ORDER BY checked_at DESC LIMIT 1""").fetchone()
-        g7 = PASS if demo >= 3 else (KEY if ks and ks[0] == KEY else PROGRESS)
-        rows.append(_row("G7", "공고 매칭 데모", g7, f"공고 1건당 최대 승인 매칭 {demo}", "≥3 (K-Startup 공고)"))
-
-        rows.append(_row("G8", "검색 속도(pg_trgm)", PROGRESS if p95_ms is None else (PASS if p95_ms < 300 else FAIL),
-                         "미측정(deploy/local/p95.sh)" if p95_ms is None else f"p95 {p95_ms}ms", "p95 < 300ms"))
-
         a9 = audit_g9(conn)
         rows.append(_row("G9", "근거 무결성", PASS if not any(a9.values()) else FAIL,
                          ", ".join(f"{k} {v}" for k, v in a9.items()), "근거 없는 공개 행 0"))
 
-        a10 = audit_g10(conn, pc, names=names)
+        a10 = audit_g10(conn, names=names)
         g10 = FAIL if any(a10.values()) else (PROGRESS if a10["name_matches"] is None else PASS)
         rows.append(_row("G10", "반출 통제", g10, ", ".join(f"{k} {v}" for k, v in a10.items())
                          + ("" if names is None else
-                            f" (이름 대조 {names['compared']:,}/{names['expected']:,}건(보류·퇴역 제외), 원본 파일 "
+                            f" (이름 대조 {names['compared']:,}건(보류·퇴역 제외), 원본 파일 "
                             f"{names['source_files']}, 없음 {names['missing_files']})"),
                          "전부 0, 성명 일치 0"))
-
-        ob = conn.execute(
-            """SELECT count(*) FILTER (WHERE pulled_at IS NOT NULL), count(*) FILTER (WHERE resolved_at IS NOT NULL)
-                 FROM core.objection""").fetchone()
-        inbox = None
-        if inbox_dsn:
-            with db.connect(inbox_dsn) as ic:
-                inbox = ic.execute("SELECT count(*) FROM inbox.objection").fetchone()[0]
-        g11 = PASS if ob[1] >= 1 and inbox == 0 else (PROGRESS if inbox is None or ob[1] == 0 else FAIL)
-        rows.append(_row("G11", "이의 제기", g11, f"가져옴 {ob[0]}, 처리 {ob[1]}, 접수함 남은 {inbox}",
-                         "제출→pull→접수함 삭제→처리→반영 ≥1"))
 
         audit = conn.execute(
             """SELECT count(*), count(*) FILTER (WHERE decision='approve') FROM core.review

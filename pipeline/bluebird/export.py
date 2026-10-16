@@ -2,13 +2,13 @@
 
 - xlsx: 아이디어 전체 + 선별 재료 → 엑셀 1파일. share 열(가능/보류) = 레지스트리 share → core.source.share_ok
 - master_xlsx: 정제 DB master 표 → 엑셀 1파일(시트 master)
-- provenance: docs/DATA.md 소스 표. 원천 = DB(core.source·idea) + 레지스트리(TOML)
+- provenance: docs/DATA.md 소스 표. 원천 = 정제 DB(master·raw) + 레지스트리(TOML)
 - 읽기 전용. 공개 승인·깔때기 무관, core 전체
 """
 from __future__ import annotations
 
 import datetime as dt
-import re
+from collections import defaultdict
 from pathlib import Path
 from urllib.parse import urlsplit
 
@@ -35,19 +35,6 @@ SELECT i.id, s.id, s.name, s.license, s.share_ok, s.record_kind, coalesce(nullif
  ORDER BY s.id, i.year NULLS LAST, i.id
 """
 
-# 사람이 DBeaver 등에서 그대로 쓰는 조회. docs/DATA.md에 실림
-IDEA_VIEW_SQL = """
-SELECT i.id, s.name AS source, s.record_kind, CASE WHEN s.share_ok THEN '가능' ELSE '보류' END AS share,
-       c.name AS contest, c.host_org, c.audience, i.year, i.award, i.title, i.body, i.category,
-       array_to_string(i.used_data, '; ') AS used_data, i.source_url,
-       (SELECT string_agg(x.reason, ', ' ORDER BY x.reason) FROM core.idea_exclusion x WHERE x.idea_id = i.id) AS exclude_reasons,
-       (SELECT d.canonical_id FROM core.idea_duplicate d WHERE d.idea_id = i.id) AS canonical_id
-  FROM core.idea i
-  JOIN core.source s ON s.id = i.source_id
-  JOIN core.contest c ON c.id = i.contest_id
- WHERE i.retired_at IS NULL AND i.withheld_at IS NULL
- ORDER BY s.id, i.year NULLS LAST, i.id
-"""
 
 SOURCE_SQL = """
 SELECT s.id, s.name, s.license, s.url, s.record_kind, s.exclude_reason,
@@ -62,21 +49,24 @@ SELECT s.id, s.name, s.license, s.url, s.record_kind, s.exclude_reason,
 """
 
 
-MASTER_COLS = ("api", "key", "title", "body", "contest", "origin", "url", "year", "fetched",
-               "keyword", "problem", "feature", "target", "domain")
+MASTER_COLS = ("api", "key", "title", "body", "contest", "origin", "award", "url", "year", "fetched",
+               "keyword", "problem", "feature", "target", "domain", "exclude_reasons", "canonical_api", "canonical_key",
+               "kind", "field", "program")
 
-# 목록(keyword·domain) = 쉼표 이음, fetched = KST 분 단위
+# 목록(keyword·domain·exclude_reasons) = 쉼표 이음, fetched = KST 분 단위, kind·field·program = program 표
 MASTER_SQL = """
-SELECT api, key, title, body, contest, origin, url, year,
-       to_char(fetched AT TIME ZONE 'Asia/Seoul', 'YYYY-MM-DD HH24:MI'),
-       array_to_string(keyword, ', '), problem, feature, target, array_to_string(domain, ', ')
-  FROM master
- ORDER BY api, year NULLS LAST, key
+SELECT m.api, m.key, m.title, m.body, m.contest, m.origin, m.award, m.url, m.year,
+       to_char(m.fetched AT TIME ZONE 'Asia/Seoul', 'YYYY-MM-DD HH24:MI'),
+       array_to_string(m.keyword, ', '), m.problem, m.feature, m.target, array_to_string(m.domain, ', '),
+       array_to_string(m.exclude_reasons, ', '), m.canonical_api, m.canonical_key, p.kind, p.field, p.name
+  FROM master m LEFT JOIN program p ON p.id = m.program_id
+ ORDER BY m.api, m.year NULLS LAST, m.key
 """
 
-MASTER_WIDTHS = {"api": 24, "key": 18, "title": 40, "body": 60, "contest": 28, "origin": 7, "url": 30,
+MASTER_WIDTHS = {"api": 24, "key": 18, "title": 40, "body": 60, "contest": 28, "origin": 7, "award": 12, "url": 30,
                  "year": 7, "fetched": 17, "keyword": 24, "problem": 40, "feature": 40, "target": 16,
-                 "domain": 16}
+                 "domain": 16, "exclude_reasons": 14, "canonical_api": 24, "canonical_key": 18,
+                 "kind": 10, "field": 14, "program": 28}
 XLSX_CELL_MAX = 32767  # 엑셀 칸 글자 수 한도
 
 
@@ -233,60 +223,120 @@ def xlsx(*, dsn: str, out: Path) -> dict:
     return {"path": str(out), "ideas": n_ideas, "sources": len(sources), "share_ok": n_share}
 
 
-_SITES = (
-    ("www.data.go.kr", "공공데이터포털"), ("data.seoul.go.kr", "서울 열린데이터광장"), ("idea.seoul.go.kr", "서울 열린데이터광장"),
-    ("openapi.gg.go.kr", "경기데이터드림"), ("www.science.go.kr", "국립중앙과학관"), ("award.kidp.or.kr", "한국디자인진흥원"),
-    ("plus.kipris.or.kr", "KIPRIS Plus"),
-)
+# ---------------------------------------------------------------- docs/DATA.md
+
+PLATFORM = {"www.data.go.kr": "공공데이터포털", "data.seoul.go.kr": "서울 열린데이터광장",
+            "idea.seoul.go.kr": "서울 열린데이터광장", "openapi.gg.go.kr": "경기데이터드림",
+            "www.science.go.kr": "국립중앙과학관 누리집", "award.kidp.or.kr": "한국디자인진흥원 누리집",
+            "plus.kipris.or.kr": "KIPRIS Plus"}
+METHOD = {None: "파일", "data_go_csv": "파일", "science_archive": "크롤링", "kidp_awards": "크롤링"}   # 그 외 = API
+
+MASTER_GROUP_SQL = """
+SELECT m.api, p.kind, p.field, p.name, count(*) FILTER (WHERE u), count(*) FILTER (WHERE u AND coalesce(body, '') <> ''),
+       count(*) FILTER (WHERE u AND award IS NOT NULL), min(year) FILTER (WHERE u), max(year) FILTER (WHERE u),
+       count(*)
+  FROM (SELECT *, NOT 'duplicate' = ANY(exclude_reasons) AS u FROM master) m
+  LEFT JOIN program p ON p.id = m.program_id
+ GROUP BY 1, 2, 3, 4
+"""
 
 
-_ACCESS = {None: "파일", "data_go_csv": "파일", "science_archive": "누리집", "kidp_awards": "누리집"}   # 그 외 수집기 = OpenAPI
+def _years(y0, y1) -> str:
+    return f"{y0}~{y1}" if y0 and y1 and y0 != y1 else str(y0 or y1 or "")
 
 
-def _site(spec, url: str) -> str:
-    host = urlsplit(url or "").hostname or ""
-    label = next((name for h, name in _SITES if host == h), host)
-    label += " " + _ACCESS.get(spec.collector if spec else None, "API")
-    if spec and spec.dataset_id:
-        label += f" {spec.dataset_id}"
-    elif (m := re.search(r"/data/(\d{8})/", url or "")) or (m := re.search(r"OA-\d+", spec.name if spec else "")):
-        label += f" {m.group(1) if m.lastindex else m.group(0)}"
-    return f"[{label}]({url})" if url else label
+def _pick(f, a, b):
+    """None 무시하고 f(a, b)."""
+    return b if a is None else a if b is None else f(a, b)
 
 
 def provenance(*, dsn: str, configs: list[Path], out: Path) -> dict:
-    """docs/DATA.md — 소스별 사이트·연도·건수·주제 한 표. 레지스트리(주제·수집 방식) + DB(건수·연도)."""
+    """docs/DATA.md — 수집처 → 종류·분야 → 대회·제도별 행 수(중복 제외). 분류 = master.program_id(master classify)."""
     specs = {}
     for cfg in configs:
         for s in load_sources(cfg, Path("/nonexistent")):
             specs[s.id] = s
     with db.connect(dsn) as conn:
-        rows = conn.execute(SOURCE_SQL).fetchall()
-        total = conn.execute("SELECT count(*) FROM core.idea WHERE retired_at IS NULL").fetchone()[0]
-    kind_label = {"contest_award": "수상작", "contest_submission": "출품작", "public_proposal": "국민·주민 제안",
-                  "improvement_proposal": "직원 개선제안"}
-    groups: dict[str, list] = {k: [] for k in kind_label}
-    for r in rows:
-        groups.setdefault(r[4], []).append(r)
-    md = ["# 데이터", "",
-          f"{dt.date.today().isoformat()} 기준 · 아이디어 {total:,}건 · 소스 {len(rows)}개 · 공유 가능 {sum(r[6] for r in rows if r[12]):,}건 · `./demo.sh export`가 다시 만듦", ""]
-    for kind, label in kind_label.items():
-        group = groups.get(kind) or []
-        if not group:
+        groups = conn.execute(MASTER_GROUP_SQL).fetchall()
+        raw = dict(conn.execute("SELECT source, count(*) FROM raw GROUP BY 1").fetchall())
+        basis = conn.execute("SELECT max(fetched)::date FROM raw").fetchone()[0]
+    detail = {s.removesuffix(".detail"): n for s, n in raw.items() if s.endswith(".detail")}
+
+    def place(sid: str) -> tuple[str, str]:
+        spec = specs.get(sid)
+        host = urlsplit(spec.url).hostname if spec else ""
+        return PLATFORM.get(host, host or "미상"), METHOD.get(spec.collector, "API") if spec else "미상"
+
+    # (종류, 분야, 대회·제도) → [행, 본문, 수상, 연도 최소, 연도 최대, 수집처 집합]
+    prog: dict[tuple[str, str, str], list] = {}
+    per_source: dict[str, int] = defaultdict(int)
+    total = dup = 0
+    for sid, kind, field, label, n, body, award, y0, y1, all_n in groups:
+        total += all_n
+        dup += all_n - n
+        per_source[sid] += n
+        if not n:
             continue
-        md += [f"## {label} {sum(r[6] for r in group):,}건", "",
-               "| 소스 | 사이트/API | 연도 | 건수 | 주제 | 공유 |", "|---|---|---|---:|---|---|"]
-        for r in group:
-            sid, name, _lic, url, _kind, _ex, n, y0, y1, *_ = r
+        if kind is None:   # classify 전 행
             spec = specs.get(sid)
-            years = f"{y0}~{y1}" if y0 and y0 != y1 else (str(y0) if y0 else "")
-            topic = spec.topic if spec else ""
-            md.append(f"| {name} | {_site(spec, url)} | {years} | {n:,} | {topic} | {_share(r[12])} |")
-        md.append("")
-    md += ["## 조회", "",
-           "- PostgreSQL(Docker) `127.0.0.1:54329` · DB `bluebird_core` · 사용자 `bluebird` · 비밀번호 = `.env` `DB_PASSWORD`",
-           "- 데이터 표 3개: `core.idea`(아이디어) · `core.source`(소스) · `core.contest`(대회). 나머지 표 = 파이프라인 작업용",
-           "- xlsx `ideas` 시트 = 아래 쿼리 결과", "",
-           "```sql", IDEA_VIEW_SQL.strip(), "```", ""]
+            kind, field, label = "미분류", "미분류", spec.name if spec else sid
+        p = prog.setdefault((kind, field, label), [0, 0, 0, None, None, set()])
+        p[0] += n
+        p[1] += body
+        p[2] += award
+        p[3], p[4] = _pick(min, p[3], y0), _pick(max, p[4], y1)
+        p[5].add(place(sid)[0])
+    uniq = total - dup
+
+    platforms: dict[str, list] = {}   # 수집처 → [방식별 데이터셋 수, 상세 페이지 크롤링 수, 행]
+    for sid, n in per_source.items():
+        name, method = place(sid)
+        p = platforms.setdefault(name, [defaultdict(int), 0, 0])
+        p[0][method] += 1
+        p[1] += sid in detail
+        p[2] += n
+    list_n = sum(n for s, n in raw.items() if not s.endswith(".detail"))
+    md = ["# 데이터", "",
+          f"- 기준: {basis} (raw 수집 시각 최댓값)",
+          f"- 원본(raw) {list_n + sum(detail.values()):,}행 = 목록 {list_n:,} + 상세 페이지 본문 {sum(detail.values()):,}",
+          f"- 정제(master) {total:,}행 = 중복 제외 {uniq:,} + 중복 {dup:,}",
+          "- 아래 행 수 = 중복 제외", "",
+          f"## 수집처 {len(platforms)}곳 · 데이터셋 {len(per_source)}개", "",
+          "| 수집처 | 데이터셋(방식별) | 상세 페이지 크롤링 | 행 |", "|---|---|---:|---:|"]
+    for name, (methods, crawled, n) in sorted(platforms.items(), key=lambda x: -x[1][2]):
+        sets = " · ".join(f"{m} {c}" for m, c in sorted(methods.items(), key=lambda x: -x[1]))
+        md.append(f"| {name} | {sets} | {crawled} | {n:,} |")
+
+    fields: dict[tuple[str, str], list] = {}
+    for (kind, field, _label), p in prog.items():
+        f = fields.setdefault((kind, field), [0, 0, 0, 0])
+        f[0] += 1
+        f[1] += p[0]
+        f[2] += p[1]
+        f[3] += p[2]
+    order = {k: i for i, k in enumerate(("공모전", "시민 제안", "직원 제안", "미분류"))}
+    keys = sorted(fields, key=lambda k: (order.get(k[0], 9), -fields[k][1]))
+    md += ["", f"## 종류·분야 (대회·제도 {len(prog)}개)", "",
+           "| 종류 | 분야 | 대회·제도 | 행 | 본문 있음 | 수상 등급 있음 |", "|---|---|---:|---:|---:|---:|"]
+    for kind, field in keys:
+        c, n, body, award = fields[(kind, field)]
+        md.append(f"| {kind} | {field} | {c} | {n:,} | {body:,} | {award:,} |")
+
+    md += ["", "## 대회·제도"]
+    for kind, field in keys:
+        md += ["", f"### {kind} · {field} {fields[(kind, field)][1]:,}행", "",
+               "| 대회·제도 | 연도 | 행 | 본문 있음 | 수상 등급 있음 | 수집처 |", "|---|---|---:|---:|---:|---|"]
+        rows = sorted(((label, p) for (k, f, label), p in prog.items() if (k, f) == (kind, field)),
+                      key=lambda x: -x[1][0])
+        for label, (n, body, award, y0, y1, plats) in rows:
+            md.append(f"| {label} | {_years(y0, y1)} | {n:,} | {body:,} | {award:,} | {', '.join(sorted(plats))} |")
+
+    raw_only = sorted((s, n) for s, n in raw.items() if not s.endswith(".detail") and s not in per_source)
+    if raw_only:
+        md += ["", "## 원본만(정제 0행)", ""] + [f"- `{s}` {n:,}행" for s, n in raw_only]
+    md += ["", "## 조회", "",
+           "- PostgreSQL `161.122.152.68:5432` · DB `parangsae` · 사용자 `aix`",
+           "- 표: `master`(정제) · `raw`(원본) · `exclusion_reason`(전처리 사유 뜻)", "",
+           "```sql", "SELECT * FROM master WHERE NOT 'duplicate' = ANY(exclude_reasons);", "```", ""]
     out.write_text("\n".join(md), encoding="utf-8")
-    return {"path": str(out), "sources": len(rows), "ideas": total}
+    return {"path": str(out), "platforms": len(platforms), "programs": len(prog), "rows": uniq}

@@ -7,8 +7,8 @@ import pytest
 from psycopg.conninfo import make_conninfo
 
 from bluebird import funnel
-from tests import test_console_objection as console_fixtures
-from tests.test_console_objection import IID, H
+from tests import test_console as console_fixtures
+from tests.test_console import IID, H
 from tests.test_db_integration import DSN, _seed_idea
 
 pytestmark = pytest.mark.skipif(not DSN, reason="BB_TEST_DSN not set")
@@ -76,13 +76,13 @@ def test_authoring_chain_as_real_api_role(api_role, fresh):
     detail = cl.get(f"/api/ideas/{IID}", headers=H("rev")).json()
     assert not detail["stage"]["s5"] and detail["matches"][0]["status"] == "rejected"
     assert detail["diagnosis"]["evidence"] == [{"url": "https://example.org/technical", "excerpt": None}]
-    # Provider credentials/audit, DDL and publication jobs remain inaccessible.
+    # Provider credentials/audit, DDL and approval-history deletion remain inaccessible.
     with psycopg.connect(dsn) as conn:
         assert conn.execute("SELECT current_user").fetchone()[0] == "bb_api"
         assert conn.execute("SELECT rolsuper FROM pg_roles WHERE rolname=current_user").fetchone()[0] is False
         for sql in ("CREATE TABLE core.api_owned (id int)", "SELECT * FROM core.egress_call",
                     "SELECT * FROM core.export_policy", "UPDATE core.source SET name='forbidden'",
-                    "DELETE FROM core.publish_snapshot", "INSERT INTO core.pipeline_run(stage,status) VALUES ('x','ok')"):
+                    "DELETE FROM core.publication", "INSERT INTO core.pipeline_run(stage,status) VALUES ('x','ok')"):
             with pytest.raises(psycopg.errors.InsufficientPrivilege):
                 conn.execute(sql)
             conn.rollback()
@@ -100,14 +100,14 @@ def test_queue_overview_and_changes(api_role, fresh):
     assert found["total"] == 1
     absent = cl.get("/api/queue", params={"stage": "s0", "q": "' OR true --"}, headers=H("rev")).json()
     assert absent["total"] == 0 and absent["counts"]["s0"] == 1
-    for stage in range(1, 7):
+    for stage in range(1, 6):
         response = cl.get(f"/api/queue?stage=s{stage}", headers=H("rev"))
         assert response.status_code == 200 and response.json()["total"] == 0
     overview = cl.get("/api/overview", headers=H("exp")).json()
     assert overview["counts"]["s0"] == 1
     assert overview["sources"][0]["ideas"] == 1
     assert overview["sources"][0]["check_status"] is None
-    assert overview["latest_publish"] is None and overview["runs"] == []
+    assert overview["runs"] == []
     assert overview["checks"] == []
     with psycopg.connect(fresh) as conn:
         conn.execute(
@@ -157,7 +157,7 @@ def test_raw_queue_exposes_ingested_originals_without_cards(api_role, fresh, tmp
     assert response.status_code == 200, response.text
     first = response.json()
     assert (first["total"], first["limit"], first["offset"]) == (2, 1, 0)
-    assert first["counts"] == {"raw": 2, **{f"s{n}": 0 for n in range(7)}}
+    assert first["counts"] == {"raw": 2, **{f"s{n}": 0 for n in range(6)}}
     expected = [
         dict(zip(("idea_id", "title", "year", "source_id"), row),
              cause=None, s=None, verdict=None, stage="raw")
@@ -175,14 +175,14 @@ def test_raw_queue_exposes_ingested_originals_without_cards(api_role, fresh, tmp
     for term in ("공개 중단", "퇴역 원본", "' OR true --"):
         absent = cl.get("/api/queue", params={"stage": "raw", "q": term}, headers=H("rev")).json()
         assert absent["items"] == [] and absent["total"] == 0 and absent["counts"]["raw"] == 2
-    for stage in range(7):
+    for stage in range(6):
         analytic = cl.get(f"/api/queue?stage=s{stage}", headers=H("rev")).json()
         assert analytic["items"] == [] and analytic["total"] == 0 and analytic["counts"] == first["counts"]
     assert cl.get("/api/overview", headers=H("exp")).json()["counts"] == first["counts"]
     assert cl.get(f"/api/ideas/{originals[0][0]}", headers=H("rev")).status_code == 200
     assert cl.get("/api/queue?stage=raw").status_code == 401
     assert cl.get("/api/queue?stage=raw", headers=H("ca")).status_code == 403
-    for params in ({"stage": "invalid"}, {"stage": "raw", "limit": 0},
+    for params in ({"stage": "invalid"}, {"stage": "s6"}, {"stage": "raw", "limit": 0},
                    {"stage": "raw", "limit": 501}, {"stage": "raw", "offset": -1},
                    {"stage": "raw", "q": "x" * 201}):
         assert cl.get("/api/queue", params=params, headers=H("rev")).status_code == 422
@@ -211,20 +211,6 @@ def test_roles_authorship_validation_and_domain_errors(client, fresh):
     assert post(client, "diagnosis", {"cause": "T", "rationale": "기술 조건",
                                       "evidence": [{"url": "https://example.org/t"}]}).status_code == 200
     assert post(client, "match", bodies["match"]).status_code == 409
-
-
-def test_expert_detail_never_exposes_objection_text(client, fresh):
-    seed(fresh)
-    with psycopg.connect(fresh) as conn:
-        conn.execute("INSERT INTO core.objection (dmz_id,idea_id,kind,body,submitted_at)"
-                     " VALUES (1,%s,'privacy','private reporter details',now())", (IID,))
-    reviewer = client.get(f"/api/ideas/{IID}", headers=H("rev")).json()
-    assert reviewer["objections"][0]["body"] == "private reporter details"
-    auditor = client.get(f"/api/ideas/{IID}", headers=H("aud")).json()
-    assert auditor["objections"] == reviewer["objections"]
-    expert = client.get(f"/api/ideas/{IID}", headers=H("exp"))
-    assert expert.json()["objections"] == [] and "private reporter details" not in expert.text
-    assert client.get(f"/api/ideas/{IID}", headers=H("ca")).status_code == 403
 
 
 def test_health_reports_database_unavailable(client, monkeypatch):
@@ -278,14 +264,9 @@ def test_nonfinal_review_preserves_attribution_and_privileges(api_role, fresh, r
         assert conn.execute("SELECT count(*) FROM core.publication").fetchone()[0] == 0
 
 
-def test_detail_query_keeps_objections_opt_in(fresh):
+def test_detail_query_missing_idea(fresh):
     from bluebird.http import queries
 
     seed(fresh)
-    with psycopg.connect(fresh) as conn:
-        conn.execute("INSERT INTO core.objection (dmz_id,idea_id,kind,body,submitted_at)"
-                     " VALUES (1,%s,'privacy','private reporter details',now())", (IID,))
     assert queries.idea_detail(dsn=fresh, idea_id="missing") is None
-    assert queries.idea_detail(dsn=fresh, idea_id=IID)["objections"] == []
-    authorized = queries.idea_detail(dsn=fresh, idea_id=IID, include_objections=True)
-    assert authorized["objections"][0]["body"] == "private reporter details"
+    assert queries.idea_detail(dsn=fresh, idea_id=IID)["idea"]["id"] == IID

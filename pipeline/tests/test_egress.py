@@ -44,7 +44,6 @@ def test_open_source_title_allowed_and_recorded():
     ({"body": ("kipris", "본문")}, "trace", "export_policy denies"),   # 명시 규칙 = 우선
     ({"dataset_url": ("kipris", "x")}, "llm", "export_grade=pending"),   # 기본 반출 필드 밖
     ({"title": ("secret", "x")}, "trace", "deny"),
-    ({"objection_body": ("open", "x")}, "llm", "never exported"),
     ({"team": ("open", "x")}, "trace", "never exported"),
     ({"title": ("nope", "x")}, "trace", "unknown source"),
 ])

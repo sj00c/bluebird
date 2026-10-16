@@ -13,7 +13,7 @@ import sys
 from datetime import date
 from pathlib import Path
 
-from . import announce, cards, db, enrichment, export, funnel, ingest, kpi, objections, publish, sources_check
+from . import announce, cards, coding, db, enrichment, export, funnel, ingest, kpi, sources_check
 from .signals import catalog
 
 
@@ -36,10 +36,9 @@ def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(prog="bluebird")
     sub = ap.add_subparsers(dest="cmd", required=True)
 
-    m = sub.add_parser("migrate", help="SQL 마이그레이션 적용 (publish는 템플릿 등록 포함)")
+    m = sub.add_parser("migrate", help="SQL 마이그레이션 적용")
     m.add_argument("--target", choices=db.TARGETS, required=True)
-    m.add_argument("--dsn", default=None,
-                   help="기본: core=BB_DSN, publish=BB_PUBLISH_MIGRATOR_DSN, master=BB_MASTER_DSN")
+    m.add_argument("--dsn", default=None, help="기본: core=BB_DSN, master=BB_MASTER_DSN")
 
     ms = sub.add_parser("master", help="정제 DB(bluebird_master): raw = 받은 그대로")
     mss = ms.add_subparsers(dest="master_cmd", required=True)
@@ -69,6 +68,11 @@ def main(argv: list[str] | None = None) -> int:
     x = mss.add_parser("xlsx", help="master 표 전체 → 엑셀 1파일(시트 master, 필드 = docs/MASTER.md)")
     x.add_argument("--dsn", default=_env("BB_MASTER_DSN"))
     x.add_argument("--out", type=Path, required=True)
+    x = mss.add_parser("reasons", help="전처리 사유(duplicate·no_body)·대표 행 표시, 행 삭제 없음. refine 다음, 매번 전체 재계산")
+    x.add_argument("--dsn", default=_env("BB_MASTER_DSN"))
+    x = mss.add_parser("classify", help="대회·제도 분류(program, master.program_id). 매번 전체 재계산")
+    x.add_argument("--dsn", default=_env("BB_MASTER_DSN"))
+    x.add_argument("--config", type=Path, action="append", required=True, help="레지스트리 TOML, 반복")
     mss.choices["files"].add_argument("--dir", type=Path, action="append", help="파일 찾을 디렉터리, 반복. 기본: BB_SIGNAL_DIR/contests, BB_SEED_DIR")
     mss.choices["api"].add_argument("--core-dsn", default=_env("BB_DSN"), help="egress 정책·감사 기록")
     mss.choices["api"].add_argument("--acrc-budget", type=int, default=int(_env("BB_ACRC_CALL_BUDGET") or 9000))
@@ -109,17 +113,13 @@ def main(argv: list[str] | None = None) -> int:
     chk.add_argument("--seed-dir", type=Path, default=_p("BB_SEED_DIR"))
     chk.add_argument("--secret", type=Path, default=_p("BB_ANON_SECRET"))
 
-    pb = sub.add_parser("publish", help="승인분 → 공개 DB 교체(push)")
-    pb.add_argument("--dsn", default=_env("BB_DSN"))
-    pb.add_argument("--publish-dsn", default=_env("BB_PUBLISH_DSN"))
-
     ex = sub.add_parser("export", help="공유용 내보내기(읽기 전용)")
     exs = ex.add_subparsers(dest="export_cmd", required=True)
     ex1 = exs.add_parser("xlsx", help="아이디어 전체 + 선별 재료를 엑셀 한 파일로")
     ex1.add_argument("--dsn", default=_env("BB_DSN"))
     ex1.add_argument("--out", type=Path, required=True)
-    ex2 = exs.add_parser("provenance", help="docs/DATA.md: 소스별 사이트·연도·건수·주제 표")
-    ex2.add_argument("--dsn", default=_env("BB_DSN"))
+    ex2 = exs.add_parser("provenance", help="docs/DATA.md: 소스별 원본·정제·중복 제외 건수(master·raw)")
+    ex2.add_argument("--dsn", default=_env("BB_MASTER_DSN"))
     ex2.add_argument("--config", type=Path, action="append", help="레지스트리 TOML, 반복 가능; 기본 BB_SOURCES+BB_CONTEST_SOURCES")
     ex2.add_argument("--out", type=Path, required=True)
 
@@ -134,20 +134,6 @@ def main(argv: list[str] | None = None) -> int:
     cf.add_argument("--dsn", default=_env("BB_DSN"))
     cf.add_argument("--no-import", action="store_true")
     cf.add_argument("--taken-at", type=date.fromisoformat, default=None, help="기본: 오늘(KST)")
-
-    ob = sub.add_parser("objections", help="이의 제기(G11): 공개 DB 접수함 pull, 처리")
-    obs = ob.add_subparsers(dest="sub", required=True)
-    x = obs.add_parser("pull", help="접수함 → core.objection(검증·상한) 후 접수함에서 삭제")
-    x.add_argument("--dsn", default=_env("BB_DSN"))
-    x.add_argument("--inbox-dsn", default=_env("BB_INBOX_DSN"))
-    x.add_argument("--limit", type=int, default=objections.PULL_LIMIT)
-    x = obs.add_parser("resolve", help="사람 처리(콘솔과 같은 동작)")
-    x.add_argument("--dsn", default=_env("BB_DSN"))
-    x.add_argument("--id", type=int, required=True)
-    x.add_argument("--decision", choices=("accepted", "rejected"), required=True)
-    x.add_argument("--resolution", required=True)
-    x.add_argument("--withhold", action="store_true")
-    x.add_argument("--by", required=True)
 
     cd = sub.add_parser("coding", help="κ 표본(2인 독립 코딩)")
     cds = cd.add_subparsers(dest="sub", required=True)
@@ -170,21 +156,9 @@ def main(argv: list[str] | None = None) -> int:
     x.add_argument("--gold", required=True, help="CSV 경로, '-'면 표준입력")
     x.add_argument("--baseline", action="store_true", help="이번 결과를 기준선으로 기록")
 
-    vf = sub.add_parser("verify", help="검증").add_subparsers(dest="sub", required=True)
-    x = vf.add_parser("top20", help="G5 Top 20 = 전문가 승인 = 공개")
-    x.add_argument("--dsn", default=_env("BB_DSN"))
-    x.add_argument("--publish-dsn", default=_env("BB_PUBLISH_DSN"))
-    x.add_argument("--week", type=date.fromisoformat)
-    x.add_argument("--target", type=int, default=kpi.TOP_TARGET, help="E3 승인 시 min(20, 공개 후보 수)")
-
     kp = sub.add_parser("kpi", help="KPI").add_subparsers(dest="sub", required=True)
     x = kp.add_parser("report", help="G1–G13 현황표(사람 입력 대기 = human_blocked)")
     x.add_argument("--dsn", default=_env("BB_DSN"))
-    x.add_argument("--publish-dsn", default=_env("BB_PUBLISH_DSN"))
-    x.add_argument("--inbox-dsn", default=_env("BB_INBOX_DSN"))
-    x.add_argument("--p95-ms", type=float, help="deploy/local/p95.sh 결과")
-    x.add_argument("--week", type=date.fromisoformat)
-    x.add_argument("--top-target", type=int, default=kpi.TOP_TARGET, help="G5 목표(E3 승인 시 조정)")
     x.add_argument("--kappa-sample", help="G3 기준 표본 id(없으면 100건 이상 중 최근)")
     # G10 성명 대조: 원본 파일·익명화 키 필요(처리 작업 전용). 없으면 G10 진행 중
     x.add_argument("--config", type=Path, default=_p("BB_SOURCES"))
@@ -205,12 +179,10 @@ def main(argv: list[str] | None = None) -> int:
         return _run_funnel(a)
 
     if a.cmd == "migrate":
-        dsn = a.dsn or _env({"core": "BB_DSN", "publish": "BB_PUBLISH_MIGRATOR_DSN", "master": "BB_MASTER_DSN"}[a.target])
+        dsn = a.dsn or _env({"core": "BB_DSN", "master": "BB_MASTER_DSN"}[a.target])
         if not dsn:
             ap.error("missing --dsn")
         print("applied:", db.migrate(dsn, a.target) or "nothing")
-        if a.target == "publish":
-            print(f"template {publish.TEMPLATE_VERSION}:", publish.register_template(dsn)[:12])
     elif a.cmd == "master":
         from . import master
         from .egress import Egress
@@ -225,6 +197,16 @@ def main(argv: list[str] | None = None) -> int:
             return 0
         if a.master_cmd == "xlsx":
             print("[export]", export.master_xlsx(dsn=a.dsn, out=a.out))
+            return 0
+        if a.master_cmd == "reasons":
+            from . import dedup
+
+            print(funnel.dumps(dedup.mark(dsn=a.dsn)))
+            return 0
+        if a.master_cmd == "classify":
+            from . import programs
+
+            print(funnel.dumps(programs.classify(dsn=a.dsn, sources=master.registry(a.config))))
             return 0
         sources = master.registry(a.config)
         if a.master_cmd == "files":
@@ -291,24 +273,16 @@ def main(argv: list[str] | None = None) -> int:
         if bad:
             print(f"must sources failing: {', '.join(bad)}", file=sys.stderr)
             return 2
-    elif a.cmd == "objections":
-        _require(ap, a, "dsn")
-        if a.sub == "pull":
-            _require(ap, a, "inbox_dsn")
-            objections.pull(dsn=a.dsn, inbox_dsn=a.inbox_dsn, limit=a.limit)
-        else:
-            print(objections.resolve(dsn=a.dsn, objection_id=a.id, decision=a.decision, resolution=a.resolution,
-                                     by=a.by, withhold=a.withhold))
     elif a.cmd == "coding":
         _require(ap, a, "dsn")
-        objections.make_sample(dsn=a.dsn, size=a.size, seed=a.seed, sample_id=a.sample_id)
+        coding.make_sample(dsn=a.dsn, size=a.size, seed=a.seed, sample_id=a.sample_id)
     elif a.cmd == "kappa":
         _require(ap, a, "dsn")
         sid = a.sample_id or f"k{a.sample}-s{a.seed}"
         with db.connect(a.dsn) as conn:
             exists = conn.execute("SELECT 1 FROM core.coding_sample WHERE sample_id=%s LIMIT 1", (sid,)).fetchone()
         if not exists:
-            objections.make_sample(dsn=a.dsn, size=a.sample, seed=a.seed, sample_id=sid)
+            coding.make_sample(dsn=a.dsn, size=a.sample, seed=a.seed, sample_id=sid)
         r = kpi.kappa(dsn=a.dsn, sample_id=sid)
         print(funnel.dumps(r) if a.json else
               f"[kappa] {sid}: κ={r['kappa']} 코딩 {r['coded_pairs']}/{r['size']} "
@@ -320,19 +294,13 @@ def main(argv: list[str] | None = None) -> int:
         r = kpi.goldset(dsn=a.dsn, gold_csv=text, baseline=a.baseline)
         print(funnel.dumps(r))
         return 1 if r["status"] == kpi.FAIL else 0
-    elif a.cmd == "verify":
-        _require(ap, a, "dsn", "publish_dsn")
-        r = kpi.verify_top20(dsn=a.dsn, publish_dsn=a.publish_dsn, week=a.week, target=a.target)
-        print(funnel.dumps(r))
-        return 1 if r["status"] == kpi.FAIL else 0
     elif a.cmd == "kpi":
-        _require(ap, a, "dsn", "publish_dsn")
+        _require(ap, a, "dsn")
         names = None
         if a.config and a.seed_dir and a.secret and a.secret.exists():
-            with db.connect(a.dsn) as conn, db.connect(a.publish_dsn) as pc:
-                names = kpi.name_leaks(conn, pc, config=a.config, seed_dir=a.seed_dir, secret=ingest.load_secret(a.secret))
-        rows = kpi.report(dsn=a.dsn, publish_dsn=a.publish_dsn, inbox_dsn=a.inbox_dsn, p95_ms=a.p95_ms, week=a.week,
-                          top_target=a.top_target, kappa_sample=a.kappa_sample, names=names)
+            with db.connect(a.dsn) as conn:
+                names = kpi.name_leaks(conn, config=a.config, seed_dir=a.seed_dir, secret=ingest.load_secret(a.secret))
+        rows = kpi.report(dsn=a.dsn, kappa_sample=a.kappa_sample, names=names)
         if a.json:
             print(funnel.dumps(rows))
         else:
@@ -345,9 +313,6 @@ def main(argv: list[str] | None = None) -> int:
         else:
             cfgs = a.config or [p for p in (_p("BB_SOURCES"), _p("BB_CONTEST_SOURCES")) if p]
             print("[export]", export.provenance(dsn=a.dsn, configs=cfgs, out=a.out))
-    elif a.cmd == "publish":
-        _require(ap, a, "dsn", "publish_dsn")
-        publish.push(core_dsn=a.dsn, publish_dsn=a.publish_dsn)
     elif a.cmd == "signals":
         _require(ap, a, "dsn")
         if a.signal == "catalog-import":
@@ -362,7 +327,7 @@ def main(argv: list[str] | None = None) -> int:
     return 0
 
 
-FUNNEL_CMDS = ("trace", "diagnose", "changes", "match", "score", "review", "top", "funnel", "announce")
+FUNNEL_CMDS = ("trace", "diagnose", "changes", "match", "score", "review", "funnel", "announce")
 
 
 def _ev(s: str) -> tuple[str, str | None]:
@@ -450,9 +415,6 @@ def _funnel_parsers(sub) -> None:
     x.add_argument("--note", required=True)
     x.add_argument("--by", **by)
 
-    x = p(sub, "top", "화면1 weekly_top 1–20 산정")
-    x.add_argument("--week", type=date.fromisoformat, default=None, help="기본: 이번 주(KST 월요일)")
-
     x = p(sub, "funnel", "단계별 통과 건수")
     x.add_argument("--as-of", type=int, default=None, help="카탈로그 snapshot_id(기본: 최신)")
     x.add_argument("--json", action="store_true")
@@ -517,8 +479,6 @@ def _run_funnel(a) -> int:
             print(funnel.approve(dsn=dsn, idea_id=a.idea, by=a.by, note=a.note))
         else:
             funnel.reject(dsn=dsn, idea_id=a.idea, by=a.by, note=a.note)
-    elif a.cmd == "top":
-        funnel.compute_top(dsn=dsn, week=a.week or catalog.today_kst())
     elif a.cmd == "funnel":
         rep = funnel.report(dsn=dsn, as_of=a.as_of)
         print(funnel.dumps(rep)) if a.json else funnel.print_report(rep)

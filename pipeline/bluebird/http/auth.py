@@ -72,12 +72,7 @@ def require_review_round(user: User, round_: str) -> None:
         raise HTTPException(403, f"role {role} required for round {round_}")
 
 
-def can_read_objections(user: User) -> bool:
-    return bool(set(user.roles) & {"reviewer", "auditor"})
-
-
 Me = Annotated[User, Depends(current_user)]
 Staff = Annotated[User, Depends(require_roles(*STAFF_ROLES))]
 Reviewer = Annotated[User, Depends(require_roles("reviewer"))]
 Coder = Annotated[User, Depends(require_roles("coder"))]
-ObjectionReader = Annotated[User, Depends(require_roles("reviewer", "auditor"))]

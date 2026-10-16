@@ -1,4 +1,4 @@
-"""되살리기 깔때기 엔진(계획 §3.3–§3.7): 흔적 → 막힌 이유 → 바뀐 것 → S → 검토 → 공개.
+"""되살리기 깔때기 엔진(계획 §3.3–§3.7): 흔적 → 막힌 이유 → 바뀐 것 → S → 검토·승인.
 
 원칙
 - AI(규칙·LLM) = 제안만. 공개 = 사람 승인(review final + publication)만
@@ -12,7 +12,7 @@ from __future__ import annotations
 import json
 import os
 import re
-from datetime import date, timedelta
+from datetime import date
 from typing import Literal
 
 from psycopg.types.json import Jsonb
@@ -552,17 +552,17 @@ def score_set(*, dsn: str, idea_id: str, scores: dict[str, int | None], evidence
 # ----------------------------------------------------------------------------- 5 검토·승인
 
 def _live_idea(conn, idea_id: str) -> None:
-    """승인 대상: 퇴역하지 않았고, 이의 수용으로 원본 공개를 멈추지(withheld) 않은 아이디어."""
+    """승인 대상: 퇴역하지 않았고, 원본 공개를 멈추지(withheld) 않은 아이디어."""
     row = conn.execute("SELECT withheld_at FROM core.idea WHERE id=%s AND retired_at IS NULL", (idea_id,)).fetchone()
     if row is None:
         raise KeyError(f"no live idea {idea_id}")
     if row[0] is not None:
-        raise ValueError(f"{idea_id} is withheld since {row[0]:%Y-%m-%d} (objection); it cannot be approved")
+        raise ValueError(f"{idea_id} is withheld since {row[0]:%Y-%m-%d}; it cannot be approved")
 
 
 def review_round(*, dsn: str, idea_id: str, by: str, round_: Literal["expert", "audit"],
                  decision: Literal["approve", "reject"], note: str | None = None) -> None:
-    """Record an expert/audit review without publishing; final review uses approve/reject."""
+    """Record an expert/audit review; only the final round (approve/reject) changes approval state."""
     if round_ not in ("expert", "audit"):
         raise ValueError("review round must be expert or audit")
     wording.check(note)
@@ -609,7 +609,7 @@ def approve(*, dsn: str, idea_id: str, by: str, note: str | None = None) -> dict
 
 
 def reject(*, dsn: str, idea_id: str, by: str, note: str) -> None:
-    """반려: 아이디어·바뀐 것 공개 철회, 승인 매칭 → 후보, weekly_top 제외."""
+    """반려: 아이디어·바뀐 것 공개 철회, 승인 매칭 → 후보."""
     wording.check(note)
     with db.connect(dsn) as conn:
         if conn.execute("SELECT 1 FROM core.idea WHERE id=%s AND retired_at IS NULL", (idea_id,)).fetchone() is None:
@@ -620,47 +620,10 @@ def reject(*, dsn: str, idea_id: str, by: str, note: str) -> None:
         conn.commit()
 
 
-# ----------------------------------------------------------------------------- 화면1 weekly_top
-
-def week_start(d: date) -> date:
-    return d - timedelta(days=d.weekday())
-
-
-def compute_top(*, dsn: str, week: date) -> list[tuple]:
-    """5단계(승인) + public_ok 카드 중 S 내림차순 → 승인일 최신. 소스 계열당 최대 4건, observed_new 근거 우선."""
-    week = week_start(week)
-    with db.connect(dsn) as conn:
-        snap = conn.execute("SELECT max(id) FROM core.catalog_snapshot").fetchone()[0]
-        rows = conn.execute(
-            """WITH f AS (SELECT idea_id, source_id FROM core.funnel_stage(%s) WHERE s5 AND public_ok),
-                    s AS (SELECT DISTINCT ON (idea_id) idea_id, s FROM core.timeliness ORDER BY idea_id, as_of DESC),
-                    obs AS (SELECT DISTINCT m.idea_id FROM core.change_match m
-                              JOIN core.condition_change c ON c.id = m.change_id
-                             WHERE m.status = 'approved' AND c.tier = 'observed_new'
-                               AND core.match_eligible(m.id, %s)),
-                    ap AS (SELECT target_id, max(approved_at) AS at FROM core.publication
-                            WHERE target_type = 'idea' AND revoked_at IS NULL GROUP BY 1),
-                    ranked AS (
-                      SELECT f.idea_id, f.source_id, s.s, obs.idea_id IS NOT NULL AS observed, ap.at,
-                             row_number() OVER (PARTITION BY f.source_id
-                                                ORDER BY obs.idea_id IS NOT NULL DESC, s.s DESC, ap.at DESC) AS fam_rank
-                        FROM f JOIN s USING (idea_id) LEFT JOIN obs USING (idea_id)
-                        JOIN ap ON ap.target_id = f.idea_id)
-               SELECT idea_id, source_id, s FROM ranked WHERE fam_rank <= 4
-                ORDER BY observed DESC, s DESC, at DESC LIMIT 20""", (snap, snap)).fetchall()
-        conn.execute("DELETE FROM core.weekly_top WHERE week=%s", (week,))
-        for rank, (idea_id, fam, s) in enumerate(rows, 1):
-            conn.execute("INSERT INTO core.weekly_top (week, rank, idea_id, s, source_family) VALUES (%s,%s,%s,%s,%s)",
-                         (week, rank, idea_id, s, fam))
-        conn.commit()
-    print(f"[top] week {week}: {len(rows)} ideas")
-    return rows
-
-
 # ----------------------------------------------------------------------------- funnel 리포트
 
-STAGES = ("s0", "s1", "s2", "s3", "s4", "s5", "s6")
-STAGE_NAMES = ("0 원본(카드)", "1 흔적", "2 막힌 이유", "3 바뀐 것", "4 S", "5 검토", "6 공개")
+STAGES = ("s0", "s1", "s2", "s3", "s4", "s5")
+STAGE_NAMES = ("0 원본(카드)", "1 흔적", "2 막힌 이유", "3 바뀐 것", "4 S", "5 검토")
 
 
 def report(*, dsn: str, as_of: int | None = None) -> dict:
@@ -675,7 +638,7 @@ def report(*, dsn: str, as_of: int | None = None) -> dict:
                   FROM core.funnel_stage(%s) GROUP BY 1, 2, 3 ORDER BY 1, 2, 3""", (snap,)).fetchall()
     total = [sum(r[3 + i] for r in rows) for i in range(len(STAGES))]
     return {"as_of_snapshot": snap, "rows": [
-        {"source_id": r[0], "card_kind": r[1], "profile": r[2], **dict(zip(STAGES, r[3:10])), "trace_pending": r[10]}
+        {"source_id": r[0], "card_kind": r[1], "profile": r[2], **dict(zip(STAGES, r[3:-1])), "trace_pending": r[-1]}
         for r in rows], "total": dict(zip(STAGES, total))}
 
 

@@ -2,18 +2,19 @@
 
 from __future__ import annotations
 
+import re
 from datetime import date
 from typing import Annotated, Literal
 from urllib.parse import urlsplit
 
 from pydantic import AfterValidator, BaseModel, ConfigDict, Field, field_validator
 
-from .. import objections
+CTRL = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]")
 
 
 def no_control_characters(value: str | None) -> str | None:
     """Allow newlines and tabs, but reject controls including PostgreSQL's invalid NUL."""
-    if value is not None and objections.CTRL.search(value):
+    if value is not None and CTRL.search(value):
         raise ValueError("control characters are not allowed")
     return value
 
@@ -37,8 +38,7 @@ HttpURL = Annotated[str, Field(min_length=1, max_length=2048), AfterValidator(ht
 Cause = Literal["T", "D", "R", "M", "C", "O", "U"]
 Axis = Literal["tech", "data", "regulation", "policy"]
 AxisScore = Annotated[int, Field(strict=True, ge=0, le=5)]
-Stage = Literal["raw", "s0", "s1", "s2", "s3", "s4", "s5", "s6"]
-ObjectionStatus = Literal["open", "accepted", "rejected"]
+Stage = Literal["raw", "s0", "s1", "s2", "s3", "s4", "s5"]
 
 
 class AuthoringIn(BaseModel):
@@ -96,11 +96,3 @@ class CodeIn(BaseModel):
     code: Cause
     note: str | None = Field(default=None, max_length=1000)
     _ctrl = field_validator("note")(no_control_characters)
-
-
-class ResolveIn(BaseModel):
-    model_config = ConfigDict(str_strip_whitespace=True)
-    decision: Literal["accepted", "rejected"]
-    resolution: str = Field(min_length=1, max_length=2000)
-    withhold: bool = False
-    _ctrl = field_validator("resolution")(no_control_characters)

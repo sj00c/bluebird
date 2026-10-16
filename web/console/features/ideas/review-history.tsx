@@ -1,15 +1,7 @@
-import Link from "next/link";
-import type { Detail, Me } from "@/lib/contracts";
-import {
-  cause,
-  DECISIONS,
-  OBJECTION_KINDS,
-  OBJECTION_STATUS,
-  ROUNDS,
-  when,
-} from "@/lib/labels";
+import type { Detail } from "@/lib/contracts";
+import { cause, DECISIONS, ROUNDS, when } from "@/lib/labels";
 
-export function ReviewHistory({ detail: d, me }: { detail: Detail; me: Me }) {
+export function ReviewHistory({ detail: d }: { detail: Detail }) {
   return (
     <section className="card" id="history">
       <h2>검토 이력</h2>
@@ -59,39 +51,6 @@ export function ReviewHistory({ detail: d, me }: { detail: Detail; me: Me }) {
         </div>
       ) : (
         <div className="pending">검토 기록 없음</div>
-      )}
-      {me.roles.some((r) => ["reviewer", "auditor"].includes(r)) && (
-        <>
-          <div className="section-heading">
-            <h3>접수된 이의</h3>
-            <Link className="lnk" href="/objections">
-              이의 관리 →
-            </Link>
-          </div>
-          {d.objections.length ? (
-            d.objections.map((o) => (
-              <article key={o.id} className="evidence">
-                <span className="tag">{OBJECTION_KINDS[o.kind] ?? o.kind}</span>
-                <span className="tag">
-                  {OBJECTION_STATUS[o.status] ?? o.status}
-                </span>
-                <p className="muted">
-                  접수 {when(o.submitted_at)}
-                  {o.resolved_at && ` · 처리 ${when(o.resolved_at)}`}
-                </p>
-                <details>
-                  <summary>이의 내용·처리 기록</summary>
-                  <div className="body">{o.body}</div>
-                  {o.resolution && (
-                    <p className="prewrap">처리 내용: {o.resolution}</p>
-                  )}
-                </details>
-              </article>
-            ))
-          ) : (
-            <div className="pending">접수된 이의 없음</div>
-          )}
-        </>
       )}
     </section>
   );

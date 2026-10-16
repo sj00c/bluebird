@@ -6,18 +6,17 @@ from collections.abc import Callable
 from typing import Annotated
 
 import psycopg
-from fastapi import APIRouter, HTTPException, Path, Query
+from fastapi import APIRouter, HTTPException, Query
 
-from .. import funnel, objections, wording
+from .. import coding as coding_samples
+from .. import funnel, wording
 from . import queries
-from .auth import Coder, Me, ObjectionReader, Reviewer, Staff, User, can_read_objections, require_review_round
+from .auth import Coder, Me, Reviewer, Staff, User, require_review_round
 from .config import database_dsn
 from .schemas import (
     CodeIn,
     DiagnosisIn,
     MatchIn,
-    ObjectionStatus,
-    ResolveIn,
     ReviewIn,
     ScoreIn,
     Stage,
@@ -85,8 +84,7 @@ def queue(u: Staff, stage: Stage = "raw",
 
 @router.get("/api/ideas/{idea_id}")
 def idea_detail(idea_id: str, u: Staff) -> dict:
-    detail = queries.idea_detail(dsn=database_dsn(), idea_id=idea_id,
-                                 include_objections=can_read_objections(u))
+    detail = queries.idea_detail(dsn=database_dsn(), idea_id=idea_id)
     if detail is None:
         raise HTTPException(404, "no such idea")
     return detail
@@ -144,26 +142,9 @@ def coding(u: Coder) -> dict:
 @router.post("/api/coding/{idea_id}")
 def code(idea_id: str, body: CodeIn, u: Coder) -> dict:
     try:
-        objections.code(dsn=database_dsn(), idea_id=idea_id, reviewer=u.user, code_=body.code, note=body.note)
+        coding_samples.code(dsn=database_dsn(), idea_id=idea_id, reviewer=u.user, code_=body.code, note=body.note)
     except KeyError as e:
         raise HTTPException(404, str(e)) from e
     except (PermissionError, psycopg.errors.UniqueViolation, psycopg.errors.RaiseException) as e:
         raise HTTPException(409, "coder slot conflict: " + str(e).splitlines()[0]) from e
-    return {"ok": True}
-
-
-@router.get("/api/objections")
-def list_objections(u: ObjectionReader, status: ObjectionStatus = "open") -> dict:
-    return queries.objections(dsn=database_dsn(), status=status)
-
-
-@router.post("/api/objections/{objection_id}/resolve")
-def resolve(objection_id: Annotated[int, Path(ge=1, le=2**63 - 1)], body: ResolveIn, u: Reviewer) -> dict:
-    try:
-        objections.resolve(dsn=database_dsn(), objection_id=objection_id, decision=body.decision,
-                           resolution=body.resolution, by=u.user, withhold=body.withhold)
-    except KeyError as e:
-        raise HTTPException(404, str(e)) from e
-    except ValueError as e:
-        raise HTTPException(409, str(e)) from e
     return {"ok": True}
