@@ -716,3 +716,33 @@ def test_provenance_groups_by_platform_and_contest(tmp_path):
     assert "| 전국과학전람회 | 2020 | 1 | 1 | 1 | KIPRIS Plus |" in md
     assert "| 대한민국학생발명전시회 | 2015 | 1 | 0 | 0 | KIPRIS Plus |" in md
     assert "- `seoul_budget_selected` 1행" in md
+
+
+def test_db_log_history_and_cli_auto_record(tmp_path, monkeypatch):
+    """db_log: 0008 이전 이력 7행. log 명령 = 행 수·파일 sha256 기록, master 명령·migrate = 자동 기록."""
+    name = "bbtest_dblog"
+    with psycopg.connect(DSN, autocommit=True) as c:
+        c.execute(f"DROP DATABASE IF EXISTS {name} WITH (FORCE)")
+        c.execute(f"CREATE DATABASE {name}")
+    dsn = DSN.rsplit("/", 1)[0] + f"/{name}"
+    monkeypatch.setenv("BB_LOG_PLACE", "test")
+    from bluebird import cli, dblog
+
+    assert cli.main(["migrate", "--target", "master", "--dsn", dsn]) == 0
+    rows = dblog.recent(dsn=dsn)
+    assert [r[3] for r in rows] == ["files", "dump", "restore", "migrate", "dump", "restore", "drop", "migrate"]
+    assert rows[-1][2] == "test" and "0008_db_log.sql" in rows[-1][7]
+    with psycopg.connect(dsn) as c:
+        c.execute("INSERT INTO raw (source, key, payload, fetched) VALUES ('s','1','{}',now()), ('s','2','{}',now())")
+    dump = tmp_path / "x.dump.xz"
+    dump.write_bytes(b"abc")
+    assert cli.main(["master", "log", "--dsn", dsn, "--action", "dump", "--note", "보냄", "--file", str(dump)]) == 0
+    assert cli.main(["master", "reasons", "--dsn", dsn]) == 0
+    with psycopg.connect(dsn) as c:
+        last = c.execute("SELECT place, action, note, master, raw, file, sha256 FROM db_log ORDER BY id DESC LIMIT 2"
+                         ).fetchall()
+    assert last[1] == ("test", "dump", "보냄", 0, 2, "x.dump.xz",
+                       "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad")
+    assert last[0][:2] == ("test", "reasons") and last[0][3:5] == (0, 2) and "status" not in last[0][2]
+    assert cli.main(["migrate", "--target", "master", "--dsn", dsn]) == 0            # 적용 없음 = 기록 없음
+    assert len(dblog.recent(dsn=dsn, limit=100)) == 10

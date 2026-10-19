@@ -10,6 +10,7 @@ volumes:
 x-backend-env: &backend-env
   BB_DSN: ${BB_DB_URL:?set BB_DB_URL in .env (DB 서버)}
   BB_MASTER_DSN: ${BB_DB_URL}
+  BB_LOG_PLACE: ${BB_LOG_PLACE:-}
   BB_SOURCES: /config/sources.toml
   BB_CONTEST_SOURCES: /config/contest-sources.toml
   BB_SEED_DIR: /seed

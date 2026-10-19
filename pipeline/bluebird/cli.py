@@ -32,6 +32,17 @@ def _require(ap: argparse.ArgumentParser, a: argparse.Namespace, *names: str) ->
         ap.error(f"missing required options/env: {', '.join(missing)}")
 
 
+def _log_note(a: argparse.Namespace, results: dict | list[dict]) -> str:
+    """db_log 한 줄: 넣은 옵션 + 소스별 상태·숫자 결과."""
+    opts = " ".join(f"--{k} {getattr(a, k)}" for k in ("only", "skip", "sample") if getattr(a, k, None))
+    parts = []
+    for r in results if isinstance(results, list) else [results]:
+        nums = " ".join(f"{k}={v}" for k, v in r.items() if isinstance(v, int) and not isinstance(v, bool))
+        head = "".join(f"{r[k]} " for k in ("source", "status") if r.get(k))
+        parts.append((head + nums).strip())
+    return " ".join(x for x in (opts, "; ".join(p for p in parts if p)) if x)[:4000]
+
+
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(prog="bluebird")
     sub = ap.add_subparsers(dest="cmd", required=True)
@@ -73,6 +84,13 @@ def main(argv: list[str] | None = None) -> int:
     x = mss.add_parser("classify", help="대회·제도 분류(program, master.program_id). 매번 전체 재계산")
     x.add_argument("--dsn", default=_env("BB_MASTER_DSN"))
     x.add_argument("--config", type=Path, action="append", required=True, help="레지스트리 TOML, 반복")
+    x = mss.add_parser("log", help="DB 작업 기록(db_log). --note 없으면 최근 기록 보기. master 명령·migrate는 자동 기록")
+    x.add_argument("--dsn", default=_env("BB_MASTER_DSN"))
+    x.add_argument("--action", default="note", help="dump · restore · drop · note 등")
+    x.add_argument("--note", help="한 일·결과")
+    x.add_argument("--file", type=Path, help="덤프 파일(sha256 계산)")
+    x.add_argument("--place", help="기본 BB_LOG_PLACE, 없으면 호스트 이름")
+    x.add_argument("--limit", type=int, default=20)
     mss.choices["files"].add_argument("--dir", type=Path, action="append", help="파일 찾을 디렉터리, 반복. 기본: BB_SIGNAL_DIR/contests, BB_SEED_DIR")
     mss.choices["api"].add_argument("--core-dsn", default=_env("BB_DSN"), help="egress 정책·감사 기록")
     mss.choices["api"].add_argument("--acrc-budget", type=int, default=int(_env("BB_ACRC_CALL_BUDGET") or 9000))
@@ -182,18 +200,33 @@ def main(argv: list[str] | None = None) -> int:
         dsn = a.dsn or _env({"core": "BB_DSN", "master": "BB_MASTER_DSN"}[a.target])
         if not dsn:
             ap.error("missing --dsn")
-        print("applied:", db.migrate(dsn, a.target) or "nothing")
+        applied = db.migrate(dsn, a.target)
+        print("applied:", applied or "nothing")
+        if applied and a.target == "master":
+            from . import dblog
+
+            dblog.write(dsn=dsn, action="migrate", note="master " + ", ".join(applied))
     elif a.cmd == "master":
         from . import master
         from .egress import Egress
 
+        from . import dblog
+
         _require(ap, a, "dsn")
+        if a.master_cmd == "log":
+            if a.note:
+                print(funnel.dumps(dblog.write(dsn=a.dsn, action=a.action, note=a.note, file=a.file, where=a.place)))
+            else:
+                for row in dblog.recent(dsn=a.dsn, limit=a.limit):
+                    print(" | ".join("" if v is None else str(v) for v in row))
+            return 0
         if a.master_cmd == "detail":
             _require(ap, a, "core_dsn")
             with Egress.from_dsn(a.core_dsn, cookies=False) as eg:
                 results = master.load_detail(dsn=a.dsn, egress=eg, only=a.only, workers=a.workers)
             for result in results:
                 print(funnel.dumps(result))
+            dblog.write(dsn=a.dsn, action="detail", note=_log_note(a, results))
             return 0
         if a.master_cmd == "xlsx":
             print("[export]", export.master_xlsx(dsn=a.dsn, out=a.out))
@@ -201,12 +234,16 @@ def main(argv: list[str] | None = None) -> int:
         if a.master_cmd == "reasons":
             from . import dedup
 
-            print(funnel.dumps(dedup.mark(dsn=a.dsn)))
+            result = dedup.mark(dsn=a.dsn)
+            print(funnel.dumps(result))
+            dblog.write(dsn=a.dsn, action="reasons", note=_log_note(a, result))
             return 0
         if a.master_cmd == "classify":
             from . import programs
 
-            print(funnel.dumps(programs.classify(dsn=a.dsn, sources=master.registry(a.config))))
+            result = programs.classify(dsn=a.dsn, sources=master.registry(a.config))
+            print(funnel.dumps(result))
+            dblog.write(dsn=a.dsn, action="classify", note=_log_note(a, result))
             return 0
         sources = master.registry(a.config)
         if a.master_cmd == "files":
@@ -233,6 +270,7 @@ def main(argv: list[str] | None = None) -> int:
                                           acrc_budget=a.acrc_budget)
         for result in results:
             print(funnel.dumps(result))
+        dblog.write(dsn=a.dsn, action=a.master_cmd, note=_log_note(a, results))
         return 1 if any(r["status"] != "ok" for r in results) else 0
     elif a.cmd == "ingest":
         if a.config is None and _p("BB_SOURCES"):

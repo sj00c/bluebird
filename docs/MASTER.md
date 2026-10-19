@@ -94,3 +94,20 @@
 | 8 | 본문 속 이름 | 일반 문장 속 이름 미가림 | 추가 가림 안 함. 필요 시 LLM으로 처리 | 보류 |
 
 - 짧은 제목(5자 이하 3,406행): 제외하지 않음("우유병"처럼 의미 있는 경우 있음)
+
+## 6. DB 작업 기록(`db_log`)
+
+DB를 쓰는 쪽끼리(로컬·서버, git 공유 여부 무관) 무엇을 했는지 확인하는 표. 덤프에 같이 실려 간다.
+
+| 칸 | 내용 |
+|---|---|
+| `at` · `place` | 언제 · 어디서(`.env` `BB_LOG_PLACE`, 없으면 호스트 이름. 예: `local`, `server`) |
+| `action` | `dump` · `restore` · `migrate` · `files` · `api` · `detail` · `refine` · `fill` · `reasons` · `classify` · `drop` · `note` |
+| `note` | 한 일·결과 |
+| `master` · `raw` | 기록 시점 행 수 |
+| `file` · `sha256` | 덤프 파일 이름·해시(있을 때) |
+
+- 자동 기록: `bluebird master files·api·detail·refine·fill·reasons·classify`, `bluebird migrate --target master`(적용이 있을 때)
+- 직접 기록(덤프·복원·삭제 등 DB 밖 작업): `bluebird master log --action dump --file <덤프> --note "<한 일>"` → 행 수·sha256 자동
+- 보기: `bluebird master log` (최근 20건) 또는 `SELECT * FROM db_log ORDER BY at;`
+- 0008 이전 이력(2026-10-14 로컬 생성 ~ 2026-10-19 로컬 복원) = 마이그레이션 `master/0008_db_log.sql`에 함께 기록
