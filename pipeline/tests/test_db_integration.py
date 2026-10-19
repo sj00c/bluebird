@@ -718,31 +718,53 @@ def test_provenance_groups_by_platform_and_contest(tmp_path):
     assert "- `seoul_budget_selected` 1행" in md
 
 
-def test_db_log_history_and_cli_auto_record(tmp_path, monkeypatch):
-    """db_log: 0008 이전 이력 7행. log 명령 = 행 수·파일 sha256 기록, master 명령·migrate = 자동 기록."""
-    name = "bbtest_dblog"
-    with psycopg.connect(DSN, autocommit=True) as c:
-        c.execute(f"DROP DATABASE IF EXISTS {name} WITH (FORCE)")
-        c.execute(f"CREATE DATABASE {name}")
-    dsn = DSN.rsplit("/", 1)[0] + f"/{name}"
+def test_db_log_history_rules_and_merge(tmp_path, monkeypatch):
+    """db_log: 이전 이력 7행 + 적는 규칙(0009). 추가만, dump = 파일 이름, restore = sha256 필수, 다른 DB 기록 옮김."""
+    dsns = []
+    for name in ("bbtest_dblog", "bbtest_dblog_old"):
+        with psycopg.connect(DSN, autocommit=True) as c:
+            c.execute(f"DROP DATABASE IF EXISTS {name} WITH (FORCE)")
+            c.execute(f"CREATE DATABASE {name}")
+        dsns.append(DSN.rsplit("/", 1)[0] + f"/{name}")
+    dsn, old = dsns
     monkeypatch.setenv("BB_LOG_PLACE", "test")
     from bluebird import cli, dblog
 
     assert cli.main(["migrate", "--target", "master", "--dsn", dsn]) == 0
     rows = dblog.recent(dsn=dsn)
     assert [r[3] for r in rows] == ["files", "dump", "restore", "migrate", "dump", "restore", "drop", "migrate"]
-    assert rows[-1][2] == "test" and "0008_db_log.sql" in rows[-1][7]
+    assert rows[-1][2] == "test" and rows[-1][7].endswith("0008_db_log.sql, 0009_db_log_rules.sql")
     with psycopg.connect(dsn) as c:
         c.execute("INSERT INTO raw (source, key, payload, fetched) VALUES ('s','1','{}',now()), ('s','2','{}',now())")
     dump = tmp_path / "x.dump.xz"
     dump.write_bytes(b"abc")
-    assert cli.main(["master", "log", "--dsn", dsn, "--action", "dump", "--note", "보냄", "--file", str(dump)]) == 0
+    sha = "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
+    assert cli.main(["master", "log", "--dsn", dsn, "--action", "dump", "--note", "보냄",
+                     "--file", str(tmp_path / "아직없음.dump.xz")]) == 0                     # 덤프 전 = 이름만
+    assert cli.main(["master", "log", "--dsn", dsn, "--action", "restore", "--note", "받음", "--file", str(dump)]) == 0
     assert cli.main(["master", "reasons", "--dsn", dsn]) == 0
     with psycopg.connect(dsn) as c:
-        last = c.execute("SELECT place, action, note, master, raw, file, sha256 FROM db_log ORDER BY id DESC LIMIT 2"
+        last = c.execute("SELECT place, action, note, master, raw, file, sha256 FROM db_log ORDER BY id DESC LIMIT 3"
                          ).fetchall()
-    assert last[1] == ("test", "dump", "보냄", 0, 2, "x.dump.xz",
-                       "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad")
-    assert last[0][:2] == ("test", "reasons") and last[0][3:5] == (0, 2) and "status" not in last[0][2]
+    assert last[2] == ("test", "dump", "보냄", 0, 2, "아직없음.dump.xz", None)
+    assert last[1] == ("test", "restore", "받음", 0, 2, "x.dump.xz", sha)
+    assert last[0][:2] == ("test", "reasons") and last[0][3:5] == (0, 2)
+    for sql in ("UPDATE db_log SET note = 'x' WHERE id = 1", "DELETE FROM db_log WHERE id = 1", "TRUNCATE db_log",
+                "INSERT INTO db_log (place, action, note) VALUES ('test', 'restore', '파일 없음')",
+                "INSERT INTO db_log (place, action, note, file) VALUES ('test', 'restore', 'sha 없음', 'f')",
+                "INSERT INTO db_log (place, action, note) VALUES ('test', 'oops', 'x')",
+                "INSERT INTO db_log (place, action, note) VALUES ('Server 1', 'note', 'x')",
+                "INSERT INTO db_log (place, action, note) VALUES ('test', 'note', ' ')"):
+        with psycopg.connect(dsn) as c, pytest.raises(psycopg.errors.Error):
+            c.execute(sql)
+    with pytest.raises(SystemExit):                                                   # restore = --file 필수
+        cli.main(["master", "log", "--dsn", dsn, "--action", "restore", "--note", "x"])
     assert cli.main(["migrate", "--target", "master", "--dsn", dsn]) == 0            # 적용 없음 = 기록 없음
-    assert len(dblog.recent(dsn=dsn, limit=100)) == 10
+    assert len(dblog.recent(dsn=dsn, limit=100)) == 11
+    # 받는 쪽: 기존 DB에만 있던 기록 → 새 DB. 같은 이력은 건너뜀
+    db.migrate(old, "master")
+    dblog.write(dsn=old, action="note", note="기존 DB에서만 한 일", where="server", at="2026-10-18 10:00+09")
+    assert dblog.merge(dsn=dsn, src_dsn=old) == {"status": "ok", "source_rows": 8, "added": 1}
+    assert dblog.merge(dsn=dsn, src_dsn=old)["added"] == 0
+    merged = [r for r in dblog.recent(dsn=dsn, limit=100) if r[2] == "server" and r[3] == "note"]
+    assert [(r[1], r[7]) for r in merged] == [("2026-10-18 10:00", "기존 DB에서만 한 일")]

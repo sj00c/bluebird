@@ -97,17 +97,44 @@
 
 ## 6. DB 작업 기록(`db_log`)
 
-DB를 쓰는 쪽끼리(로컬·서버, git 공유 여부 무관) 무엇을 했는지 확인하는 표. 덤프에 같이 실려 간다.
+DB를 쓰는 쪽끼리(로컬·서버, git 공유 여부 무관) 무엇을 했는지 확인하는 표. 덤프에 같이 실려 간다. **추가만**(수정·삭제·TRUNCATE = DB가 거부). 같은 규칙이 DB 주석(`COMMENT ON TABLE db_log`)에도 있어 git 없는 쪽도 본다.
 
-| 칸 | 내용 |
-|---|---|
-| `at` · `place` | 언제 · 어디서(`.env` `BB_LOG_PLACE`, 없으면 호스트 이름. 예: `local`, `server`) |
-| `action` | `dump` · `restore` · `migrate` · `files` · `api` · `detail` · `refine` · `fill` · `reasons` · `classify` · `drop` · `note` |
-| `note` | 한 일·결과 |
-| `master` · `raw` | 기록 시점 행 수 |
-| `file` · `sha256` | 덤프 파일 이름·해시(있을 때) |
+| 칸 | 내용 | 규칙 |
+|---|---|---|
+| `at` | 작업 시각 | 기본 = 기록 시각. 지난 일을 나중에 적을 때만 지정 + note에 `(시각 추정: <근거>)` |
+| `place` | 어디서 | 소문자·숫자·`-_` (`local`, `server`). 기계마다 고정 = `.env` `BB_LOG_PLACE` |
+| `action` | 작업 | `dump` · `restore` · `drop` · `note` = 직접. `migrate` · `files` · `api` · `detail` · `refine` · `fill` · `reasons` · `classify` = 자동 |
+| `note` | 내용 | 아래 형식, 한 줄, 빈 값 불가 |
+| `master` · `raw` | 기록 시점 행 수 | 자동 |
+| `file` · `sha256` | 덤프 파일 | `dump` = 파일 이름 필수(sha256 비움). `restore` = 둘 다 필수 |
 
-- 자동 기록: `bluebird master files·api·detail·refine·fill·reasons·classify`, `bluebird migrate --target master`(적용이 있을 때)
-- 직접 기록(덤프·복원·삭제 등 DB 밖 작업): `bluebird master log --action dump --file <덤프> --note "<한 일>"` → 행 수·sha256 자동
-- 보기: `bluebird master log` (최근 20건) 또는 `SELECT * FROM db_log ORDER BY at;`
-- 0008 이전 이력(2026-10-14 로컬 생성 ~ 2026-10-19 로컬 복원) = 마이그레이션 `master/0008_db_log.sql`에 함께 기록
+### note 형식
+
+| action | 형식 | 예 |
+|---|---|---|
+| `dump` | `<DB> 전체 pg_dump(<버전>) → <압축·분할> → <전달 경로>` | `parangsae 전체 pg_dump(16.13) → xz → 7z 5분할 → 메일` |
+| `restore` | `<파일> → <DB 이름>(<호스트>). 확인: sha256·행 수 <일치/불일치>` | `parangsae-2026-10-16.dump.xz → parangsae(로컬 Docker). 확인: sha256·행 수 일치` |
+| `drop` | `<대상> 삭제. 이유: <이유>. 백업: <파일 또는 없음>` | `bluebird_master 삭제. 이유: parangsae에 전부 포함. 백업: bluebird_master-2026-10-15.dump.xz` |
+| `note` | `<한 일>. 이유: <이유>` · 정정 = `정정 #<id>: <바른 내용>` | `정정 #3: 복원 파일 = bluebird_master-2026-10-15.dump.xz` |
+| 자동 | 옵션 + 소스별 상태·숫자 | `--only kipris_idea_api kipris_idea_api ok rows=38563` |
+
+- 공통: 숫자는 쉼표 없이, 같은 일을 두 번 적지 않음, 틀리면 고치지 말고 `정정` 새 행
+
+### 이관 순서
+
+1. 보내는 쪽: `bluebird master log --action dump --file <만들 파일 이름> --note "<형식>"` **먼저** → `pg_dump` (그래야 이 행이 덤프에 실림)
+2. 받는 쪽: 새 이름 DB로 복원(기존 DB 덮어쓰지 않음)
+3. 받는 쪽: `bluebird master log --action restore --file <받은 파일> --note "<형식>"` (sha256 자동. 파일이 없으면 `--sha256`)
+4. 받는 쪽: `bluebird master log --merge-from <기존 DB 접속 문자열>` → 기존 DB에만 있던 기록을 새 DB로 옮김(같은 행 = 시각·장소·작업·내용)
+5. 받는 쪽: 기존 DB 정리 후 `--action drop`
+
+### 코드 없이 SQL로 적기
+
+```sql
+INSERT INTO db_log (place, action, note, master, raw, file, sha256)
+VALUES ('server', 'restore', '<파일> → parangsae(서버). 확인: sha256·행 수 일치',
+        (SELECT count(*) FROM master), (SELECT count(*) FROM raw), '<파일>', '<sha256>');
+SELECT * FROM db_log ORDER BY at;   -- 보기
+```
+
+- 0008 이전 이력(2026-10-14 로컬 생성 ~ 2026-10-19 로컬 복원) = 마이그레이션 `master/0008_db_log.sql`, 규칙 = `master/0009_db_log_rules.sql`

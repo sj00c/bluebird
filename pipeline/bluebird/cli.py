@@ -84,12 +84,17 @@ def main(argv: list[str] | None = None) -> int:
     x = mss.add_parser("classify", help="대회·제도 분류(program, master.program_id). 매번 전체 재계산")
     x.add_argument("--dsn", default=_env("BB_MASTER_DSN"))
     x.add_argument("--config", type=Path, action="append", required=True, help="레지스트리 TOML, 반복")
-    x = mss.add_parser("log", help="DB 작업 기록(db_log). --note 없으면 최근 기록 보기. master 명령·migrate는 자동 기록")
+    x = mss.add_parser("log", help="DB 작업 기록(db_log). --note 없으면 최근 기록 보기. master 명령·migrate는 자동 기록. "
+                                     "적는 방식 = docs/MASTER.md 6장(= DB 주석 COMMENT ON TABLE db_log)")
     x.add_argument("--dsn", default=_env("BB_MASTER_DSN"))
-    x.add_argument("--action", default="note", help="dump · restore · drop · note 등")
-    x.add_argument("--note", help="한 일·결과")
-    x.add_argument("--file", type=Path, help="덤프 파일(sha256 계산)")
+    x.add_argument("--action", default="note", choices=("dump", "restore", "drop", "note"),
+                   help="직접 적는 작업. 나머지(migrate·refine 등) = 자동")
+    x.add_argument("--note", help="작업별 형식(MASTER.md 6장)")
+    x.add_argument("--file", type=Path, help="덤프 파일. 있으면 sha256 계산. dump·restore 필수")
+    x.add_argument("--sha256", help="파일이 여기 없을 때 sha256 직접")
+    x.add_argument("--at", help="지난 일을 나중에 적을 때만. 예: '2026-10-19 12:16+09'. note에 (시각 추정: 근거)")
     x.add_argument("--place", help="기본 BB_LOG_PLACE, 없으면 호스트 이름")
+    x.add_argument("--merge-from", metavar="DSN", help="복원 전 기존 DB의 기록 중 없는 행 옮기기")
     x.add_argument("--limit", type=int, default=20)
     mss.choices["files"].add_argument("--dir", type=Path, action="append", help="파일 찾을 디렉터리, 반복. 기본: BB_SIGNAL_DIR/contests, BB_SEED_DIR")
     mss.choices["api"].add_argument("--core-dsn", default=_env("BB_DSN"), help="egress 정책·감사 기록")
@@ -214,8 +219,13 @@ def main(argv: list[str] | None = None) -> int:
 
         _require(ap, a, "dsn")
         if a.master_cmd == "log":
-            if a.note:
-                print(funnel.dumps(dblog.write(dsn=a.dsn, action=a.action, note=a.note, file=a.file, where=a.place)))
+            if a.merge_from:
+                print(funnel.dumps(dblog.merge(dsn=a.dsn, src_dsn=a.merge_from)))
+            elif a.note:
+                if a.action in ("dump", "restore") and not a.file:
+                    ap.error(f"--action {a.action}: --file 필수")
+                print(funnel.dumps(dblog.write(dsn=a.dsn, action=a.action, note=a.note, file=a.file, digest=a.sha256,
+                                               where=a.place, at=a.at)))
             else:
                 for row in dblog.recent(dsn=a.dsn, limit=a.limit):
                     print(" | ".join("" if v is None else str(v) for v in row))
