@@ -40,7 +40,7 @@ def main(argv: list[str] | None = None) -> int:
     m.add_argument("--target", choices=db.TARGETS, required=True)
     m.add_argument("--dsn", default=None, help="기본: core=BB_DSN, master=BB_MASTER_DSN")
 
-    ms = sub.add_parser("master", help="정제 DB(bluebird_master): raw = 받은 그대로")
+    ms = sub.add_parser("master", help="정제 DB(parangsae): raw = 받은 그대로")
     mss = ms.add_subparsers(dest="master_cmd", required=True)
     for name, text in (("files", "수집해 둔 CSV·xlsx → raw(소스 단위 교체)"),
                        ("api", "API 응답 레코드 전체 → raw(국민신문고 = 일 한도 안에서 이어 받음)")):

@@ -81,7 +81,7 @@ def _text_cell(ws, value):
 
 
 def master_xlsx(*, dsn: str, out: Path) -> dict:
-    """bluebird_master.master 전체 → 시트 'master' 1개(MASTER_COLS). docs/MASTER.md = 필드 설명."""
+    """master 표 전체 → 시트 'master' 1개(MASTER_COLS). docs/MASTER.md = 필드 설명."""
     wb = Workbook(write_only=True)
     ws = wb.create_sheet("master")
     for idx, name in enumerate(MASTER_COLS, start=1):

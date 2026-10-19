@@ -1,4 +1,4 @@
-"""raw → master 정제(bluebird_master). 규칙 기반, LLM 없음.
+"""raw → master 정제(parangsae). 규칙 기반, LLM 없음.
 
 - 소스별 추출: title·body·contest·url·year. 등록 매핑([source.columns]) 소스 = 매핑 그대로, 나머지 = 아래 고정 추출기
 - 글머리 정리: 섹션 라벨([제안취지] 등) 유지. 글머리 기호·깨진 문자(사설 영역)·줄 앞뒤 짝 없는 따옴표·제목 앞 접수번호 제거, 공백 하나로

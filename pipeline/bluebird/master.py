@@ -1,4 +1,4 @@
-"""정제 DB(bluebird_master) 원본 적재: raw = 받은 그대로.
+"""정제 DB(parangsae) 원본 적재: raw = 받은 그대로.
 
 - 파일 소스: 수집해 둔 CSV·xlsx 행을 원본 헤더 그대로 payload로. 소스 단위 교체.
 - API 소스: 응답 레코드 전체를 다시 받아 payload로. (source, key) 단위 갱신.
