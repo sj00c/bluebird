@@ -217,9 +217,9 @@ def diagnose_auto(*, dsn: str, idea_id: str | None = None, limit: int = 1,
                 try:
                     body = _text(idea["body"][:12000] if idea["body"] else None, 12000)
                     url = _url(idea["source_url"] or idea["source_page"])
-                    fields = {"title": (idea["source_id"], idea["title"]),
-                              "body": (idea["source_id"], body),
-                              "missing_data": (idea["source_id"], idea["missing_data"] or [])}
+                    sid = idea["source_id"]
+                    fields = [("title", sid, idea["title"]), ("body", sid, body),
+                              ("missing_data", sid, idea["missing_data"] or [])]
                     data, _ = llm.ask_json(eg, prov, system=SYSTEM, instruction=P2, fields=fields, max_tokens=1200)
                     primary, secondary, rationale, excerpts = validate_diagnosis(data, body, idea["missing_data"] or [])
                 except (EgressError, ValueError, KeyError, TypeError, AttributeError, IndexError):
@@ -296,10 +296,10 @@ def score_auto(*, dsn: str, idea_id: str | None = None, limit: int = 1, as_of: d
                     out["skipped"] += 1
                     continue
                 try:
-                    fields = {"title": (idea["source_id"], idea["title"]),
-                              "change_title": (idea["source_id"], [
+                    fields = [("title", idea["source_id"], idea["title"]),
+                              ("change_title", idea["source_id"], [
                                   {"id": key, **{k: v for k, v in rec.items() if k != "url"}}
-                                  for key, rec in records.items()])}
+                                  for key, rec in records.items()])]
                     data, _ = llm.ask_json(eg, prov, system=SYSTEM, instruction=P3, fields=fields, max_tokens=700)
                     values, urls = validate_scores(data, records)
                     sc = funnel.score_set(dsn=dsn, idea_id=iid, scores=values, evidence=urls,

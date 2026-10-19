@@ -76,6 +76,7 @@ flowchart LR
 5. **이의 제기 왕복.** 포털 → 공개 DB inbox → jobs 가져오기 → 원본 DB → 콘솔 처리 → 다음 공개 반영
 6. **목표 측정 = KPI G1–G13**(§8)
 7. **외부 전송 = 허용 자료만.** 상용 AI(OpenAI·Anthropic) 전송 = 외부 반출 허용 자료(O급 또는 기관 허용 범위)만. 전송 전 `egress.py` 확인. 운영 이관 시 보안 등급(N2SF)·클라우드 인증(CSAP) = 운영기관 보안담당과 별도 확정
+   - 예외: egress 용도 `analysis`(아이디어 임베딩·군집 이름) = 사용자 결정(2026-10-13)으로 반출 등급(`export_grade`·`export_policy`) 검사만 면제. 허용 호스트·`NEVER_EXPORT`·감사 행·G10 집계는 그대로. 면제 분기는 `Policy.check` 한 곳
 
 - 기준 도식: `docs/diagrams/`
 
@@ -106,6 +107,10 @@ flowchart LR
 | `objections pull` / `resolve` | 공개 DB inbox의 이의 가져오기(가져온 행은 inbox에서 삭제) / 처리 |
 | `coding sample`, `kappa` | κ용 표본 만들기, 일치도 계산 |
 | `eval goldset`, `verify top20` | 골드셋 회귀 / 공개 Top 20 = 전문가 승인 확인 |
+| `embed eval` / `embed run` | 임베딩 후보(OpenAI 3-large·Gemini embedding 001·2) 평가표·검색 비교 엑셀(`.runtime/export/embed-eval/`) / 고른 모델로 대상 전량 적재(바뀐 입력만 다시). 대상 = 실제 본문 50자+(`embed.target_rows`: `[제안취지]` 같은 구조 태그·글머리표·정형 머리말·본문 속 제목을 뺀 글자 수). egress 용도 `analysis` |
+| `cluster compare` / `cluster run` | 임베딩 키 하나로 2단계 계층 군집(대분류 `--top-k` 15 / 세부 `--sub-k` 300). compare = `kmeans_ward`·`umap_hdbscan` run 2개 + 비교표(대분류당 대표 5개, seed ARI, NMI) / run = 개수를 바꾼 새 run(이전 run은 그대로). duplicate는 대표 군집 상속 |
+| `cluster tune` | 방법 하나의 파라미터 격자(PCA 차원·세부 수 / UMAP 이웃·차원·HDBSCAN 최소 크기·min_samples)를 seed 2개로 적합해 안정성(ARI)·실루엣·노이즈·최대 군집 비중 표(`.runtime/export/cluster-tune/`). DB 쓰기 없음. 고른 값 = `cluster.DEFAULTS` |
+| `cluster name` / `cluster export` | 이름 없는 군집에 LLM 이름·한 줄 요약(egress 용도 `analysis`, 다시 돌리면 이어서) / run 엑셀(시트 `top`·`sub`·`ideas`·`params`, 군집 지표 포함) |
 | `kpi report` | G1–G13 현황표(사람 입력 대기 `human_blocked`, 키 대기 `key_required`, 진행 중 `in_progress`). G3 = 100건 이상 표본만 통과, G4 = 기준선(`eval goldset --baseline`) 후만 통과, G5 목표 = `--top-target`(E3 승인 시) |
 
 - 외부 HTTP = `pipeline/bluebird/egress.py`만. 타 모듈 직접 HTTP 불가. egress = 허용 도메인 확인 + 호출마다 `core.egress_call` + 반출 허용 필드(`core.export_policy`)만 전송
@@ -260,18 +265,19 @@ ingest → cards → (1 흔적 → 2 막힌 이유 → 3 바뀐 것 → 시의�
 
 ## 5. 데이터 모델
 
-### 5.1 원본 DB (core) — 마이그레이션 `pipeline/bluebird/db/migrations/core/0001–0014`
+### 5.1 원본 DB (core) — 마이그레이션 `pipeline/bluebird/db/migrations/core/0001–0016`
 
 | 묶음 | 표 |
 |---|---|
 | 원천 | `source`(`record_kind`·`exclude_reason` 0011·0012), `ingest_run`, `contest`(`audience` 0011), `idea`(`retired_at` 0002, `withheld_at` 0007) · `source.share_ok`(0013) |
-| 카드 | `idea_card`(`card_kind`, 본문 해시·`egress_call_id` 0003), `idea_embedding` |
+| 카드 | `idea_card`(`card_kind`, 본문 해시·`egress_call_id` 0003), `idea_embedding`(0016: 키 `provider:model:dims`, `halfvec`·`dims`·`input_sha256` 증분, 평가 캐시 variant `:notitle`·`:title`). 결정 모델(⛔1, 2026-10-14) = `openai:text-embedding-3-large:1536` (`embed.DEFAULT_MODEL`) |
+| 군집 | `cluster_run`·`cluster`(level 1 대분류 / 2 세부, `parent_id`)·`idea_cluster`(세부만 가리킴, `inherited_from` = duplicate가 대표 군집 상속) (0016) |
 | 근거 | `evidence`, `x_evidence` |
 | 판정 | `trace_check`, `trace_verdict`(`external_search` 0009), `diagnosis`, `timeliness` |
 | 바뀐 것 | `catalog_snapshot`, `signal_dataset`, `announcement`, `condition_change`(`origin` 0004), `cause_change_kind`, `change_match`(`match_eligible` 함수 0006) |
 | 선정·공개 | `weekly_top`, `review`, `publication`(승인 뒤 변경 시 철회 0005 및 흔적 변경 0010), `publish_snapshot`, `export_policy` |
 | 이의·코딩 | `objection`(0007), `coding_sample` |
-| 감사·운영 | `egress_call`, `source_check`, `pipeline_run` |
+| 감사·운영 | `egress_call`(용도 `analysis` 0016), `source_check`, `pipeline_run` |
 | 깔때기 | `core.funnel_stage(as_of)` 함수(0004), `core.revival_candidate` 뷰 |
 | 선별 재료 | `exclusion_reason`·`idea_exclusion`(0012·0014·0015), `idea_duplicate`(0015). 필터링 없음. 제목만 같은 중복 표시 = 0014에서 폐지 → 0015 내용 기준: `same_body`(공백 제거 본문 50자+ 일치 = 재제출·중복 등록) / `same_entry`(대회명·연도±1·제목 일치 + 소스 다름 = 출품작·수상작·KIPRIS 목록). 대표 1건(공개 허용→본문 길이→수상→연도) 외 = `duplicate_record`. 본문 없고 같은 제목의 다른 아이디어 3건+ = `thin_record` |
 
@@ -341,6 +347,8 @@ bluebird/
   pipeline/                 # Python 3.12, `bluebird` CLI + api
     bluebird/
       cli.py, ingest.py, cards.py, llm.py, anonymize.py
+      embed.py, embed_eval.py                     # 임베딩 적재 / 후보 평가
+      cluster.py                                  # 2단계 군집·지표·이름·엑셀
       sources.py, sources_check.py, signals/     # 소스 어댑터, 점검, 목록개방현황
       funnel.py, enrichment.py, score.py, announce.py, wording.py
       publish.py, publish_template/{v1,v2,v3}.sql # 공개 DB 반영

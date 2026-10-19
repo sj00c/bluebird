@@ -112,7 +112,7 @@ def test_llm_body_built_by_egress_and_hash_recorded(monkeypatch):
     rec = Rec()
     with _eg(handler, rec) as eg:
         text, _ = eg.llm(provider="anthropic", model="m", system="sys", instruction="do",
-                         fields={"title": ("open", "제목"), "body": ("open", "본문")})
+                         fields=[("title", "open", "제목"), ("body", "open", "본문")])
     assert text == "{\"a\":1}"
     body = json.loads(seen["body"])
     assert body["system"] == "sys" and "<title>\n제목\n</title>" in body["messages"][0]["content"]
@@ -125,7 +125,7 @@ def test_llm_body_built_by_egress_and_hash_recorded(monkeypatch):
 def test_llm_without_key_raises_before_sending(monkeypatch):
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
     with _eg(_ok) as eg, pytest.raises(KeyMissing):
-        eg.llm(provider="openai", model="m", system="s", instruction="i", fields={"title": ("open", "x")})
+        eg.llm(provider="openai", model="m", system="s", instruction="i", fields=[("title", "open", "x")])
 
 
 def test_response_limit_stops_consumption_and_closes_stream():
@@ -153,3 +153,70 @@ def test_response_limit_stops_consumption_and_closes_stream():
     assert stream.reads == 2
     assert stream.closed
     assert rec.calls[-1].decision == "blocked"
+
+
+def _embed_handler(seen):
+    def handle(req):
+        body = json.loads(req.content)
+        seen.append((req, body))
+        if "generativelanguage" in req.url.host:
+            return httpx.Response(200, json={"embeddings": [{"values": [1.0, 0.0]} for _ in body["requests"]]})
+        data = [{"index": i, "embedding": [0.0, float(i + 1)]} for i in range(len(body["input"]))][::-1]
+        return httpx.Response(200, json={"data": data, "usage": {"prompt_tokens": 7, "total_tokens": 7}})
+    return handle
+
+
+def test_analysis_allows_pending_source_body_and_records(monkeypatch):
+    monkeypatch.setenv("OPENAI_API_KEY", "k")
+    seen, rec = [], Rec()
+    with _eg(_embed_handler(seen), rec) as eg:
+        vecs, _ = eg.embed(provider="openai", model="m", dims=2, task_type=None,
+                           items=[("body", "kipris", "가"), ("body", "kipris", "나"), ("body", "open", "다")])
+    assert vecs == [[0.0, 1.0], [0.0, 2.0], [0.0, 3.0]]   # index 순서로 되돌림
+    assert seen[0][1] == {"model": "m", "input": ["가", "나", "다"], "dimensions": 2}
+    c = rec.calls[-1]
+    assert (c.purpose, c.decision, c.tokens_in) == ("analysis", "allowed", 7)
+    assert c.fields_sent == ["kipris.body", "open.body"] and c.source_ids == ["kipris", "open"]
+
+
+def test_analysis_still_blocks_never_export_deny_and_unknown(monkeypatch):
+    monkeypatch.setenv("OPENAI_API_KEY", "k")
+    for items, why in ([("team", "open", "x")], "never exported"), ([("body", "secret", "x")], "deny"), \
+                      ([("body", "nope", "x")], "unknown source"):
+        seen = []
+        with _eg(_embed_handler(seen)) as eg, pytest.raises(EgressBlocked, match=why):
+            eg.embed(provider="openai", model="m", dims=2, task_type=None, items=items)
+        assert seen == []
+
+
+def test_llm_purpose_still_gated_for_pending_source():
+    with _eg(_ok) as eg, pytest.raises(EgressBlocked, match="export_grade=pending"):
+        eg.llm(provider="openai", model="m", system="s", instruction="i", fields=[("body", "kipris", "x")])
+
+
+def test_gemini_embed_body_and_key_header(monkeypatch):
+    monkeypatch.setenv("GEMINI_API_KEY", "g")
+    seen = []
+    with _eg(_embed_handler(seen)) as eg:
+        vecs, _ = eg.embed(provider="gemini", model="gemini-embedding-001", dims=2, task_type="RETRIEVAL_QUERY",
+                           items=[("title", "open", "질의")])
+    req, body = seen[0]
+    assert vecs == [[1.0, 0.0]] and req.headers["x-goog-api-key"] == "g"
+    assert req.url.path == "/v1beta/models/gemini-embedding-001:batchEmbedContents"
+    assert body["requests"][0] == {"model": "models/gemini-embedding-001", "content": {"parts": [{"text": "질의"}]},
+                                   "outputDimensionality": 2, "taskType": "RETRIEVAL_QUERY"}
+
+
+def test_embed_http_error_carries_status(monkeypatch):
+    from bluebird.egress import EgressHTTPStatus
+
+    monkeypatch.setenv("OPENAI_API_KEY", "k")
+    with _eg(lambda req: httpx.Response(429, json={})) as eg, pytest.raises(EgressHTTPStatus) as e:
+        eg.embed(provider="openai", model="m", dims=2, task_type=None, items=[("body", "open", "x")])
+    assert e.value.status == 429
+
+
+def test_llm_repeated_field_names_keep_order():
+    body = json.loads(Egress.build_llm_body("openai", "m", "s", "i", [("idea", "open", "B"), ("idea", "kipris", "A"),
+                                                                       ("count", "open", 2)], 10))
+    assert body["messages"][1]["content"] == "i\n\n<count>\n2\n</count>\n<idea>\nB\n</idea>\n<idea>\nA\n</idea>"

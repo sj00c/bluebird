@@ -271,8 +271,10 @@ def audit_g10(conn, pc, *, names: dict[str, int] | None) -> dict[str, int | None
     calls = conn.execute(
         "SELECT dest_host, source_ids, fields_sent, purpose FROM core.egress_call WHERE decision='allowed'").fetchall()
     off_host = sum(1 for h, *_ in calls if not host_allowed(h) and h not in RETIRED_HOSTS)
-    bad_field = sum(1 for _, sids, fields, purpose in calls if purpose in ("llm", "trace")
-                    for s in sids for f in fields if f in NEVER_EXPORT or pol.check(s, f, purpose))
+    # fields_sent = "소스.필드". 원소마다 그 소스·필드로 판정한다
+    bad_field = sum(1 for _, _, fields, purpose in calls if purpose in ("llm", "trace", "analysis")
+                    for s, _, f in (x.rpartition(".") for x in fields)
+                    if f in NEVER_EXPORT or pol.check(s, f, purpose))
     # card_kind=full = 허용된 LLM 호출(감사 행) 카드만. 본문 해시·전송 해시 대조 = egress 전송 직전
     full_without_llm_call = conn.execute(
         """SELECT count(*) FROM core.idea_card k JOIN core.egress_call e ON e.id = k.egress_call_id

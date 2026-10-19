@@ -174,6 +174,18 @@
 ./demo.sh logs portal   # 로그 보기
 ```
 
+임베딩·군집(구조 태그·제목을 뺀 실제 본문 50자+ 기록, 외부 호출 = egress `analysis`, `OPENAI_API_KEY`·`GEMINI_API_KEY` 필요):
+
+```
+./demo.sh job embed eval --out /export/embed-eval            # 후보 모델 평가표 → .runtime/export/embed-eval/
+./demo.sh job embed run --model <키>                          # 전량 적재(다시 돌리면 바뀐 것만)
+./demo.sh job cluster tune --model <키> --method umap_hdbscan --out /export/cluster-tune   # 파라미터 탐색표
+./demo.sh job cluster compare --model <키> --out /export/cluster-compare   # 방법 2개 비교표
+./demo.sh job cluster run --model <키> --method kmeans_ward --top-k 20 --sub-k 300   # 개수 바꾼 새 run
+./demo.sh job cluster name --run <id>                          # 군집 이름·요약(LLM)
+./demo.sh job cluster export --run <id> --out /export/clusters-<id>.xlsx
+```
+
 ## 개발할 때 (DB만 Docker)
 
 - 코드 수정 즉시 반영 = DB만 Docker, 나머지 직접 실행

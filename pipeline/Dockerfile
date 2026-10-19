@@ -14,6 +14,7 @@ RUN useradd --system --uid 10001 --home /app bluebird \
  && mkdir /signals && chown bluebird /signals
 WORKDIR /app
 COPY --from=build /app /app
-ENV PATH="/app/.venv/bin:$PATH" PYTHONUNBUFFERED=1
+# NUMBA_CACHE_DIR: umap(numba)이 읽기 전용 site-packages 대신 쓸 캐시 위치
+ENV PATH="/app/.venv/bin:$PATH" PYTHONUNBUFFERED=1 NUMBA_CACHE_DIR=/tmp/numba
 USER bluebird
 ENTRYPOINT ["bluebird"]

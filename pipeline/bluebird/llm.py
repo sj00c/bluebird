@@ -9,9 +9,10 @@ from __future__ import annotations
 import json
 import os
 import re
+from collections.abc import Sequence
 from dataclasses import dataclass
 
-from .egress import LLM_ENDPOINTS, Egress, Field
+from .egress import LLM_ENDPOINTS, Egress, Item
 
 DEFAULT_MODELS = {"openai": "gpt-4.1-mini", "anthropic": "claude-sonnet-4-5"}
 
@@ -34,10 +35,10 @@ def provider() -> Provider | None:
 _FENCE = re.compile(r"^```(?:json)?\s*|\s*```$", re.DOTALL)
 
 
-def ask_json(eg: Egress, p: Provider, *, system: str, instruction: str, fields: dict[str, Field],
-             max_tokens: int = 1500) -> tuple[dict, int | None]:
+def ask_json(eg: Egress, p: Provider, *, system: str, instruction: str, fields: Sequence[Item],
+             max_tokens: int = 1500, purpose: str = "llm") -> tuple[dict, int | None]:
     text, resp = eg.llm(provider=p.name, model=p.model, system=system, instruction=instruction,
-                        fields=fields, max_tokens=max_tokens)
+                        fields=fields, max_tokens=max_tokens, purpose=purpose)
     data = json.loads(_FENCE.sub("", text.strip()))
     if not isinstance(data, dict):
         raise ValueError("LLM did not return a JSON object")  # noqa: TRY004 — 응답 형식 오류로 취급

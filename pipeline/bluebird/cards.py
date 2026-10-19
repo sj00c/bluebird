@@ -117,7 +117,7 @@ def _anchor_missing(body: str, items: object) -> list[dict]:
 def llm_card(eg: Egress, p: llm.Provider, idea: dict) -> tuple[dict, int | None]:
     sid = idea["source_id"]
     data, call_id = llm.ask_json(eg, p, system=P1_SYSTEM, instruction=P1_INSTRUCTION,
-                                 fields={"title": (sid, idea["title"]), "body": (sid, idea["body"])})
+                                 fields=[("title", sid, idea["title"]), ("body", sid, idea["body"])])
     def s(k):
         v = data.get(k)
         return str(v).strip()[:500] if v else None

@@ -233,6 +233,14 @@ def test_name_leaks_end_to_end(fresh, tmp_path):
     assert gone["missing_files"] == 1 and not kpi.names_checked(gone)
     with db.connect(fresh) as conn, db.connect(pub) as pc:
         assert kpi.audit_g10(conn, pc, names=gone)["name_matches"] is None
+        # fields_sent = "소스.필드". analysis는 반출 등급을 안 보지만 NEVER_EXPORT·모르는 소스는 위반
+        sid = conn.execute("SELECT id FROM core.source WHERE export_grade <> 'deny' LIMIT 1").fetchone()[0]
+        before = kpi.audit_g10(conn, pc, names=gone)["forbidden_fields_sent"]
+        for fields in ([f"{sid}.body", f"{sid}.title"], [f"{sid}.team"], ["nope.body"]):
+            conn.execute("""INSERT INTO core.egress_call (purpose, dest_host, path_template, source_ids, fields_sent,
+                              decision) VALUES ('analysis', 'api.openai.com', '/v1/embeddings', %s, %s, 'allowed')""",
+                         (sorted({f.split('.')[0] for f in fields}), fields))
+        assert kpi.audit_g10(conn, pc, names=gone)["forbidden_fields_sent"] == before + 2
 
 
 @db_only

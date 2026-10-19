@@ -467,9 +467,9 @@ def match_judge(*, dsn: str, limit: int = 50, egress: Egress | None = None) -> d
                     WHERE m.llm_verdict IS NULL AND m.status = 'candidate'
                     ORDER BY m.similarity DESC NULLS LAST, m.id LIMIT %s""", (limit,)).fetchall()
             for mid, sid, title, problem, kind, ctitle, curl, cat in rows:
-                fields = {"title": (sid, title), "change_title": (sid, f"[{kind}] {ctitle}")}
+                fields = [("title", sid, title), ("change_title", sid, f"[{kind}] {ctitle}")]
                 if problem:
-                    fields["problem"] = (sid, problem)
+                    fields.append(("problem", sid, problem))
                 try:
                     data, _ = llm.ask_json(eg, prov, system=M1_SYSTEM, instruction=M1_INSTRUCTION, fields=fields,
                                            max_tokens=400)

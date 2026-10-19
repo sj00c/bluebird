@@ -12,7 +12,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from io import BytesIO
 from urllib.parse import urlsplit
@@ -21,7 +21,8 @@ import httpx
 
 from . import db
 
-PURPOSES = ("collect", "signal", "trace", "llm", "source_check")
+# analysis = 임베딩·군집 이름(2026-10-13 사용자 결정: 반출 등급 검사 면제, 허용 호스트·NEVER_EXPORT·감사 행은 유지)
+PURPOSES = ("collect", "signal", "trace", "llm", "source_check", "analysis")
 
 # 외부 호출 허용 호스트. 목록 외 = 차단 + core.egress_call 기록
 ALLOWED_HOSTS = (
@@ -30,6 +31,7 @@ ALLOWED_HOSTS = (
     "www.science.go.kr",
     "award.kidp.or.kr",
     "openapi.seoul.go.kr", "openapi.gg.go.kr",
+    "generativelanguage.googleapis.com",
 )
 # 과거 허용했다가 뺀 호스트. 새 호출 = 차단. 당시 허용 감사 행은 G10 반출 통제에서 위반으로 세지 않음
 RETIRED_HOSTS = ("openapi.naver.com",)   # 2026-10-12 NAVER 검색 API → API HUB(naverapihub.apigw.ntruss.com)
@@ -45,6 +47,11 @@ NEVER_EXPORT = frozenset({"team", "person_name", "objection_body", "contact", "r
 LLM_ENDPOINTS = {
     "openai": ("https://api.openai.com/v1/chat/completions", "OPENAI_API_KEY"),
     "anthropic": ("https://api.anthropic.com/v1/messages", "ANTHROPIC_API_KEY"),
+}
+EMBED_ENDPOINTS = {
+    "openai": ("https://api.openai.com/v1/embeddings", "OPENAI_API_KEY"),
+    "gemini": ("https://generativelanguage.googleapis.com/v1beta/models/{model}:batchEmbedContents",
+               "GEMINI_API_KEY"),
 }
 
 
@@ -62,6 +69,14 @@ class EgressTransportError(EgressError):
 
 class KeyMissing(EgressBlocked):
     pass
+
+
+class EgressHTTPStatus(EgressError):
+    """외부 API가 4xx·5xx를 돌려줌(감사 행은 남음). 호출자는 status로 재시도 여부를 정한다."""
+
+    def __init__(self, status: int, message: str):
+        super().__init__(message)
+        self.status = status
 
 
 @dataclass
@@ -86,6 +101,8 @@ class Policy:
             return f"unknown source {source_id}"
         if grade == "deny":
             return f"source {source_id} export_grade=deny"
+        if purpose == "analysis":
+            return None
         for key in ((source_id, fname, purpose), ("*", fname, purpose)):
             if key in self.rules:
                 return None if self.rules[key] else f"export_policy denies {source_id}.{fname} for {purpose}"
@@ -95,6 +112,7 @@ class Policy:
 
 
 Field = tuple[str, object]  # (source_id, value)
+Item = tuple[str, str, object]  # (field, source_id, value). 같은 field가 여러 소스에서 반복될 수 있다
 
 
 @dataclass
@@ -187,19 +205,19 @@ class Egress:
         if self._expected_sha is not None and sent != self._expected_sha:
             raise EgressBlocked("request body differs from the body egress built")
 
-    def _gate(self, purpose: str, fields: Mapping[str, Field]) -> tuple[list[str], list[str], str | None]:
+    def _gate(self, purpose: str, items: Sequence[Item]) -> tuple[list[str], list[str], str | None]:
         if purpose not in PURPOSES:
             raise ValueError(f"unknown purpose {purpose}")
-        sources = sorted({s for s, _ in fields.values()})
-        sent = sorted(f"{s}.{name}" for name, (s, _) in fields.items())
-        for name, (s, _) in fields.items():
+        sources = sorted({s for _, s, _ in items})
+        sent = sorted({f"{s}.{name}" for name, s, _ in items})
+        for name, s, _ in items:
             reason = self._policy.check(s, name, purpose)
             if reason:
                 return sources, sent, reason
         return sources, sent, None
 
     def _send(self, purpose: str, method: str, url: str, *, path_template: str | None,
-              fields: Mapping[str, Field], params: Mapping[str, object] | None,
+              fields: Sequence[Item], params: Mapping[str, object] | None,
               body: bytes | None, headers: Mapping[str, str] | None,
               secret_params: Mapping[str, str] | None = None) -> Response:
         parts = urlsplit(url)
@@ -249,11 +267,12 @@ class Egress:
             if resp is not None:
                 resp.close()
         call.http_status, call.bytes_in = resp.status_code, len(content)
-        if purpose == "llm" and resp.status_code < 400:
+        if purpose in ("llm", "analysis") and resp.status_code < 400:
             # 응답 형식이 이상해도 감사 행은 반드시 남긴다(본문은 이미 나갔다).
             try:
-                usage = json.loads(content).get("usage") or {}
-                call.tokens_in = usage.get("prompt_tokens", usage.get("input_tokens"))
+                data = json.loads(content)
+                usage = data.get("usage") or data.get("usageMetadata") or {}
+                call.tokens_in = usage.get("prompt_tokens", usage.get("input_tokens", usage.get("promptTokenCount")))
                 call.tokens_out = usage.get("completion_tokens", usage.get("output_tokens"))
             except (ValueError, AttributeError):
                 call.reason = "unparseable LLM response"
@@ -277,22 +296,23 @@ class Egress:
         if set(names) & (set(params or {}) | set(secret_params or {})):
             raise ValueError("field parameters collide with static or secret parameters")
         q = {**(params or {}), **{mapping.get(k, k): v for k, (_, v) in fields.items()}}
-        return self._send(purpose, "GET", url, path_template=path_template, fields=fields, params=q,
+        items = [(k, s, v) for k, (s, v) in fields.items()]
+        return self._send(purpose, "GET", url, path_template=path_template, fields=items, params=q,
                           body=None, headers=secret_headers, secret_params=secret_params)
 
     def post_form(self, purpose: str, url: str, form: Mapping[str, str], *,
                   path_template: str | None = None) -> Response:
         """비내용 폼 POST(예: 파일 다운로드 토큰). 아이디어 내용 금지."""
         body = "&".join(f"{httpx.QueryParams({k: v})}" for k, v in form.items()).encode()
-        return self._send(purpose, "POST", url, path_template=path_template, fields={}, params=None,
+        return self._send(purpose, "POST", url, path_template=path_template, fields=[], params=None,
                           body=body, headers={"Content-Type": "application/x-www-form-urlencoded"})
 
     @staticmethod
     def build_llm_body(provider: str, model: str, system: str, instruction: str,
-                       fields: Mapping[str, Field], max_tokens: int) -> bytes:
+                       fields: Sequence[Item], max_tokens: int) -> bytes:
         user = instruction + "\n\n" + "\n".join(
             f"<{name}>\n{json.dumps(v, ensure_ascii=False) if not isinstance(v, str) else v}\n</{name}>"
-            for name, (_, v) in sorted(fields.items())
+            for name, _, v in sorted(fields, key=lambda it: it[0])  # 같은 이름은 주어진 순서 유지
         )
         if provider == "openai":
             payload = {"model": model, "max_completion_tokens": max_tokens,
@@ -305,7 +325,7 @@ class Egress:
         return json.dumps(payload, ensure_ascii=False, separators=(",", ":")).encode()
 
     def llm(self, *, provider: str, model: str, system: str, instruction: str,
-            fields: Mapping[str, Field], max_tokens: int = 1500, purpose: str = "llm") -> tuple[str, Response]:
+            fields: Sequence[Item], max_tokens: int = 1500, purpose: str = "llm") -> tuple[str, Response]:
         """상용 LLM 호출. system·instruction은 코드에 고정된 지시문만(아이디어 내용 금지), 내용은 fields로만."""
         url, key_env = LLM_ENDPOINTS[provider]
         key = os.environ.get(key_env)
@@ -322,3 +342,37 @@ class Egress:
         text = (data["choices"][0]["message"]["content"] if provider == "openai"
                 else "".join(b.get("text", "") for b in data["content"]))
         return text, resp
+
+    @staticmethod
+    def build_embed_body(provider: str, model: str, dims: int, task_type: str | None,
+                         texts: Sequence[str]) -> bytes:
+        if provider == "openai":
+            payload: dict = {"model": model, "input": list(texts), "dimensions": dims}
+        elif provider == "gemini":
+            payload = {"requests": [{"model": f"models/{model}", "content": {"parts": [{"text": t}]},
+                                     "outputDimensionality": dims, **({"taskType": task_type} if task_type else {})}
+                                    for t in texts]}
+        else:
+            raise ValueError(f"unknown provider {provider}")
+        return json.dumps(payload, ensure_ascii=False, separators=(",", ":")).encode()
+
+    def embed(self, *, provider: str, model: str, dims: int, task_type: str | None,
+              items: Sequence[Item], purpose: str = "analysis") -> tuple[list[list[float]], Response]:
+        """임베딩 호출. items = (field, source_id, text). 반환 벡터 순서 = items 순서."""
+        url_tpl, key_env = EMBED_ENDPOINTS[provider]
+        key = os.environ.get(key_env)
+        if not key:
+            raise KeyMissing(f"{key_env} not set")
+        url = url_tpl.format(model=model)
+        body = self.build_embed_body(provider, model, dims, task_type, [str(v) for _, _, v in items])
+        headers = ({"Authorization": f"Bearer {key}"} if provider == "openai" else {"x-goog-api-key": key})
+        resp = self._send(purpose, "POST", url, path_template=urlsplit(url).path, fields=items, params=None,
+                          body=body, headers={**headers, "Content-Type": "application/json"})
+        if resp.status >= 400:
+            raise EgressHTTPStatus(resp.status, f"{provider} HTTP {resp.status}")
+        data = resp.json()
+        vecs = ([d["embedding"] for d in sorted(data["data"], key=lambda d: d["index"])] if provider == "openai"
+                else [e["values"] for e in data["embeddings"]])
+        if len(vecs) != len(items):
+            raise EgressError(f"{provider} returned {len(vecs)} vectors for {len(items)} inputs")
+        return vecs, resp

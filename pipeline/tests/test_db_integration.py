@@ -793,3 +793,185 @@ def test_export_xlsx_marks_share_from_source_flag(fresh, tmp_path):
     assert r == {"path": str(out), "sources": 2, "ideas": 2}
     md = out.read_text(encoding="utf-8")
     assert "아이디어 2건 · 소스 2개 · 공유 가능 1건" in md and "## 수상작 2건" in md and "| 보류 소스 | " in md and "| 보류 |" in md
+
+
+def _seed_bodies(c, bodies: dict[str, str | None], *, grade="pending"):
+    """소스 s(반출 등급 pending) + 아이디어 여러 건. bodies = id → 본문."""
+    c.execute("INSERT INTO core.source (id, name, license, url, layer, public_ok, export_grade, body_present,"
+              " policy_approved_by, policy_approved_at, record_kind)"
+              " VALUES ('s','n','l','',2,true,%s,true,'op',now(),'contest_award')", (grade,))
+    c.execute("INSERT INTO core.ingest_run (source_id, status) VALUES ('s','ok')")
+    c.execute("INSERT INTO core.contest (id, source_id, name, host_org, year) VALUES ('C-1','s','대회','',2019)")
+    for iid, body in bodies.items():
+        c.execute("INSERT INTO core.idea (id, source_id, contest_id, year, title, body, team_kind, first_ingest_id,"
+                  " last_ingest_id) VALUES (%s,'s','C-1',2019,%s,%s,'empty',1,1)", (iid, f"제목 {iid}", body))
+
+
+def _embed_egress(dsn, calls):
+    import httpx
+
+    from bluebird.egress import Egress
+
+    def handle(req):
+        import json
+        n = len(json.loads(req.content)["input"])
+        calls.append(n)
+        return httpx.Response(200, json={"data": [{"index": i, "embedding": [3.0, 4.0] + [0.0] * 3070}
+                                                  for i in range(n)], "usage": {"prompt_tokens": n}})
+    return Egress.from_dsn(dsn, proxy="", transport=httpx.MockTransport(handle))
+
+
+def test_embed_run_is_incremental_and_follows_target(fresh, monkeypatch):
+    """0016: 본문 50자+ 비퇴역만 적재(반출 등급 pending이어도 analysis로 나감), 같은 입력은 다시 안 부름,
+    본문이 바뀐 1건만 다시, 퇴역하면 행 삭제, 평가 variant 행은 그대로."""
+    from bluebird import embed
+
+    monkeypatch.setenv("OPENAI_API_KEY", "k")
+    key = "openai:text-embedding-3-large:3072"
+    long = "버스 정류장에 온열 의자를 설치해 겨울철 대기 시민의 불편을 줄이자는 제안으로 구청 예산 사업으로 추진하고 효과를 측정해 다른 정류장으로도 넓힌다."
+    with psycopg.connect(fresh) as c:
+        labels = "[제안취지] [사업내용] [사업효과] [기대효과] [개선방안] [협치기대효과] 제목 labels 짧은 본문"
+        assert len(labels.replace(" ", "")) >= 50                      # 원문 50자+지만 실제 본문은 짧다
+        _seed_bodies(c, {"a": long, "b": long + " 둘째", "short": "짧은 본문", "none": None, "labels": labels})
+        c.commit()
+    calls = []
+    with _embed_egress(fresh, calls) as eg:
+        r1 = embed.run(fresh, key, eg=eg)
+        assert (r1["target"], r1["embedded"], r1["unchanged"], r1["removed"]) == (2, 2, 0, 0)
+        r2 = embed.run(fresh, key, eg=eg)
+        assert (r2["embedded"], r2["calls"]) == (0, 0)
+        with psycopg.connect(fresh) as c:
+            c.execute("UPDATE core.idea SET body = body || ' 수정' WHERE id = 'a'")
+            c.commit()
+            embed.ensure(c, eg, key + ":notitle", [("b", "s", "제목 b", long)])
+        assert embed.run(fresh, key, eg=eg)["embedded"] == 1
+        with psycopg.connect(fresh) as c:
+            c.execute("UPDATE core.idea SET retired_at = now() WHERE id = 'b'")
+            c.commit()
+        assert embed.run(fresh, key, eg=eg)["removed"] == 1
+    assert calls == [2, 1, 1]
+    with psycopg.connect(fresh) as c:
+        rows = c.execute("SELECT idea_id, model, dims, vector_dims(vec), round((vec::vector(3072) <#> vec::vector(3072))::numeric, 3)"
+                         " FROM core.idea_embedding ORDER BY 1, 2").fetchall()
+        audit = c.execute("SELECT purpose, decision, fields_sent FROM core.egress_call").fetchall()
+    assert rows == [("a", key, 3072, 3072, -1), ("b", key + ":notitle", 3072, 3072, -1)]   # L2 정규화
+    assert {(p, d, tuple(f)) for p, d, f in audit} == {("analysis", "allowed", ("s.body",))}
+
+
+AC4_SQL = [
+    """SELECT count(*) FROM core.idea_cluster ic JOIN core.cluster s ON s.id = ic.sub_id
+        WHERE ic.run_id = %(r)s AND (s.run_id <> ic.run_id OR s.level <> 2)""",
+    """SELECT count(*) FROM core.cluster s LEFT JOIN core.cluster p ON p.id = s.parent_id
+        WHERE s.run_id = %(r)s AND s.level = 2 AND (p.id IS NULL OR p.run_id <> s.run_id OR p.level <> 1)""",
+    """SELECT count(*) FROM core.cluster c WHERE c.run_id = %(r)s AND NOT EXISTS (
+         SELECT 1 FROM core.idea_cluster ic JOIN core.cluster s ON s.id = ic.sub_id
+          WHERE ic.run_id = %(r)s AND (s.id = c.id OR s.parent_id = c.id))""",
+    """SELECT count(*) FROM core.cluster_run r WHERE r.id = %(r)s
+          AND ((SELECT count(*) FROM core.cluster c WHERE c.run_id = r.id AND c.level = 1) <> (r.params->>'top_k')::int
+            OR (SELECT count(*) FROM core.cluster c WHERE c.run_id = r.id AND c.level = 2) > (r.params->>'sub_k')::int)""",
+    """SELECT count(*) FROM core.idea_cluster ic JOIN core.idea_duplicate d ON d.idea_id = ic.idea_id
+         LEFT JOIN core.idea_cluster k ON k.run_id = ic.run_id AND k.idea_id = d.canonical_id
+        WHERE ic.run_id = %(r)s AND (k.sub_id IS DISTINCT FROM ic.sub_id OR ic.inherited_from IS DISTINCT FROM d.canonical_id)""",
+    """SELECT count(*) FROM core.cluster c WHERE c.run_id = %(r)s
+          AND (c.name IS NULL OR c.summary IS NULL OR NOT c.metrics ?& ARRAY['count_ideas','count_records','year_min',
+               'year_max','distinct_years','distinct_sources','award_ratio','student_contest_ratio'])""",
+    """SELECT count(*) FROM core.cluster s WHERE s.run_id = %(r)s AND s.level = 2
+          AND (s.metrics->>'count_records')::int <> (SELECT count(*) FROM core.idea_cluster ic WHERE ic.sub_id = s.id)""",
+]
+
+
+def _assigned_equals_target(c, run_id):
+    from bluebird import embed
+    tgt = {r[0] for r in embed.target_rows(c)}
+    got = {r[0] for r in c.execute("SELECT idea_id FROM core.idea_cluster WHERE run_id = %s", (run_id,))}
+    return got == tgt
+
+
+RUNS_UNCHANGED_SQL = """SELECT count(*) FROM core.cluster_run r
+     WHERE (r.metrics->>'n_assigned')::int <> (SELECT count(*) FROM core.idea_cluster i WHERE i.run_id = r.id)
+        OR (r.metrics->>'n_clusters')::int <> (SELECT count(*) FROM core.cluster c WHERE c.run_id = r.id)"""
+
+
+def test_cluster_run_name_export_satisfy_ac4_and_keep_old_runs(fresh, monkeypatch, tmp_path):
+    """3 blob × 20건 + duplicate 1건(대표 상속) + 짧은 본문 1건(대상 밖). run → name → export, AC4 SQL 0, 새 run 뒤 이전 run 불변."""
+    import json
+
+    import httpx
+    import numpy as np
+    from openpyxl import load_workbook
+    from pgvector import HalfVector
+    from pgvector.psycopg import register_vector
+
+    from bluebird import cluster
+    from bluebird.egress import Egress
+
+    monkeypatch.setenv("OPENAI_API_KEY", "k")
+    key = "openai:text-embedding-3-large:3072"
+    long = "버스 정류장에 온열 의자를 설치해 겨울철 대기 시민의 불편을 줄이자는 제안으로 구청 예산 사업으로 추진하고 효과를 측정해 다른 정류장으로도 넓힌다."
+    ids = [f"i{n:02d}" for n in range(60)]
+    with psycopg.connect(fresh) as c:
+        _seed_bodies(c, {**{i: f"{long} {i}" for i in ids}, "dup": long + " i00", "short": "짧은 본문"})
+        c.execute("UPDATE core.idea SET award = '대상' WHERE id = 'i00'")
+        c.execute("INSERT INTO core.idea_duplicate (idea_id, canonical_id, rules) VALUES ('dup','i00','{same_body}')")
+        register_vector(c)
+        rng = np.random.default_rng(0)
+        for n, iid in enumerate([*ids, "dup"]):
+            v = np.zeros(3072, dtype=np.float32)
+            v[(n % 60) // 20 * 10] = 10.0
+            v[:40] += rng.normal(0, 0.3, 40)
+            v /= np.linalg.norm(v)
+            c.execute("INSERT INTO core.idea_embedding (idea_id, model, model_sha256, vec, dims, input_sha256)"
+                      " VALUES (%s,%s,'x',%s,3072,'x')", (iid, key, HalfVector(v)))
+        c.commit()
+
+    r1 = cluster.run(fresh, key, "kmeans_ward", cluster.Params(top_k=3, sub_k=6))
+
+    def handle(req):
+        n = len(json.loads(req.content)["messages"][-1]["content"])
+        body = json.dumps({"name": f"군집 {n}", "summary": "정류장 편의 시설 제안"}, ensure_ascii=False)
+        return httpx.Response(200, json={"choices": [{"message": {"content": body}}], "usage": {"total_tokens": 1}})
+    with Egress.from_dsn(fresh, proxy="", transport=httpx.MockTransport(handle)) as eg:
+        assert cluster.name(fresh, r1, eg=eg) == {"named": 9, "skipped": 0}
+        assert cluster.name(fresh, r1, eg=eg) == {"named": 0, "skipped": 0}   # 이어서: 이미 이름 있음
+    with psycopg.connect(fresh) as c:
+        assert [c.execute(q, {"r": r1}).fetchone()[0] for q in AC4_SQL] == [0] * len(AC4_SQL)
+        assert _assigned_equals_target(c, r1)
+        top_metrics = [m for (m,) in c.execute(
+            "SELECT metrics FROM core.cluster WHERE run_id = %s AND level = 1", (r1,))]
+        dup = c.execute("SELECT inherited_from, distance FROM core.idea_cluster WHERE run_id = %s AND idea_id = 'dup'",
+                        (r1,)).fetchone()
+        audit = {p for (p,) in c.execute("SELECT purpose FROM core.egress_call")}
+    assert sorted(m["count_records"] for m in top_metrics) == [20, 20, 21]
+    assert sum(m["count_ideas"] for m in top_metrics) == 60
+    assert dup == ("i00", None) and audit == {"analysis"}
+    award = next(m["award_ratio"] for m in top_metrics if m["count_records"] == 21)
+    assert award == 0.05   # 대표 20건 중 i00만 수상
+
+    out = cluster.export_xlsx(fresh, r1, str(tmp_path / "c.xlsx"))
+    wb = load_workbook(out)
+    assert wb.sheetnames == ["top", "sub", "ideas", "params"] and wb["ideas"].max_row == 62
+
+    r2 = cluster.run(fresh, key, "kmeans_ward", cluster.Params(top_k=2, sub_k=4))
+    with psycopg.connect(fresh) as c:
+        assert c.execute(RUNS_UNCHANGED_SQL).fetchone()[0] == 0
+        assert c.execute("SELECT count(*) FROM core.cluster WHERE run_id = %s AND level = 1", (r2,)).fetchone()[0] == 2
+        assert _assigned_equals_target(c, r2)
+
+    small = cluster.Params(top_k=3, sub_k=6, min_cluster_size=5)   # 60건 fixture용(실데이터 기본 50)
+    res = cluster.compare(fresh, key, str(tmp_path / "cmp"), {"kmeans_ward": small, "umap_hdbscan": small},
+                          seeds=(0, 1))
+    assert set(res["runs"]) == {"kmeans_ward", "umap_hdbscan"}
+    md = (tmp_path / "cmp" / "cluster-compare.md").read_text(encoding="utf-8")
+    assert md.count("### 대분류 ") == 6 and "## 결정" in md and "ari_top" in md and "min_cluster_size=5" in md
+    t = cluster.tune(fresh, key, "kmeans_ward", str(tmp_path / "tune"), base=small,
+                     grid={"pca_dims": [8, 16], "sub_k": [4, 6]})
+    assert t["configs"] == 4
+    tune_md = (tmp_path / "tune" / "tune-kmeans_ward.md").read_text(encoding="utf-8")
+    assert tune_md.count("\n| 8 |") + tune_md.count("\n| 16 |") == 4 and "ari_sub" in tune_md
+    assert load_workbook(tmp_path / "cmp" / "cluster-compare.xlsx").sheetnames == ["metrics", "kmeans_ward",
+                                                                                   "umap_hdbscan"]
+    with psycopg.connect(fresh) as c:
+        assert c.execute(RUNS_UNCHANGED_SQL).fetchone()[0] == 0
+        for r in res["runs"].values():
+            assert [c.execute(q, {"r": r}).fetchone()[0] for q in AC4_SQL[:5]] == [0] * 5
+            assert _assigned_equals_target(c, r)

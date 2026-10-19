@@ -8,6 +8,8 @@
 from __future__ import annotations
 
 import argparse
+import dataclasses
+import json
 import os
 import sys
 from datetime import date
@@ -89,6 +91,51 @@ def main(argv: list[str] | None = None) -> int:
     ex2.add_argument("--dsn", default=_env("BB_DSN"))
     ex2.add_argument("--config", type=Path, action="append", help="레지스트리 TOML, 반복 가능; 기본 BB_SOURCES+BB_CONTEST_SOURCES")
     ex2.add_argument("--out", type=Path, required=True)
+
+    em = sub.add_parser("embed", help="아이디어 임베딩(본문 50자+). 외부 호출 = egress analysis")
+    ems = em.add_subparsers(dest="embed_cmd", required=True)
+    em1 = ems.add_parser("eval", help="후보 모델 평가표 + 검색 비교 자료(AC1)")
+    em1.add_argument("--dsn", default=_env("BB_DSN"))
+    em1.add_argument("--out", type=Path, required=True)
+    em1.add_argument("--model", action="append", help="평가할 모델 키, 반복 가능(기본: 후보 전부)")
+    em2 = ems.add_parser("run", help="대상 전량 적재(바뀐 입력만 다시 임베딩)")
+    em2.add_argument("--dsn", default=_env("BB_DSN"))
+    em2.add_argument("--model", default=None, help="임베딩 키(기본 embed.DEFAULT_MODEL)")
+
+    cl = sub.add_parser("cluster", help="2단계 계층 군집(대분류·세부). 이름 = egress analysis")
+    cls = cl.add_subparsers(dest="cluster_cmd", required=True)
+    cl1 = cls.add_parser("compare", help="방법별 run(seed 0) + 비교표(AC3)")
+    cl2 = cls.add_parser("run", help="run 하나 새로 만듦(개수 조정 = 새 run, AC5)")
+    cl5 = cls.add_parser("tune", help="파라미터 격자 탐색 표(seed 안정성·실루엣·노이즈), DB 쓰기 없음")
+    for p in (cl1, cl2, cl5):
+        p.add_argument("--dsn", default=_env("BB_DSN"))
+        p.add_argument("--model", required=True, help="임베딩 키")
+        p.add_argument("--top-k", type=int, default=None)
+        p.add_argument("--sub-k", type=int, default=None, help="세부 수(kmeans) / 세부 상한(HDBSCAN)")
+        p.add_argument("--pca-dims", type=int, default=None)
+        p.add_argument("--n-init", type=int, default=None, help="kmeans_ward")
+        p.add_argument("--umap-neighbors", type=int, default=None, help="umap_hdbscan")
+        p.add_argument("--umap-dims", type=int, default=None, help="umap_hdbscan")
+        p.add_argument("--min-cluster-size", type=int, default=None, help="umap_hdbscan")
+        p.add_argument("--min-samples", type=int, default=None, help="umap_hdbscan")
+        p.add_argument("--selection", choices=("eom", "leaf"), default=None, help="umap_hdbscan")
+    cl1.add_argument("--seeds", default="0,1,2")
+    cl1.add_argument("--method", action="append", choices=("kmeans_ward", "umap_hdbscan"),
+                     help="비교할 방법, 반복 가능(기본: 둘 다)")
+    cl1.add_argument("--params-json", default=None,
+                     help='방법별 덮어쓸 값, 예: {"kmeans_ward": {"sub_k": 200}, "umap_hdbscan": {"min_cluster_size": 100}}')
+    cl1.add_argument("--out", type=Path, required=True)
+    cl2.add_argument("--method", required=True, choices=("kmeans_ward", "umap_hdbscan"))
+    cl2.add_argument("--seed", type=int, default=0)
+    cl5.add_argument("--method", required=True, choices=("kmeans_ward", "umap_hdbscan"))
+    cl5.add_argument("--grid-json", default=None, help='격자 덮어쓰기, 예: {"sub_k": [200, 300]}')
+    cl5.add_argument("--out", type=Path, required=True)
+    cl3 = cls.add_parser("name", help="이름 없는 군집에 LLM 이름·요약")
+    cl4 = cls.add_parser("export", help="run 엑셀(top·sub·ideas·params)")
+    for p in (cl3, cl4):
+        p.add_argument("--dsn", default=_env("BB_DSN"))
+        p.add_argument("--run", type=int, required=True)
+    cl4.add_argument("--out", type=Path, required=True)
 
     sg = sub.add_parser("signals", help="바뀐 것 신호")
     sgs = sg.add_subparsers(dest="signal", required=True)
@@ -271,6 +318,37 @@ def main(argv: list[str] | None = None) -> int:
         else:
             cfgs = a.config or [p for p in (_p("BB_SOURCES"), _p("BB_CONTEST_SOURCES")) if p]
             print("[export]", export.provenance(dsn=a.dsn, configs=cfgs, out=a.out))
+    elif a.cmd == "embed":
+        _require(ap, a, "dsn")
+        from . import embed, embed_eval
+        if a.embed_cmd == "eval":
+            print("[embed eval]", embed_eval.evaluate(a.dsn, str(a.out), models=tuple(a.model or embed_eval.DIMS)))
+        else:
+            print("[embed run]", embed.run(a.dsn, a.model or embed.DEFAULT_MODEL))
+    elif a.cmd == "cluster":
+        _require(ap, a, "dsn")
+        from . import cluster
+        given = {f: getattr(a, f) for f in ("top_k", "sub_k", "pca_dims", "n_init", "umap_neighbors", "umap_dims",
+                                              "min_cluster_size", "min_samples", "selection")
+                 if getattr(a, f, None) is not None}
+
+        def params_for(method, extra=None):   # 방법별 탐색 기본값(cluster.DEFAULTS) ← 명령줄 ← --params-json
+            return dataclasses.replace(cluster.DEFAULTS[method], **given, **(extra or {}))
+        if a.cluster_cmd == "compare":
+            seeds = tuple(int(s) for s in a.seeds.split(","))
+            over = json.loads(a.params_json) if a.params_json else {}
+            params = {m: params_for(m, over.get(m)) for m in (a.method or cluster.METHODS)}
+            print("[cluster compare]", cluster.compare(a.dsn, a.model, str(a.out), params, seeds=seeds))
+        elif a.cluster_cmd == "run":
+            print("[cluster run]", cluster.run(a.dsn, a.model, a.method, params_for(a.method), a.seed))
+        elif a.cluster_cmd == "tune":
+            grid = json.loads(a.grid_json) if a.grid_json else None
+            print("[cluster tune]", cluster.tune(a.dsn, a.model, a.method, str(a.out), base=params_for(a.method),
+                                                     grid=grid))
+        elif a.cluster_cmd == "name":
+            print("[cluster name]", cluster.name(a.dsn, a.run))
+        else:
+            print("[cluster export]", cluster.export_xlsx(a.dsn, a.run, str(a.out)))
     elif a.cmd == "publish":
         _require(ap, a, "dsn", "publish_dsn")
         publish.push(core_dsn=a.dsn, publish_dsn=a.publish_dsn)
