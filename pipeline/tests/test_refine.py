@@ -11,6 +11,13 @@ from bluebird import refine
     ('그는 "안전"을 말했다', '그는 "안전"을 말했다'),
     ("[NULL]", ""),
     ("A &amp; B\r\n\r\n  C", "A & B C"),
+    ("발명내용&lt;br /&gt;벽돌을 만든다<BR>끝", "발명내용 벽돌을 만든다 끝"),                 # HTML 줄바꿈
+    ("불편을 해소하기br위해 정비. 공사br(도로)", "불편을 해소하기 위해 정비. 공사 (도로)"),   # 태그 없는 br
+    ("<p>첫</p><span>둘</span> <CCTV> 설치", "첫둘 <CCTV> 설치"),                         # 서식 태그만 제거
+    ("[사업내용] ? 위 치 : 시장? 사업량 ? 택배차량 4대", "[사업내용] 위 치 : 시장? 사업량 택배차량 4대"),
+    ("? 관내 교육 실시\n측정?분석 및 상?하반기", "관내 교육 실시 측정·분석 및 상·하반기"),     # 깨진 글머리·가운뎃점
+    ("어떨까요?어차피 그렇다. 없을까?제주는 있는지요 ? 네", "어떨까요?어차피 그렇다. 없을까?제주는 있는지요 ? 네"),
+    ("천연염색 탐구?에 대한 지도, 병?의원\u00a0? 체험농장", "천연염색 탐구?에 대한 지도, 병·의원 체험농장"),
 ])
 def test_clean_body(raw, expected):
     assert refine.clean(raw) == expected
@@ -70,3 +77,13 @@ def test_extra_body_columns_for_master_only():
     f = refine.mapped(spec)({"제안명": "버스 노선", "등록일시": "2023-01-02", "공개내용": "○ 노선 증설"})
     assert f["body"] == "노선 증설"
     assert "body" not in spec["columns"]
+
+
+def test_kipris_section_lines_become_labels():
+    raw = "발명내용&lt;br /&gt;칼날을 휘게 한다.&lt;br /&gt;용도 및 효과&lt;br /&gt;종이를 쉽게 자른다&lt;br /&gt;[ 발명의 요지 ]&lt;br /&gt;끝"
+    assert refine._kipris_body(raw) == "[발명내용] 칼날을 휘게 한다. [용도 및 효과] 종이를 쉽게 자른다 [발명의 요지] 끝"
+
+
+def test_internet_and_toll_free_numbers_masked():
+    f = refine._fields("제목", "상담 070-4610-2806 · 0505-399-2002 · 080-250-0000, 등기 14006-3600-8026")
+    assert f["body"] == "상담 [전화] · [전화] · [전화], 등기 14006-3600-8026"

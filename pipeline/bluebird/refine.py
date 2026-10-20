@@ -35,6 +35,14 @@ _LEAD = re.compile(r"^[\s\-–—·ㆍ*+]+(?=\S)")
 _RECEIPT = re.compile(r"^\s*[(\[]?[A-Z]{2,5}(?:-\d{2,}){2,}[)\]]?\s*")
 _YEAR = re.compile(r"(?:19|20)\d{2}(?!\d)")
 _YY = re.compile(r"^\(?'?(\d{2})년")   # '21년 상반기', "('22년) 감자밭" = 2000년대 두 자리
+# HTML 줄바꿈: <br>, <br />, 대구 원본의 태그 없는 'br'(한글 사이) → 줄바꿈. 그 밖 서식 태그 = 제거
+_BR = re.compile(r"<br\s*/?>|(?<=[가-힣.,:)])br(?=[가-힣(\[])", re.IGNORECASE)
+_TAG = re.compile(r"</?(?:p|div|span|font|b|strong|u|i|o:p)\b[^>]*>", re.IGNORECASE)
+# 깨진 기호 '?'(원본 ○·▷ 글머리, 가운뎃점 ·). 물음표로 끝날 수 있는 글자 뒤면 진짜 물음표로 보고 유지
+_Q_END = frozenset("까요죠가냐래니지나오야데는고어게")
+_Q_SPACED = re.compile(r"(\S) \?(?= )")        # '지원 ? 독거남' = 글머리
+# '측정?분석' = 가운뎃점. 뒤가 조사(에·를·을·라·로·와·과)면 깨진 따옴표('탐구?에 대한')일 수 있어 유지
+_Q_JOINED = re.compile(r"([가-힣])\?(?=[가-힣])(?![에를을라로와과])")
 
 
 def _val(value) -> str:
@@ -44,6 +52,9 @@ def _val(value) -> str:
 
 def _line(line: str) -> str:
     line = _BULLETS.sub(" ", line).strip()
+    line = re.sub(r"^\?+\s*", "", line)   # 줄 앞 '?' = 글머리
+    line = _Q_SPACED.sub(lambda m: m.group(0) if m.group(1) in _Q_END else m.group(1), line)
+    line = _Q_JOINED.sub(lambda m: m.group(0) if m.group(1) in _Q_END else m.group(1) + "·", line)
     if line.count('"') % 2:   # 짝 없는 따옴표(원본 셀 따옴표 잔재) = 줄 앞·끝만
         line = line.removeprefix('"').removesuffix('"').strip()
     return _LEAD.sub("", line).strip()
@@ -52,6 +63,7 @@ def _line(line: str) -> str:
 def clean(text: str | None, *, title: bool = False) -> str:
     """글머리 정리. 섹션 라벨은 그대로 남는다."""
     text = _BROKEN.sub("", _val(text)).replace("\r\n", "\n").replace("\r", "\n")
+    text = re.sub(r"[^\S\n]+", " ", _TAG.sub("", _BR.sub("\n", text)))   # NBSP 등 공백 통일
     out = " ".join(x for x in (_line(line) for line in text.split("\n")) if x)
     out = re.sub(r'"{2,}', '"', " ".join(out.split()))   # CSV 이중 따옴표 잔재
     if title:
@@ -254,10 +266,28 @@ def _acrc(spec: dict) -> Extract:
     return extract
 
 
+# KIPRIS 본문 소제목 줄(발명내용·용도 및 효과 등) → '[소제목]'(다른 소스 섹션 라벨과 같은 형식)
+_KIPRIS_LABELS = frozenset({"발명내용", "용도 및 효과", "발명동기", "발명의 동기", "발명 효과", "발명의 효과", "작품설명",
+                            "개발내용", "목적", "기대효과", "효과", "용도", "발명품 설명"})
+
+
+def _kipris_body(text: str | None) -> str:
+    lines = _BR.sub("\n", _val(text)).split("\n")
+    out = []
+    for line in lines:
+        s = line.strip()
+        if m := re.fullmatch(r"\[\s*(.+?)\s*\]", s):
+            s = f"[{m.group(1)}]"
+        elif s in _KIPRIS_LABELS:
+            s = f"[{s}]"
+        out.append(s)
+    return clean("\n".join(out))
+
+
 def _kipris(spec: dict) -> Extract:
     def extract(r: dict) -> Fields | None:
         link = _val(r.get("originalLink"))
-        return _fields(r.get("ideaName"), clean(r.get("ideaContent")), contest=r.get("contestName", ""),
+        return _fields(r.get("ideaName"), _kipris_body(r.get("ideaContent")), contest=r.get("contestName", ""),
                        url=link if urlsplit(link).hostname in LINK_HOSTS else spec["url"],
                        year=_year(r.get("contestYear")))
     return extract
@@ -321,7 +351,11 @@ def refine(*, dsn: str, sources: list[dict], only: str | None = None) -> list[di
                     " ON CONFLICT (api, key) DO UPDATE SET title = EXCLUDED.title, body = EXCLUDED.body,"
                     " contest = coalesce(EXCLUDED.contest, CASE WHEN master.origin = 'X' THEN master.contest END),"
                     " origin = CASE WHEN EXCLUDED.contest IS NOT NULL THEN 'O' WHEN master.origin = 'X' THEN 'X' END,"
-                    " award = EXCLUDED.award, url = EXCLUDED.url, year = EXCLUDED.year, fetched = EXCLUDED.fetched",
+                    " award = EXCLUDED.award, url = EXCLUDED.url, year = EXCLUDED.year, fetched = EXCLUDED.fetched,"
+                    # 본문 없는 행 = 근거 없음 → LLM 문제·기능·대상 비움
+                    " problem = CASE WHEN EXCLUDED.body IS NULL THEN NULL ELSE master.problem END,"
+                    " feature = CASE WHEN EXCLUDED.body IS NULL THEN NULL ELSE master.feature END,"
+                    " target = CASE WHEN EXCLUDED.body IS NULL THEN NULL ELSE master.target END",
                     rows)
                 cur.execute("CREATE TEMP TABLE IF NOT EXISTS keep (key text PRIMARY KEY) ON COMMIT DELETE ROWS")
                 cur.executemany("INSERT INTO keep VALUES (%s)", [(r[1],) for r in rows])

@@ -116,7 +116,11 @@ def fill(*, dsn: str, egress: Egress, sources: list[dict], only: str | None = No
         for n, values in enumerate(pool.map(run, jobs), start=1):
             with conn.cursor() as cur:
                 cur.executemany(
-                    "UPDATE master SET keyword = %s, problem = %s, feature = %s, target = %s, domain = %s,"
+                    # 본문 없는 행 = 근거 없음 → 문제·기능·대상 저장 안 함(refine과 같은 규칙)
+                    "UPDATE master SET keyword = %s,"
+                    " problem = CASE WHEN coalesce(body, '') = '' THEN NULL ELSE %s END,"
+                    " feature = CASE WHEN coalesce(body, '') = '' THEN NULL ELSE %s END,"
+                    " target = CASE WHEN coalesce(body, '') = '' THEN NULL ELSE %s END, domain = %s,"
                     " contest = coalesce(contest, %s), origin = CASE WHEN contest IS NOT NULL THEN origin"
                     " WHEN %s::text IS NOT NULL THEN 'X' END WHERE api = %s AND key = %s",
                     [(*v[:6], v[5], *v[6:]) for v in values])
