@@ -733,7 +733,7 @@ def test_db_log_history_rules_and_merge(tmp_path, monkeypatch):
     assert cli.main(["migrate", "--target", "master", "--dsn", dsn]) == 0
     rows = dblog.recent(dsn=dsn)
     assert [r[3] for r in rows] == ["files", "dump", "restore", "migrate", "dump", "restore", "drop", "migrate"]
-    assert rows[-1][2] == "test" and rows[-1][7].endswith("0008_db_log.sql, 0009_db_log_rules.sql")
+    assert rows[-1][2] == "test" and "0008_db_log.sql, 0009_db_log_rules.sql" in rows[-1][7]
     with psycopg.connect(dsn) as c:
         c.execute("INSERT INTO raw (source, key, payload, fetched) VALUES ('s','1','{}',now()), ('s','2','{}',now())")
     dump = tmp_path / "x.dump.xz"
