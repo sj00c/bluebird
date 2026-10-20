@@ -17,7 +17,7 @@ from concurrent.futures import ThreadPoolExecutor
 from . import db, llm
 from .egress import Egress, EgressBlocked, EgressTransportError
 
-PROMPT_VERSION = "extract-v1"
+PROMPT_VERSION = "extract-v2"
 LABELS = ("idea", "idea_thin", "complaint", "abusive", "off_topic")
 TYPES = ("product", "research", "policy")
 DOMAINS = ("행정", "복지", "교통", "환경", "경제", "교육", "안전", "문화", "보건", "과학기술", "생활", "기타")
@@ -37,7 +37,8 @@ INSTRUCTION = (
     "- solution: 한 문장. product·policy = 만든 것·방법, research = 탐구 방법과 알아낸 결과\n"
     "- features: 핵심 기능 0~3개(짧은 명사구 배열). research는 만든 장치·앱이 있을 때만\n"
     f"- domain: 1~2개(배열): {', '.join(DOMAINS)}. 생활 = 생활용품·가사·위생\n"
-    "- evidence: solution의 근거가 된 title 또는 body 구절을 글자 그대로 복사(10~60자)\n"
+    "- evidence: solution의 근거인 body(없으면 title)의 한 문장 안에서 이어진 구절 하나를 글자 하나 바꾸지 않고 복사"
+    "(10~40자). 여러 곳을 잇거나 줄이거나 '...'을 넣지 않는다\n"
     '출력: {"items": [{"id": ..., "label": ..., "type": ..., "goal": ..., "solution": ..., "features": [...], '
     '"domain": [...], "evidence": ...}]} — 입력 항목 수·id 그대로.'
 )
