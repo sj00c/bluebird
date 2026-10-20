@@ -51,22 +51,27 @@ SELECT s.id, s.name, s.license, s.url, s.record_kind, s.exclude_reason,
 
 MASTER_COLS = ("api", "key", "title", "body", "contest", "origin", "award", "url", "year", "fetched",
                "keyword", "problem", "feature", "target", "domain", "exclude_reasons", "canonical_api", "canonical_key",
-               "kind", "field", "program")
+               "kind", "field", "program", "title_len", "body_len", "flags", "idea_label")
 
-# 목록(keyword·domain·exclude_reasons) = 쉼표 이음, fetched = KST 분 단위, kind·field·program = program 표
+# 목록(keyword·domain·exclude_reasons) = 쉼표 이음, fetched = KST 분 단위, kind·field·program = program 표,
+# title_len~idea_label = quality 표(flags = 표시만 하는 의심 칸 중 참인 것)
 MASTER_SQL = """
 SELECT m.api, m.key, m.title, m.body, m.contest, m.origin, m.award, m.url, m.year,
        to_char(m.fetched AT TIME ZONE 'Asia/Seoul', 'YYYY-MM-DD HH24:MI'),
        array_to_string(m.keyword, ', '), m.problem, m.feature, m.target, array_to_string(m.domain, ', '),
-       array_to_string(m.exclude_reasons, ', '), m.canonical_api, m.canonical_key, p.kind, p.field, p.name
-  FROM master m LEFT JOIN program p ON p.id = m.program_id
+       array_to_string(m.exclude_reasons, ', '), m.canonical_api, m.canonical_key, p.kind, p.field, p.name,
+       q.title_len, q.body_len,
+       concat_ws(', ', CASE WHEN q.has_profanity THEN 'profanity' END, CASE WHEN q.has_repeat THEN 'repeat' END,
+                 CASE WHEN q.hangul_ratio < 0.3 THEN 'low_hangul' END),
+       q.idea_label
+  FROM master m LEFT JOIN program p ON p.id = m.program_id LEFT JOIN quality q USING (api, key)
  ORDER BY m.api, m.year NULLS LAST, m.key
 """
 
 MASTER_WIDTHS = {"api": 24, "key": 18, "title": 40, "body": 60, "contest": 28, "origin": 7, "award": 12, "url": 30,
                  "year": 7, "fetched": 17, "keyword": 24, "problem": 40, "feature": 40, "target": 16,
                  "domain": 16, "exclude_reasons": 14, "canonical_api": 24, "canonical_key": 18,
-                 "kind": 10, "field": 14, "program": 28}
+                 "kind": 10, "field": 14, "program": 28, "title_len": 8, "body_len": 8, "flags": 14, "idea_label": 10}
 XLSX_CELL_MAX = 32767  # 엑셀 칸 글자 수 한도
 
 

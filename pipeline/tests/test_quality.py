@@ -1,0 +1,29 @@
+import pytest
+
+from bluebird.quality import measure, reasons
+
+
+@pytest.mark.parametrize("title, body, codes", [
+    ("방범 CCTV", None, ["no_body"]),
+    ("방범 CCTV", "[사업내용] . .", ["no_body"]),                                       # 라벨·기호뿐
+    ("K-테이블 마스크", "[사업목적] 별첨 [사업내용] 첨부파일참조 [사업효과] 붙임 참조", ["attachment_only"]),
+    ("반찬지원사업", "[불편한점] 반찬지원사업 [개선방안] 반찬 지원사업", ["title_repeat"]),
+    ("30일", "모바일", ["short_title_body"]),                                            # 제목 3자 + 본문 3자
+    ("보온병", "보온병이 불편해서 손잡이를 단다", []),                                       # 본문 11자 초과
+    ("전기차 충전 터널 설계", "모바일", []),                                              # 제목 6자 이상 = 본문 짧아도 유지
+    ("첨부 양식 개선", "첨부파일 이름을 자동으로 붙여 주는 기능", []),                        # 첨부 낱말이 있어도 내용 있음
+])
+def test_rule_reasons(title, body, codes):
+    assert reasons(measure(title, body)) == codes
+
+
+def test_flags_are_not_reasons_and_ai_label_is():
+    m = measure("세금", "씨발 세금 너무 많다 ㅋㅋㅋㅋ 국민연금 개편이 필요하다")
+    assert (m["has_profanity"], m["has_repeat"]) == (True, True)
+    assert reasons(m) == []
+    assert reasons(m, "complaint") == ["complaint"] and reasons(m, "idea") == []
+
+
+def test_lengths_skip_labels_spaces_symbols():
+    m = measure("1 2 3", "[사업내용] 가나 다! [기타] ab")
+    assert (m["title_len"], m["body_len"], m["hangul_ratio"]) == (3, 5, 0.6)

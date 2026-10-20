@@ -79,7 +79,7 @@ def main(argv: list[str] | None = None) -> int:
     x = mss.add_parser("xlsx", help="master 표 전체 → 엑셀 1파일(시트 master, 필드 = docs/MASTER.md)")
     x.add_argument("--dsn", default=_env("BB_MASTER_DSN"))
     x.add_argument("--out", type=Path, required=True)
-    x = mss.add_parser("reasons", help="전처리 사유(duplicate·no_body)·대표 행 표시, 행 삭제 없음. refine 다음, 매번 전체 재계산")
+    x = mss.add_parser("reasons", help="전처리 사유(중복·품질)·대표 행·quality 측정값, 행 삭제 없음. refine 다음, 매번 전체 재계산")
     x.add_argument("--dsn", default=_env("BB_MASTER_DSN"))
     x = mss.add_parser("classify", help="대회·제도 분류(program, master.program_id). 매번 전체 재계산")
     x.add_argument("--dsn", default=_env("BB_MASTER_DSN"))

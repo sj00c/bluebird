@@ -39,14 +39,39 @@
 | `feature` | 기능·방법 | LLM | 텍스트 | 제안의 핵심 기능·방법 한 문장. 근거 없으면 빈칸 | 2차선까지 좌회전 동시 신호 … |
 | `target` | 대상 | LLM | 텍스트 | 주 수혜·사용 대상. 근거 없으면 빈칸 | 운전자 |
 | `domain` | 분야 | LLM | 쉼표 목록 | 고정 11개 중 1개 이상 | 교통, 안전 |
-| `exclude_reasons` | 전처리 사유 | 계산 | 코드 목록 | 전처리에서 걸린 사유(`exclusion_reason` 표). `duplicate` = 중복(대표 아닌 행), `no_body` = 본문 없음. 빈 목록 = 해당 없음. 행 삭제 없음 | duplicate |
+| `exclude_reasons` | 전처리 사유 | 계산 | 코드 목록 | 전처리에서 걸린 사유(`exclusion_reason` 표, 아래 목록). 빈 목록 = 해당 없음. 행 삭제 없음 | duplicate |
 | `canonical_api` · `canonical_key` | 대표 행 | 계산 | 텍스트 | 중복일 때 대표 행의 `api`·`key`. 규칙 = `docs/DEDUP_PLAN.md` | kipris_idea_api · h:360c… |
 | `program_id` (엑셀: `kind`·`field`·`program`) | 대회·제도 | 계산 | `program` 표 | 종류(공모전·시민 제안·직원 제안) · 분야 · 대회·제도 이름. 규칙 = `pipeline/bluebird/programs.py` | 공모전 · 과학·발명 · 전국과학전람회 |
 
 - `domain` 값: 행정, 복지, 교통, 환경, 경제, 교육, 안전, 문화, 보건, 과학기술, 기타
 - LLM: OpenAI `gpt-4.1-mini`, 입력 = 제목·본문(앞 2,500자)·소스 정보
 - 개인정보: 전화 → `[전화]`, 이메일 → `[이메일]`, 지정 성명·팀명 → `[이름]`
-- 중복 제외 조회: `WHERE NOT 'duplicate' = ANY(exclude_reasons)` (1,671행 제외 → 140,156행). 사유 없는 행 = `exclude_reasons = '{}'` (132,306행)
+- 중복 제외 조회: `WHERE NOT 'duplicate' = ANY(exclude_reasons)` (1,671행 제외 → 140,156행). 사유 없는 행 = `exclude_reasons = '{}'` (132,122행)
+
+### 전처리 사유 코드 (중복 제외 행 기준 건수)
+
+| 코드 | 조건 | 행 |
+|---|---|---:|
+| `duplicate` | 같은 글·같은 장소·같은 출품작의 대표 아닌 행 (`docs/DEDUP_PLAN.md`) | 1,671(전체) |
+| `no_body` | 본문 내용 0자 (비었거나 `[라벨]`·공백·기호뿐) | 7,859 |
+| `attachment_only` | 본문 = 첨부·별첨·붙임 참조 문구뿐 | 75 |
+| `title_repeat` | 본문 = 제목 반복뿐 | 70 |
+| `short_title_body` | 제목 내용 5자 이하 **and** 본문 내용 10자 이하 | 31 |
+| `idea_thin` · `complaint` · `abusive` · `off_topic` | AI 판정(`quality.idea_label`): 빈약 · 불만뿐 · 욕설 중심 · 광고·무의미 | 판정 전 |
+
+- 내용 글자 수 = `[라벨]`·공백·기호를 뺀 글자 수
+
+### `quality` 표 (master 1행 = 1행, `bluebird master reasons`가 매번 재계산)
+
+| 칸 | 뜻 | 제외 조건 |
+|---|---|---|
+| `title_len` · `body_len` | 제목·본문 내용 글자 수 | `short_title_body`·`no_body`에 사용 |
+| `attachment_only` · `title_repeat` | 위 사유와 같음 | 예 |
+| `hangul_ratio` | 본문 내용 중 한글 비율 | 아니오(표시만) |
+| `has_profanity` · `has_repeat` | 욕설 단어 · ㅋㅋㅋㅋ/!!!! 반복 | 아니오(표시만: 단어 규칙 오탐 많음 → AI 판정 참고용) |
+| `idea_label` · `idea_reason` · `idea_model` · `idea_at` | AI 판정 결과(재계산 때 유지) | `idea` 아니면 그 값이 사유 |
+
+- 엑셀: `title_len`·`body_len`·`flags`(profanity·repeat·low_hangul)·`idea_label`
 
 ## 3. 필드별 채움 현황
 

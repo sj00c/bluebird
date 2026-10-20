@@ -14,7 +14,7 @@
 | 5 | 연도 보완 | 247행 채움, 남은 431행 = 원본 날짜 칸 없음 | 완료 |
 | 6 | 대회·제도 분류 DB화 | `program` 86개, `master.program_id` 141,827행 | 완료 |
 | 7 | 글자 정리 + 근거 없는 LLM 칸 비움 | 본문 11,394행·제목 59행 정리, LLM 칸 1,482행 비움 (아래 7장) | 완료 |
-| 8 | 짧은 본문 기준(첨부 참조·제목 반복·20자 미만 등) | 표본으로 길이 기준 정함 | 다음 |
+| 8 | 행 품질 측정·확실한 제외(`quality` 표) | 사유 추가: no_body +9 · attachment_only 75 · title_repeat 70 · short_title_body 31(중복 제외). 사유 없는 행 132,306 → 132,122 | 완료 (AI `idea_label` 판정 = API 키 대기) |
 
 실행 순서(재실행 시 그대로): `master detail` → `master refine` → `master reasons` → `master classify` → `export provenance`(DATA.md)
 

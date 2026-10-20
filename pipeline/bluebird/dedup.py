@@ -13,7 +13,7 @@ import re
 from collections import defaultdict
 from collections.abc import Callable, Iterable
 
-from . import db
+from . import db, quality
 
 Key = tuple[str, str]   # (api, key)
 
@@ -123,7 +123,7 @@ def plan(rows: Iterable[dict]) -> dict[Key, tuple[Key, str]]:
 
 
 def mark(*, dsn: str) -> dict:
-    """exclude_reasons 재계산: duplicate(위 규칙, canonical = 최종 대표) + no_body(본문 빈 행)."""
+    """exclude_reasons 재계산: duplicate(위 규칙, canonical = 최종 대표) + 품질 사유(quality.refresh)."""
     cases = lambda m: " ".join("WHEN %s THEN r.payload->>%s" for _ in m)
     sql = (f"SELECT m.api, m.key, m.title, m.body, m.contest, m.year, m.award,"
            f" CASE m.api {cases(DATE)} END, CASE m.api {cases(LOT)} END"
@@ -144,12 +144,9 @@ def mark(*, dsn: str) -> dict:
             cur.execute("UPDATE master m SET exclude_reasons = m.exclude_reasons || '{duplicate}',"
                         " canonical_api = d.capi, canonical_key = d.ckey"
                         " FROM dup d WHERE m.api = d.api AND m.key = d.key")
-            cur.execute("UPDATE master SET exclude_reasons = array_remove(exclude_reasons, 'no_body')"
-                        " WHERE 'no_body' = ANY(exclude_reasons)")
-            no_body = cur.execute("UPDATE master SET exclude_reasons = exclude_reasons || '{no_body}'"
-                                  " WHERE coalesce(body, '') = ''").rowcount
+            quality_counts = quality.refresh(cur)
         conn.commit()
     by_rule: dict[str, int] = defaultdict(int)
     for _head, rule in result.values():
         by_rule[rule] += 1
-    return {"status": "ok", "duplicate": len(result), **dict(sorted(by_rule.items())), "no_body": no_body}
+    return {"status": "ok", "duplicate": len(result), **dict(sorted(by_rule.items())), **quality_counts}
