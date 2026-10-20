@@ -73,6 +73,12 @@
 
 - 엑셀: `title_len`·`body_len`·`flags`(profanity·repeat·low_hangul)·`idea_label`
 
+### DB 안 설명·조회용 뷰 (`master/0011`)
+
+- 모든 표·칸에 `COMMENT` = `[출처] 설명. 만든 곳: 명령(파일)`. 출처: `[원본]` · `[정제]` · `[LLM]` · `[계산]` · `[AI판정]` · `[기록]` · `[기준표]`. DBeaver 속성·`\d+`에서 보임, 덤프에 같이 실림
+- 조회용 뷰(저장된 쿼리, 데이터 아님): `v_usable`(쓸 행) · `v_reason_counts`(사유별 건수) · `v_excluded`(제외 행 + 근거 칸) · `v_flagged`(쓸 행 중 의심 표시)
+- 설명 빠진 표·칸 = 테스트 실패(`test_master_db_every_table_column_view_has_provenance_comment`)
+
 ## 3. 필드별 채움 현황
 
 | 필드 | 채워진 행 | 비율 |

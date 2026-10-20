@@ -673,6 +673,27 @@ def test_export_xlsx_marks_share_from_source_flag(fresh, tmp_path):
     assert by_source["s"][hdr.index("canonical_id")] is None                                   # 묶음 없음 = 빈 값
 
 
+def test_master_db_every_table_column_view_has_provenance_comment():
+    """정제 DB 표·칸·조회용 뷰 전부 설명(COMMENT) 있음, 형식 '[출처] …'. 새 칸 추가 시 설명 빠지면 실패."""
+    name = "bbtest_comments"
+    with psycopg.connect(DSN, autocommit=True) as c:
+        c.execute(f"DROP DATABASE IF EXISTS {name} WITH (FORCE)")
+        c.execute(f"CREATE DATABASE {name}")
+    dsn = DSN.rsplit("/", 1)[0] + f"/{name}"
+    db.migrate(dsn, "master")
+    with psycopg.connect(dsn) as c:
+        rel = c.execute("""SELECT n.nspname || '.' || c.relname, obj_description(c.oid, 'pg_class')
+                             FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+                            WHERE n.nspname IN ('public', 'migrations') AND c.relkind IN ('r', 'v')""").fetchall()
+        col = c.execute("""SELECT n.nspname || '.' || c.relname || '.' || a.attname, col_description(c.oid, a.attnum)
+                             FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+                             JOIN pg_attribute a ON a.attrelid = c.oid AND a.attnum > 0 AND NOT a.attisdropped
+                            WHERE n.nspname IN ('public', 'migrations') AND c.relkind = 'r'""").fetchall()
+    assert {r for r, _ in rel} >= {"public.master", "public.raw", "public.quality", "public.v_usable"}
+    missing = [n for n, d in rel + col if not (d and d.startswith("["))]
+    assert missing == []
+
+
 def test_provenance_groups_by_platform_and_contest(tmp_path):
     """DATA.md: 수집처·대회·제도별 행 = master 중복 제외 실제 건수. KIPRIS = 행의 대회명으로 나눔."""
     name = "bbtest_master"
