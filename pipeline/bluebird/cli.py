@@ -212,10 +212,8 @@ def main(argv: list[str] | None = None) -> int:
 
             dblog.write(dsn=dsn, action="migrate", note="master " + ", ".join(applied))
     elif a.cmd == "master":
-        from . import master
+        from . import dblog, master
         from .egress import Egress
-
-        from . import dblog
 
         _require(ap, a, "dsn")
         if a.master_cmd == "log":
