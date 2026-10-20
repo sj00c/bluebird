@@ -20,6 +20,8 @@ from .egress import Egress, EgressBlocked, EgressTransportError
 PROMPT_VERSION = "extract-v2"
 LABELS = ("idea", "idea_thin", "complaint", "abusive", "off_topic")
 TYPES = ("product", "research", "policy")
+# product 설명(발명·제품·디자인·서비스)의 하위 낱말로 답한 응답 = product
+PRODUCT_WORDS = {"invention": "product", "design": "product", "service": "product"}
 DOMAINS = ("행정", "복지", "교통", "환경", "경제", "교육", "안전", "문화", "보건", "과학기술", "생활", "기타")
 BODY_LIMIT = 2500
 
@@ -58,18 +60,19 @@ def parse(items: list[dict], rows: list[tuple], model: str) -> tuple[list[tuple]
     labels, fields = [], []
     for n, (api, key, title, body, _contest) in enumerate(rows):
         item = by_id.get(str(n))
-        label = item and item.get("label")
+        label, kind = (item or {}).get("label"), (item or {}).get("type")
+        kind = PRODUCT_WORDS.get(kind, kind)
+        if label in TYPES and kind in (None, label):   # 유형을 label 칸에 쓴 응답(탐구 묶음에서 나옴) = idea + 그 유형
+            label, kind = "idea", label
         if label not in LABELS:
             continue
+        if label == "idea" and kind not in TYPES:
+            continue   # 유형 없는 idea = 형식 오류 → 다음 실행에서 다시
         labels.append((label, model, api, key))
         if label != "idea":
             continue
-        kind = item.get("type") if item.get("type") in TYPES else None
         domain = [d for d in dict.fromkeys(item.get("domain") or []) if d in DOMAINS][:2] or ["기타"]
         evidence = _text(item.get("evidence"))
-        if kind is None:
-            labels.pop()   # 유형 없는 idea = 형식 오류 → 다음 실행에서 다시
-            continue
         fields.append((api, key, kind, _text(item.get("goal")), _text(item.get("solution")),
                        [f for f in (_text(x) for x in item.get("features") or []) if f][:3], domain, evidence,
                        bool(evidence) and _norm(evidence) in _norm(f"{title} {body}"), model, PROMPT_VERSION))

@@ -21,3 +21,13 @@ def test_parse_keeps_label_and_verifies_evidence_against_text():
     assert [(f[1], f[2], f[5], f[6], f[8]) for f in fields] == [
         ("1", "product", ["헤드 각도 조절", "a", "b"], ["생활", "과학기술"], True),
         ("3", "research", [], ["기타"], False)]
+
+
+def test_parse_normalizes_type_variants():
+    """유형을 label 칸에 쓴 응답 = idea + 그 유형, product 하위 낱말(service 등) = product."""
+    items = [{"id": 2, "label": "research", "goal": "최적 자세", "solution": "실험", "domain": ["과학기술"],
+              "evidence": "무게중심 위치를 바꿔"},
+             {"id": 0, "label": "idea", "type": "service", "domain": ["생활"], "evidence": "분무기 헤드를"}]
+    labels, fields = parse(items, ROWS, "m")
+    assert labels == [("idea", "m", "s", "1"), ("idea", "m", "s", "3")]
+    assert [(f[1], f[2], f[8]) for f in fields] == [("1", "product", True), ("3", "research", True)]
