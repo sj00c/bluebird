@@ -79,6 +79,15 @@
 - 조회용 뷰(저장된 쿼리, 데이터 아님): `v_usable`(쓸 행) · `v_reason_counts`(사유별 건수) · `v_excluded`(제외 행 + 근거 칸) · `v_flagged`(쓸 행 중 의심 표시)
 - 설명 빠진 표·칸 = 테스트 실패(`test_master_db_every_table_column_view_has_provenance_comment`)
 
+### 가공 아이디어 `idea_fields` (`master/0012`, `bluebird master extract`)
+
+- 대상: 쓸 행(`exclude_reasons = '{}'`) 중 AI 판정 전. LLM 1회 호출 = 판정(`quality.idea_label`) + 가공. 다음에 `master reasons` → 판정이 `idea` 아닌 행 = 제외 사유
+- 칸: `item_type`(product 발명·제품·디자인·서비스 / research 탐구 / policy 정책·시민 제안) · `goal` · `solution` · `features`(0~3) · `domain`(1~2: 기존 11개 + `생활`) · `evidence`(근거 원문 구절) · `verified`
+- 탐구형: goal = 알아내려는 것, solution = 탐구 방법과 결과, features = 만든 장치·앱 있을 때만
+- `verified` = evidence가 제목·본문에 실제로 있음(공백 무시). 거짓 = 지어낸 값 의심 → `v_ideas`에서 빠짐
+- 최종 사용: `SELECT * FROM v_ideas;` (유형으로 거르기: `WHERE item_type IN (...)`)
+- 옛 LLM 칸(`master.problem`·`feature`·`domain` 등)은 비교용으로 남김
+
 ## 3. 필드별 채움 현황
 
 | 필드 | 채워진 행 | 비율 |

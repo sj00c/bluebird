@@ -72,6 +72,13 @@ def main(argv: list[str] | None = None) -> int:
     x.add_argument("--skip", action="append", default=[], help="제외 소스, 반복")
     x.add_argument("--sample", type=int, help="소스별 N행만(시험)")
     x.add_argument("--workers", type=int, default=8)
+    x = mss.add_parser("extract", help="AI 판정(quality.idea_label) + 가공 아이디어(idea_fields). 쓸 행 중 판정 전만. 다음 = reasons")
+    x.add_argument("--dsn", default=_env("BB_MASTER_DSN"))
+    x.add_argument("--core-dsn", default=_env("BB_DSN"), help="egress 정책·감사 기록")
+    x.add_argument("--config", type=Path, action="append", required=True, help="레지스트리 TOML, 반복")
+    x.add_argument("--only")
+    x.add_argument("--sample", type=int, help="소스별 N행만(시험)")
+    x.add_argument("--workers", type=int, default=8)
     x = mss.add_parser("refine", help="raw → master 정제(글머리 정리·마스킹, LLM 컨럼 유지)")
     x.add_argument("--dsn", default=_env("BB_MASTER_DSN"))
     x.add_argument("--config", type=Path, action="append", required=True, help="레지스트리 TOML, 반복")
@@ -267,6 +274,13 @@ def main(argv: list[str] | None = None) -> int:
             with Egress.from_dsn(a.core_dsn, timeout=180.0) as eg:
                 results = fill.fill(dsn=a.dsn, egress=eg, sources=sources, only=a.only, skip=a.skip,
                                     sample=a.sample, workers=a.workers)
+        elif a.master_cmd == "extract":
+            from . import extract
+
+            _require(ap, a, "core_dsn")
+            with Egress.from_dsn(a.core_dsn, timeout=180.0) as eg:
+                results = extract.extract(dsn=a.dsn, egress=eg, sources=sources, only=a.only, sample=a.sample,
+                                          workers=a.workers)
         elif a.master_cmd == "refine":
             from . import refine
 
@@ -278,7 +292,10 @@ def main(argv: list[str] | None = None) -> int:
                                           acrc_budget=a.acrc_budget)
         for result in results:
             print(funnel.dumps(result))
-        dblog.write(dsn=a.dsn, action=a.master_cmd, note=_log_note(a, results))
+        # db_log 작업 목록(0009)에 extract 없음 → LLM 단계 = fill로 기록, 내용 앞에 명령 이름
+        action = "fill" if a.master_cmd == "extract" else a.master_cmd
+        note = ("extract " if a.master_cmd == "extract" else "") + _log_note(a, results)
+        dblog.write(dsn=a.dsn, action=action, note=note)
         return 1 if any(r["status"] != "ok" for r in results) else 0
     elif a.cmd == "ingest":
         if a.config is None and _p("BB_SOURCES"):
