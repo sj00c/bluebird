@@ -119,11 +119,11 @@ class Call:
     tokens_out: int | None = None
 
 
-def db_recorder(dsn: str) -> Callable[[Call], int]:
+def db_recorder(dsn: str, table: str = "core.egress_call") -> Callable[[Call], int]:
     def record(c: Call) -> int:
         with db.connect(dsn) as conn:
             rid = conn.execute(
-                """INSERT INTO core.egress_call (purpose, dest_host, path_template, source_ids, fields_sent,
+                f"""INSERT INTO {table} (purpose, dest_host, path_template, source_ids, fields_sent,
                      payload_sha256, bytes_out, bytes_in, http_status, decision, reason, tokens_in, tokens_out)
                    VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) RETURNING id""",
                 (c.purpose, c.dest_host, c.path_template, c.source_ids, c.fields_sent, c.payload_sha256,
@@ -180,6 +180,13 @@ class Egress:
         with db.connect(dsn) as conn:
             policy = Policy.load(conn)
         return cls(policy=policy, recorder=db_recorder(dsn), **kw)
+
+    @classmethod
+    def for_master(cls, dsn: str, sources: list[dict] = (), **kw) -> Egress:
+        """정제 DB 전용(core 없음): 정책 = 레지스트리 export_grade(칸 규칙 없음 → DEFAULT_EXPORTABLE·NEVER_EXPORT),
+        기록 = 정제 DB egress_call."""
+        grades = {s["id"]: s.get("export_grade", "pending") for s in sources}
+        return cls(policy=Policy(grades), recorder=db_recorder(dsn, "egress_call"), **kw)
 
     def close(self) -> None:
         self._client.close()

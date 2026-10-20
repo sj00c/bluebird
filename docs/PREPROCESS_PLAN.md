@@ -56,7 +56,7 @@
 | `domain` = `기타`만 | 12,540 |
 | 합계(겹침 제외) | 34,461 |
 
-- 필요: `OPENAI_API_KEY`(또는 `ANTHROPIC_API_KEY`), core 감사 DB(`--core-dsn`)
+- 필요: `OPENAI_API_KEY`(또는 `ANTHROPIC_API_KEY`). core 불필요(호출 기록 = 정제 DB `egress_call`)
 - 방법: 대상 행 `keyword = NULL` → `bluebird master fill`(keyword 빈 행만 다시 채움). 2,500자 초과는 `fill` 입력 길이 결정 필요
 - 검수: 소스별 무작위 표본 사람 표시 → 필드별 정확도. 목표값·표본 수 결정 필요
 

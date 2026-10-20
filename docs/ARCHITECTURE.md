@@ -170,8 +170,8 @@ flowchart LR
 
 ### 3.5 정제 DB (서버 `parangsae`)
 
-- 위치 = 서버 `161.122.152.68:5432` DB `parangsae`, 사용자 `aix`. 접속 = `.env` `BB_DB_URL`(필수). 표 = `public` 스키마. `core` 스키마와 독립(읽지도 쓰지도 않음, egress 감사 기록만 core)
-- 표 4개(마이그레이션 `master/0001~0007`): `raw`·`master`·`exclusion_reason`·`program`. 컨럼명 = 영어 한 단어
+- 위치 = 서버 `161.122.152.68:5432` DB `parangsae`, 사용자 `aix`. 접속 = `.env` `BB_DB_URL`(필수). 표 = `public` 스키마. `core`와 완전히 독립(읽지도 쓰지도 않음): 데이터 = 전부 `raw`에서, 외부 호출 정책 = 레지스트리 `export_grade`, 호출 기록 = 정제 DB `egress_call`(`Egress.for_master`)
+- 표(마이그레이션 `master/0001~0013`): `raw`·`master`·`exclusion_reason`·`program`·`quality`·`idea_fields`·`egress_call`·`db_log` + 조회용 뷰 `v_*`. 모든 표·칸 설명 = `COMMENT`(0011). 컨럼명 = 영어 한 단어
   - `raw(source, key, payload jsonb, fetched)`: 받은 그대로. 파일 = 행(원본 헤더 → 값), API = 응답 레코드 전체
   - `master(api, key, title, body, contest, origin, award, url, year, fetched, keyword, problem, feature, target, domain, exclude_reasons, canonical_api, canonical_key, program_id)`: 정제본. award = 원본 수상 등급 그대로(`refine.AWARD`). keyword~domain = LLM. domain = 고정 목록(CHECK). exclude_reasons = 전처리 사유(`exclusion_reason`), program_id = 대회·제도(`program`)
 - 적재: `bluebird master files`(수집해 둔 CSV·xlsx, 소스 단위 교체), `bluebird master api`(API 재수집, 1,000건마다 커밋, 국민신문고 = 일 한도 안에서 이어 받음)

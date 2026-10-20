@@ -61,12 +61,10 @@ def main(argv: list[str] | None = None) -> int:
         x.add_argument("--only")
     x = mss.add_parser("detail", help="목록에 본문 없는 소스 → 공식 상세 페이지 본문(raw '<소스>.detail', 이어 받음)")
     x.add_argument("--dsn", default=_env("BB_MASTER_DSN"))
-    x.add_argument("--core-dsn", default=_env("BB_DSN"), help="egress 정책·감사 기록")
     x.add_argument("--only")
     x.add_argument("--workers", type=int, default=4)
     x = mss.add_parser("fill", help="master LLM 컨럼(keyword·problem·feature·target·domain, 빈 contest)")
     x.add_argument("--dsn", default=_env("BB_MASTER_DSN"))
-    x.add_argument("--core-dsn", default=_env("BB_DSN"), help="egress 정책·감사 기록")
     x.add_argument("--config", type=Path, action="append", required=True, help="레지스트리 TOML, 반복")
     x.add_argument("--only")
     x.add_argument("--skip", action="append", default=[], help="제외 소스, 반복")
@@ -74,7 +72,6 @@ def main(argv: list[str] | None = None) -> int:
     x.add_argument("--workers", type=int, default=8)
     x = mss.add_parser("extract", help="AI 판정(quality.idea_label) + 가공 아이디어(idea_fields). 쓸 행 중 판정 전만. 다음 = reasons")
     x.add_argument("--dsn", default=_env("BB_MASTER_DSN"))
-    x.add_argument("--core-dsn", default=_env("BB_DSN"), help="egress 정책·감사 기록")
     x.add_argument("--config", type=Path, action="append", required=True, help="레지스트리 TOML, 반복")
     x.add_argument("--only")
     x.add_argument("--sample", type=int, help="소스별 N행만(시험)")
@@ -104,7 +101,6 @@ def main(argv: list[str] | None = None) -> int:
     x.add_argument("--merge-from", metavar="DSN", help="복원 전 기존 DB의 기록 중 없는 행 옮기기")
     x.add_argument("--limit", type=int, default=20)
     mss.choices["files"].add_argument("--dir", type=Path, action="append", help="파일 찾을 디렉터리, 반복. 기본: BB_SIGNAL_DIR/contests, BB_SEED_DIR")
-    mss.choices["api"].add_argument("--core-dsn", default=_env("BB_DSN"), help="egress 정책·감사 기록")
     mss.choices["api"].add_argument("--acrc-budget", type=int, default=int(_env("BB_ACRC_CALL_BUDGET") or 9000))
 
     i = sub.add_parser("ingest", help="seed 파일 → core 적재(마스킹·익명 ID)")
@@ -236,8 +232,7 @@ def main(argv: list[str] | None = None) -> int:
                     print(" | ".join("" if v is None else str(v) for v in row))
             return 0
         if a.master_cmd == "detail":
-            _require(ap, a, "core_dsn")
-            with Egress.from_dsn(a.core_dsn, cookies=False) as eg:
+            with Egress.for_master(a.dsn, cookies=False) as eg:
                 results = master.load_detail(dsn=a.dsn, egress=eg, only=a.only, workers=a.workers)
             for result in results:
                 print(funnel.dumps(result))
@@ -270,15 +265,13 @@ def main(argv: list[str] | None = None) -> int:
         elif a.master_cmd == "fill":
             from . import fill
 
-            _require(ap, a, "core_dsn")
-            with Egress.from_dsn(a.core_dsn, timeout=180.0) as eg:
+            with Egress.for_master(a.dsn, sources, timeout=180.0) as eg:
                 results = fill.fill(dsn=a.dsn, egress=eg, sources=sources, only=a.only, skip=a.skip,
                                     sample=a.sample, workers=a.workers)
         elif a.master_cmd == "extract":
             from . import extract
 
-            _require(ap, a, "core_dsn")
-            with Egress.from_dsn(a.core_dsn, timeout=180.0) as eg:
+            with Egress.for_master(a.dsn, sources, timeout=180.0) as eg:
                 results = extract.extract(dsn=a.dsn, egress=eg, sources=sources, only=a.only, sample=a.sample,
                                           workers=a.workers)
         elif a.master_cmd == "refine":
@@ -286,8 +279,7 @@ def main(argv: list[str] | None = None) -> int:
 
             results = refine.refine(dsn=a.dsn, sources=sources, only=a.only)
         else:
-            _require(ap, a, "core_dsn")
-            with Egress.from_dsn(a.core_dsn) as eg:
+            with Egress.for_master(a.dsn, sources) as eg:
                 results = master.load_api(dsn=a.dsn, egress=eg, sources=sources, only=a.only,
                                           acrc_budget=a.acrc_budget)
         for result in results:

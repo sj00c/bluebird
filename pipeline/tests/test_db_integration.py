@@ -694,6 +694,31 @@ def test_master_db_every_table_column_view_has_provenance_comment():
     assert missing == []
 
 
+def test_master_egress_records_in_master_db_without_core():
+    """정제 DB 명령 외부 호출 = core 없이 정제 DB egress_call에 기록. 정책 = 레지스트리 export_grade."""
+    import httpx
+
+    from bluebird.egress import Egress, EgressBlocked
+
+    name = "bbtest_egress"
+    with psycopg.connect(DSN, autocommit=True) as c:
+        c.execute(f"DROP DATABASE IF EXISTS {name} WITH (FORCE)")
+        c.execute(f"CREATE DATABASE {name}")
+    dsn = DSN.rsplit("/", 1)[0] + f"/{name}"
+    db.migrate(dsn, "master")
+    transport = httpx.MockTransport(lambda r: httpx.Response(200, text="ok"))
+    sources = [{"id": "a", "export_grade": "pending"}, {"id": "d", "export_grade": "deny"}]
+    with Egress.for_master(dsn, sources, transport=transport) as eg:
+        assert eg.get("collect", "https://www.science.go.kr/x", fields={"title": ("a", "제목")}).status == 200
+        with pytest.raises(EgressBlocked):
+            eg.get("collect", "https://www.science.go.kr/x", fields={"title": ("d", "제목")})
+        with pytest.raises(EgressBlocked):
+            eg.get("collect", "https://www.science.go.kr/x", fields={"person_name": ("a", "홍길동")})
+    with psycopg.connect(dsn) as c:
+        rows = c.execute("SELECT decision, source_ids, http_status FROM egress_call ORDER BY id").fetchall()
+    assert rows == [("allowed", ["a"], 200), ("blocked", ["d"], None), ("blocked", ["a"], None)]
+
+
 def test_provenance_groups_by_platform_and_contest(tmp_path):
     """DATA.md: 수집처·대회·제도별 행 = master 중복 제외 실제 건수. KIPRIS = 행의 대회명으로 나눔."""
     name = "bbtest_master"
