@@ -1,6 +1,6 @@
 import pytest
 
-from bluebird.quality import measure, reasons
+from bluebird.quality import reasons
 
 
 @pytest.mark.parametrize("title, body, codes", [
@@ -12,18 +12,13 @@ from bluebird.quality import measure, reasons
     ("보온병", "보온병이 불편해서 손잡이를 단다", []),                                       # 본문 11자 초과
     ("전기차 충전 터널 설계", "모바일", []),                                              # 제목 6자 이상 = 본문 짧아도 유지
     ("첨부 양식 개선", "첨부파일 이름을 자동으로 붙여 주는 기능", []),                        # 첨부 낱말이 있어도 내용 있음
+    ("1 2 3", "[사업내용] 가나 다! [기타] ab", ["short_title_body"]),                     # 글자 수 = 라벨·공백·기호 빼고 3·5
 ])
 def test_rule_reasons(title, body, codes):
-    assert reasons(measure(title, body)) == codes
+    assert reasons(title, body) == codes
 
 
-def test_flags_are_not_reasons_and_ai_label_is():
-    m = measure("세금", "씨발 세금 너무 많다 ㅋㅋㅋㅋ 국민연금 개편이 필요하다")
-    assert (m["has_profanity"], m["has_repeat"]) == (True, True)
-    assert reasons(m) == []
-    assert reasons(m, "complaint") == ["complaint"] and reasons(m, "idea") == []
-
-
-def test_lengths_skip_labels_spaces_symbols():
-    m = measure("1 2 3", "[사업내용] 가나 다! [기타] ab")
-    assert (m["title_len"], m["body_len"], m["hangul_ratio"]) == (3, 5, 0.6)
+def test_ai_label_is_reason_unless_idea_or_no_body():
+    body = "세금 너무 많다 국민연금 개편이 필요하다"
+    assert reasons("세금", body, "complaint") == ["complaint"] and reasons("세금", body, "idea") == []
+    assert reasons("세금", None, "complaint") == ["no_body"]

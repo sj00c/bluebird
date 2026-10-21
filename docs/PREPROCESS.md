@@ -1,24 +1,23 @@
 # 데이터 전처리(정제 DB) 정리
 
-- 기준일: 2026-10-14
-- 브랜치: `feat/final-architecture`
-- 코드: `pipeline/bluebird/master.py`(적재·상세 본문), `budget_detail.py`(참여예산 사이트 매칭), `refine.py`(정제), `fill.py`(LLM), `dedup.py`(전처리 사유), `programs.py`(대회·제도 분류)
+- 기준일: 2026-10-21 (정리 = `docs/SLIM_PLAN.md`)
+- 코드: `pipeline/bluebird/master.py`(적재·상세 본문), `budget_detail.py`(참여예산 사이트 매칭), `refine.py`(정제), `programs.py`(대회·제도 분류 규칙), `dedup.py`·`quality.py`(제외 사유), `extract.py`(AI 판정·가공)
 
 ## 1. 개요
 
-- 출처가 다른 공모전·시민제안 데이터 → 정제 DB 1개, 표 2개로 통합
-- 흐름: 수집 원본 그대로 `raw` 적재 → 규칙 정제 `master` → LLM 필드 채움
-- 같은 서버 DB의 `core` 스키마(앱용 원본) 변경 없음. 참고용으로만 사용
+- 출처가 다른 공모전·시민제안 데이터 → 정제 DB 1개, 데이터 표 2개(`raw` 원본 · `master` 최종)로 통합
+- 흐름: 수집 원본 그대로 `raw` 적재 → 규칙 정제 `master` → 제외 사유 → AI 판정·가공
+- `core`(앱용 원본 DB)와 무관. 읽지도 쓰지도 않음
 
 | 단계 | 명령 | 결과 |
 |---|---|---|
 | 1. 원본 적재(파일) | `bluebird master files` | `raw` |
 | 2. 원본 적재(API) | `bluebird master api` | `raw` |
 | 3. 상세 본문 수집 | `bluebird master detail` | `raw`(`<소스>.detail`). 서울 자유제안·디자인진흥원 3·과학관 아카이브 2·광주·경기·울산·유성 참여예산 |
-| 4. 규칙 정제 | `bluebird master refine` | `master` 기본 컬럼 |
-| 5. LLM 필드 | `bluebird master fill` | `master` LLM 컬럼 |
-| 6. 전처리 사유 | `bluebird master reasons` | `master.exclude_reasons`(`duplicate`·`no_body`)·`canonical_*` (`docs/DEDUP_PLAN.md`) |
-| 7. 대회·제도 분류 | `bluebird master classify` | `program` 표, `master.program_id` |
+| 4. 규칙 정제·분류 | `bluebird master refine` | `master` 기본 칸 + `kind`·`field`·`program` |
+| 5. 제외 사유 | `bluebird master reasons` | `master.exclude_reasons` (`docs/DEDUP_PLAN.md`) |
+| 6. AI 판정·가공 | `bluebird master extract` | `master.label`~`verified` |
+| 7. 제외 사유(AI 반영) | `bluebird master reasons` | `master.exclude_reasons` |
 
 ## 2. DB 위치
 
@@ -27,7 +26,7 @@
 | 서버 | `161.122.152.68:5432` (`.env` `BB_DB_URL`) |
 | DB | `parangsae` |
 | 스키마 | `public` |
-| 표 | `raw`, `master`, `exclusion_reason`(사유 뜻), `program`(대회·제도) |
+| 표 | `raw`(원본), `master`(최종), `db_log`(작업 기록) |
 | 계정 | `aix` / 비밀번호 = 담당자 전달, `.env`의 `BB_DB_URL`에만 입력 |
 | 바로 접속 | `psql -h 161.122.152.68 -p 5432 -U aix -d parangsae` |
 
@@ -44,29 +43,9 @@
 | `payload` | jsonb | 원본 필드 전체(가공 없음) |
 | `fetched` | timestamptz | 받은 시각 |
 
-### master — 정제본
+### master — 최종
 
-| 컬럼 | 형식 | 출처 | 내용 |
-|---|---|---|---|
-| `api` | text | 원본 | 수집 소스(= `raw.source`) |
-| `key` | text | 원본 | 레코드 키(= `raw.key`) |
-| `title` | text | 원본 + 정제 | 제목 |
-| `body` | text | 원본 + 정제 | 본문 |
-| `contest` | text | 원본 또는 LLM | 공모전·대회·제도명 |
-| `origin` | char(1) | 표시 | `contest` 출처. `O` 원본, `X` LLM |
-| `award` | text | 원본 | 수상 등급(원본 값 그대로). 수상 필드 없는 소스 = NULL |
-| `url` | text | 원본 | 상세·출처 링크 |
-| `year` | smallint | 원본 | 원 데이터 시기(제안·출품·수상 연도) |
-| `fetched` | timestamptz | 원본 | 받은 시각 |
-| `keyword` | text[] | LLM | 대표 키워드 2~3개 |
-| `problem` | text | LLM | 해결하려는 문제 |
-| `feature` | text | LLM | 핵심 기능·방법 |
-| `target` | text | LLM | 주 대상 |
-| `domain` | text[] | LLM | 분야(고정 11개 중 복수) |
-| `exclude_reasons` | text[] | 계산 | 전처리 사유 코드(`exclusion_reason` 표). `{}` = 해당 없음 |
-| `canonical_api`·`canonical_key` | text | 계산 | 중복일 때 대표 행(`master(api, key)` 참조) |
-
-- 키: `(api, key)` → `raw(source, key)` 참조
+칸 설명·예·자주 쓰는 SQL = `docs/MASTER.md` 3장. 키 `(api, key)` → `raw(source, key)` 참조
 
 ## 4. 수집 규모
 
@@ -117,7 +96,7 @@
 
 | 컬럼 | 규칙 |
 |---|---|
-| `contest` | 원본 행에 있을 때만(레지스트리 기본값으로 채우지 않음) → `origin = O` |
+| 대회·제도 | 원본 행 대회명(레지스트리 기본값으로 채우지 않음) → `programs.program_of` → `kind`·`field`·`program`. 원본 대회명 자체는 저장 안 함(`raw`에 있음) |
 | `award` | 소스별 수상 열 1개(`refine.AWARD`) 값 그대로, 공백만 정리. 수상자·시상금·훈격·분야 열 제외. 23개 소스, 52,956행 |
 | `url` | 행의 공식 링크, 없으면 레지스트리 출처 URL. 공식 호스트 아닌 링크 버림 |
 | `year` | 원본 연도 칸 앞 4자리. 과학관 = 회차 환산(과학전람회 1954+회, 발명품경진대회 1978+회) |
@@ -126,7 +105,7 @@
 
 - 대상: 목록·API에 본문이 없는 소스
 - 방식: 공식 상세 페이지 HTML에서 본문 영역 텍스트만 저장(페이지 전체 저장 안 함)
-- 경로: 기존 egress(허용 호스트만, 호출마다 감사 기록)
+- 경로: egress(허용 호스트만, 호출마다 기록 = 실행한 PC `.runtime/egress-YYYY-MM.jsonl`)
 - 쿠키 미사용: 서울 사이트가 세션당 약 200건 후 400 응답 → 요청마다 새 세션
 
 | 소스 | 추출 위치 | 받은 건 | 본문 있음 |
@@ -180,55 +159,24 @@
 - raw: 원본 그대로 보관(성명 포함)
 - 한계: 본문에 섞인 일반 문장 속 이름 미검출(예: "저는 김바론이라고 합니다")
 
-## 10. LLM 필드
+## 10. AI 판정·가공 (`bluebird master extract`)
 
 | 항목 | 값 |
 |---|---|
-| 모델 | OpenAI `gpt-4.1-mini` |
+| 모델 · 지시문 | OpenAI `gpt-4.1-mini` · `extract-v2` (`pipeline/bluebird/extract.py`) |
+| 대상 | 쓸 행(`exclude_reasons = '{}'`) 중 판정 전(`label` 빈칸) |
 | 호출 단위 | 같은 소스 10행 묶음 |
-| 입력 | 제목, 본문(앞 2,500자), 원본 contest, 소스 정보(소스명·주제·주관기관·대회/제도명) |
-| 경로 | egress `llm`(감사 기록) |
-| 재실행 | `keyword` 빈 행만 |
+| 입력 | 제목, 본문(앞 2,500자), 대회·제도명, 소스 정보(소스명·주제·주관기관). 본문 `[라벨]` = 목표·해결책 힌트 |
+| 출력 | `label` + (idea만) `item_type`·`goal`·`solution`·`features`·`domain`·`evidence` |
+| 검증 | `evidence`가 제목·본문에 그대로 있으면 `verified` = 참(공백 무시) |
+| 재실행 | 판정 전 행만. `refine`이 제목·본문을 바꾼 행 = AI 칸 비워져 다시 대상 |
 
-| 필드 | 규칙 | 채운 행 |
-|---|---|---:|
-| `keyword` | 한국어 명사 2~3개 | 141,827 |
-| `problem` | 근거 없으면 null. 본문 없는 행 = 항상 null(refine·fill) | 97,665 |
-| `feature` | 근거 없으면 null. 본문 없는 행 = 항상 null | 112,456 |
-| `target` | 근거 없으면 null. 본문 없는 행 = 항상 null | 111,109 |
-| `domain` | 고정 11개 중 복수, 없으면 `기타` | 141,827 |
-| `contest` | 빈 행만. 본문 속 대회명 → 소스 대회/제도명 순. 창작 금지 | 61,886 (`X`) |
-
-### 본문 유무별 채움
-
-| 구분 | 행 | problem | feature | target |
-|---|---:|---:|---:|---:|
-| 본문 있음 | 113,406 | 96,917 | 111,251 | 109,193 |
-| 본문 없음 | 28,421 | 1,168 | 2,397 | 3,080 |
-
-### contest 출처
-
-| `origin` | 의미 | 행 | 종류 |
-|---|---|---:|---:|
-| `O` | 원본 값 | 45,344 | 51 |
-| `X` | LLM 값 | 61,886 | 38 |
-| 없음 | 값 없음 | 34,597 | – |
-
-### domain 분포(복수 선택)
-
-| 분야 | 행 | 분야 | 행 |
-|---|---:|---|---:|
-| 복지 | 32,128 | 교통 | 18,655 |
-| 과학기술 | 30,978 | 교육 | 18,178 |
-| 환경 | 29,969 | 경제 | 14,670 |
-| 안전 | 29,666 | 행정 | 11,418 |
-| 기타 | 23,132 | 보건 | 10,732 |
-| 문화 | 19,227 | | |
+- 시험 298행 → 근거 확인 75%(v1, 여러 문장 이어 붙임) → 96%(v2, 한 문장 안 이어진 구절만)
+- 전체(2026-10-20): 132,122행 판정, idea 120,187 · 빈약 7,030 · 불만 4,647 · 광고·무관 158 · 욕설 100. idea 중 근거 확인 114,781(96%)
+- 결과 분포 = `docs/MASTER.md` 5장
 
 ## 11. 한계·남은 과제
 
-- 본문 없는 행 28,421: problem·feature·target 대부분 빈 값
-  - 광주·경기·울산·거제 등 참여예산: 원본에 사업명만 있음
-  - 과학관 출품작 6,567: 설명이 HWP·PDF 첨부에만 있음(학생·교사 성명 포함)
+- 본문 없는 행 8,452(`no_body`): 광주·경기·울산·거제 등 참여예산 원본에 사업명만, 과학관 출품작 설명 = HWP·PDF 첨부에만(학생·교사 성명 포함)
 - 상세 본문 웹 크롤링: 페이지 구조 바뀌면 깨짐. API·파일 대체 필요
 - 본문 속 일반 문장 이름 가림 미흡

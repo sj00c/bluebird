@@ -34,7 +34,7 @@ flowchart LR
 - 키·DB 접속 문자열 = 루트 `.env`(git 제외). 양식 = `.env.example`
 - 실행 중 생성 파일(시드 CSV, 익명화 비밀값, 콘솔 토큰) = `.runtime/`(git 제외)
 - 원본 자료(`reference/`, `data/`) = 수상자 이름 포함 → git 제외, 팀원 별도 전달
-- 외부 호출 = `pipeline/bluebird/egress.py`만. 허용 주소 목록 확인 + 호출마다 `core.egress_call` 기록. 프록시 미사용(선택: `BLUEBIRD_EGRESS_PROXY`)
+- 외부 호출 = `pipeline/bluebird/egress.py`만. 허용 주소 목록 확인 + 호출마다 기록(앱 = `core.egress_call`, 정제 DB 명령 = `.runtime/egress-YYYY-MM.jsonl`). 프록시 미사용(선택: `BLUEBIRD_EGRESS_PROXY`)
 - DB 계정 = `aix` 1개(서버 계정). 코드가 읽는 DSN(`BB_DSN`·`BB_MASTER_DSN`) 전부 = `BB_DB_URL`. 역할별 계정 없음
 - 서버 제약: `pgvector` 확장 없음, `aix` 역할 생성 불가 → `bluebird migrate --target core`(`vector` 필요, `bb_api` 역할 생성) 서버에서 아직 불가. 정제 DB 작업(`bluebird master files/refine/xlsx`) 가능
 - 콘솔 = 자체 CSP. 요청 횟수 제한 없음(시연용)
@@ -170,17 +170,17 @@ flowchart LR
 
 ### 3.5 정제 DB (서버 `parangsae`)
 
-- 위치 = 서버 `161.122.152.68:5432` DB `parangsae`, 사용자 `aix`. 접속 = `.env` `BB_DB_URL`(필수). 표 = `public` 스키마. `core`와 완전히 독립(읽지도 쓰지도 않음): 데이터 = 전부 `raw`에서, 외부 호출 정책 = 레지스트리 `export_grade`, 호출 기록 = 정제 DB `egress_call`(`Egress.for_master`)
-- 표(마이그레이션 `master/0001~0013`): `raw`·`master`·`exclusion_reason`·`program`·`quality`·`idea_fields`·`egress_call`·`db_log` + 조회용 뷰 `v_*`. 모든 표·칸 설명 = `COMMENT`(0011). 컨럼명 = 영어 한 단어
+- 위치 = 서버 `161.122.152.68:5432` DB `parangsae`, 사용자 `aix`. 접속 = `.env` `BB_DB_URL`(필수). 표 = `public` 스키마. `core`와 완전히 독립(읽지도 쓰지도 않음): 데이터 = 전부 `raw`에서, 외부 호출 정책 = 레지스트리 `export_grade`, 호출 기록 = 실행한 PC `.runtime/egress-YYYY-MM.jsonl`(`Egress.for_master`)
+- 표 3개(마이그레이션 `master/0001~0014`, 0014 = 정리 `docs/SLIM_PLAN.md`): `raw`·`master`·`db_log`, 뷰 없음. 모든 표·칸 설명 = `COMMENT`. 칸 안내 = `docs/MASTER.md`
   - `raw(source, key, payload jsonb, fetched)`: 받은 그대로. 파일 = 행(원본 헤더 → 값), API = 응답 레코드 전체
-  - `master(api, key, title, body, contest, origin, award, url, year, fetched, keyword, problem, feature, target, domain, exclude_reasons, canonical_api, canonical_key, program_id)`: 정제본. award = 원본 수상 등급 그대로(`refine.AWARD`). keyword~domain = LLM. domain = 고정 목록(CHECK). exclude_reasons = 전처리 사유(`exclusion_reason`), program_id = 대회·제도(`program`)
+  - `master(api, key, title, body, kind, field, program, award, year, url, exclude_reasons, label, item_type, goal, solution, features, domain, evidence, verified)`: 최종. 쓸 행 = `exclude_reasons = '{}' AND verified`
 - 적재: `bluebird master files`(수집해 둔 CSV·xlsx, 소스 단위 교체), `bluebird master api`(API 재수집, 1,000건마다 커밋, 국민신문고 = 일 한도 안에서 이어 받음)
-- 정제: `bluebird master refine`(`bluebird.refine`). raw → master 기본 컨럼. 소스별 추출(등록 매핑 또는 고정 추출기) + 글머리 정리(섹션 라벨 유지, 기호·깨진 문자·짝 없는 따옴표·제목 접수번호 제거, 공백 하나) + 연락처·성명 마스킹(`[전화]`·`[이메일]`·`[이름]`). contest = 원본 행 값만. 재실행 = LLM 컨럼 유지. `seoul_budget_selected` = 접수 건의 선정 정보 → master 행 없음
+- 정제: `bluebird master refine`(`bluebird.refine`). raw → master 기본 칸. 소스별 추출(등록 매핑 또는 고정 추출기) + 글머리 정리(섹션 라벨 유지, 기호·깨진 문자·짝 없는 따옴표·제목 접수번호 제거, 공백 하나) + 연락처·성명 마스킹(`[전화]`·`[이메일]`·`[이름]`) + 대회·제도 분류(`bluebird.programs`, 원본 행 대회명). 재실행 = 제목·본문 바뀐 행만 AI 칸 비움. `seoul_budget_selected` = 접수 건의 선정 정보 → master 행 없음
 - 상세 본문: `bluebird master detail`. 목록에 본문 없는 소스 = 공식 상세 페이지 본문 영역만(쿠키 없이) → raw `<소스>.detail`, refine이 본문에 붙임
   - URL이 행에 있음/계산됨: 서울 자유제안·디자인진흥원 3·과학관 아카이브 2(요약만, 학교·수상자·지도교사·첨부 제외)·광주 참여예산(제안순번 = bpSn)
   - 사이트 번호 ≠ 행 key(`budget_detail.py`): 경기(연도+사업명+시군+예산)·울산(연도+사업명+위치)·유성(목록 순서+제목) 참여예산 = 사이트 전수 → 매칭, payload `match`
-- 전처리 사유: `bluebird master reasons`(`bluebird.dedup`) = duplicate(완전 일치 3기준) + no_body. 대회·제도: `bluebird master classify`(`bluebird.programs`)
-- LLM 컨럼: `bluebird master fill`(`bluebird.fill`). 소스별 10행 묶음 1회 호출(egress llm), 소스 맥락(레지스트리 이름·주제·주관·대회/제도명) 포함. 근거 없는 problem·feature·target = null, domain = 고정 목록(없으면 기타), contest = 빈 행만. 재실행 = keyword 빈 행만
+- 제외 사유: `bluebird master reasons`(`bluebird.dedup`·`bluebird.quality`) = duplicate(완전 일치 3기준) + 본문 규칙(no_body 등) + AI 판정(`label`)
+- AI 판정·가공: `bluebird master extract`(`bluebird.extract`). 쓸 행 중 판정 전만, 소스별 10행 묶음 1회 호출(egress llm). 근거 구절(`evidence`)이 원문에 있어야 `verified`
 
 
 ### 3.7 원칙 정리

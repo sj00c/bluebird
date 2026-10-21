@@ -63,31 +63,22 @@ def main(argv: list[str] | None = None) -> int:
     x.add_argument("--dsn", default=_env("BB_MASTER_DSN"))
     x.add_argument("--only")
     x.add_argument("--workers", type=int, default=4)
-    x = mss.add_parser("fill", help="master LLM 컨럼(keyword·problem·feature·target·domain, 빈 contest)")
-    x.add_argument("--dsn", default=_env("BB_MASTER_DSN"))
-    x.add_argument("--config", type=Path, action="append", required=True, help="레지스트리 TOML, 반복")
-    x.add_argument("--only")
-    x.add_argument("--skip", action="append", default=[], help="제외 소스, 반복")
-    x.add_argument("--sample", type=int, help="소스별 N행만(시험)")
-    x.add_argument("--workers", type=int, default=8)
-    x = mss.add_parser("extract", help="AI 판정(quality.idea_label) + 가공 아이디어(idea_fields). 쓸 행 중 판정 전만. 다음 = reasons")
+    x = mss.add_parser("extract", help="AI 판정 + 가공(master label·item_type·goal·solution·features·domain·evidence·verified). "
+                                         "쓸 행 중 판정 전만. 다음 = reasons")
     x.add_argument("--dsn", default=_env("BB_MASTER_DSN"))
     x.add_argument("--config", type=Path, action="append", required=True, help="레지스트리 TOML, 반복")
     x.add_argument("--only")
     x.add_argument("--sample", type=int, help="소스별 N행만(시험)")
     x.add_argument("--workers", type=int, default=8)
-    x = mss.add_parser("refine", help="raw → master 정제(글머리 정리·마스킹, LLM 컨럼 유지)")
+    x = mss.add_parser("refine", help="raw → master 정제(글머리 정리·마스킹·대회·제도 분류). 제목·본문 바뀐 행 = AI 칸 비움")
     x.add_argument("--dsn", default=_env("BB_MASTER_DSN"))
     x.add_argument("--config", type=Path, action="append", required=True, help="레지스트리 TOML, 반복")
     x.add_argument("--only")
     x = mss.add_parser("xlsx", help="master 표 전체 → 엑셀 1파일(시트 master, 필드 = docs/MASTER.md)")
     x.add_argument("--dsn", default=_env("BB_MASTER_DSN"))
     x.add_argument("--out", type=Path, required=True)
-    x = mss.add_parser("reasons", help="전처리 사유(중복·품질)·대표 행·quality 측정값, 행 삭제 없음. refine 다음, 매번 전체 재계산")
+    x = mss.add_parser("reasons", help="제외 사유(중복·본문 규칙·AI 판정) 재계산, 행 삭제 없음. refine·extract 다음")
     x.add_argument("--dsn", default=_env("BB_MASTER_DSN"))
-    x = mss.add_parser("classify", help="대회·제도 분류(program, master.program_id). 매번 전체 재계산")
-    x.add_argument("--dsn", default=_env("BB_MASTER_DSN"))
-    x.add_argument("--config", type=Path, action="append", required=True, help="레지스트리 TOML, 반복")
     x = mss.add_parser("log", help="DB 작업 기록(db_log). --note 없으면 최근 기록 보기. master 명령·migrate는 자동 기록. "
                                      "적는 방식 = docs/MASTER.md 6장(= DB 주석 COMMENT ON TABLE db_log)")
     x.add_argument("--dsn", default=_env("BB_MASTER_DSN"))
@@ -232,7 +223,7 @@ def main(argv: list[str] | None = None) -> int:
                     print(" | ".join("" if v is None else str(v) for v in row))
             return 0
         if a.master_cmd == "detail":
-            with Egress.for_master(a.dsn, cookies=False) as eg:
+            with Egress.for_master(cookies=False) as eg:
                 results = master.load_detail(dsn=a.dsn, egress=eg, only=a.only, workers=a.workers)
             for result in results:
                 print(funnel.dumps(result))
@@ -248,30 +239,20 @@ def main(argv: list[str] | None = None) -> int:
             print(funnel.dumps(result))
             dblog.write(dsn=a.dsn, action="reasons", note=_log_note(a, result))
             return 0
-        if a.master_cmd == "classify":
-            from . import programs
-
-            result = programs.classify(dsn=a.dsn, sources=master.registry(a.config))
-            print(funnel.dumps(result))
-            dblog.write(dsn=a.dsn, action="classify", note=_log_note(a, result))
-            return 0
         sources = master.registry(a.config)
+        prefix = ""
         if a.master_cmd == "files":
             dirs = a.dir or [p for p in ((_p("BB_SIGNAL_DIR") / "contests") if _p("BB_SIGNAL_DIR") else None,
                                          _p("BB_SEED_DIR")) if p]
             if not dirs:
                 ap.error("missing --dir")
             results = master.load_files(dsn=a.dsn, sources=sources, dirs=dirs, only=a.only)
-        elif a.master_cmd == "fill":
-            from . import fill
-
-            with Egress.for_master(a.dsn, sources, timeout=180.0) as eg:
-                results = fill.fill(dsn=a.dsn, egress=eg, sources=sources, only=a.only, skip=a.skip,
-                                    sample=a.sample, workers=a.workers)
         elif a.master_cmd == "extract":
-            from . import extract
+            from . import extract, llm
 
-            with Egress.for_master(a.dsn, sources, timeout=180.0) as eg:
+            p = llm.provider()
+            prefix = f"extract {extract.PROMPT_VERSION} {p.model if p else '-'} "
+            with Egress.for_master(sources, timeout=180.0) as eg:
                 results = extract.extract(dsn=a.dsn, egress=eg, sources=sources, only=a.only, sample=a.sample,
                                           workers=a.workers)
         elif a.master_cmd == "refine":
@@ -279,15 +260,14 @@ def main(argv: list[str] | None = None) -> int:
 
             results = refine.refine(dsn=a.dsn, sources=sources, only=a.only)
         else:
-            with Egress.for_master(a.dsn, sources) as eg:
+            with Egress.for_master(sources) as eg:
                 results = master.load_api(dsn=a.dsn, egress=eg, sources=sources, only=a.only,
                                           acrc_budget=a.acrc_budget)
         for result in results:
             print(funnel.dumps(result))
-        # db_log 작업 목록(0009)에 extract 없음 → LLM 단계 = fill로 기록, 내용 앞에 명령 이름
-        action = "fill" if a.master_cmd == "extract" else a.master_cmd
-        note = ("extract " if a.master_cmd == "extract" else "") + _log_note(a, results)
-        dblog.write(dsn=a.dsn, action=action, note=note)
+        # db_log 작업 목록(0009)에 extract 없음 → LLM 단계 = fill로 기록, 내용 앞에 명령·지시문 버전·모델
+        dblog.write(dsn=a.dsn, action="fill" if a.master_cmd == "extract" else a.master_cmd,
+                    note=prefix + _log_note(a, results))
         return 1 if any(r["status"] != "ok" for r in results) else 0
     elif a.cmd == "ingest":
         if a.config is None and _p("BB_SOURCES"):

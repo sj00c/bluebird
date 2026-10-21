@@ -673,8 +673,8 @@ def test_export_xlsx_marks_share_from_source_flag(fresh, tmp_path):
     assert by_source["s"][hdr.index("canonical_id")] is None                                   # 묶음 없음 = 빈 값
 
 
-def test_master_db_every_table_column_view_has_provenance_comment():
-    """정제 DB 표·칸·조회용 뷰 전부 설명(COMMENT) 있음, 형식 '[출처] …'. 새 칸 추가 시 설명 빠지면 실패."""
+def test_master_db_is_three_tables_all_with_provenance_comment():
+    """정제 DB = raw·master·db_log(+ migrations.applied)만, 뷰 없음. 표·칸 전부 설명(COMMENT) '[출처] …'."""
     name = "bbtest_comments"
     with psycopg.connect(DSN, autocommit=True) as c:
         c.execute(f"DROP DATABASE IF EXISTS {name} WITH (FORCE)")
@@ -689,56 +689,72 @@ def test_master_db_every_table_column_view_has_provenance_comment():
                              FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
                              JOIN pg_attribute a ON a.attrelid = c.oid AND a.attnum > 0 AND NOT a.attisdropped
                             WHERE n.nspname IN ('public', 'migrations') AND c.relkind = 'r'""").fetchall()
-    assert {r for r, _ in rel} >= {"public.master", "public.raw", "public.quality", "public.v_usable"}
+    assert {r for r, _ in rel} == {"public.master", "public.raw", "public.db_log", "migrations.applied"}
     missing = [n for n, d in rel + col if not (d and d.startswith("["))]
     assert missing == []
 
 
-def test_master_egress_records_in_master_db_without_core():
-    """정제 DB 명령 외부 호출 = core 없이 정제 DB egress_call에 기록. 정책 = 레지스트리 export_grade."""
-    import httpx
-
-    from bluebird.egress import Egress, EgressBlocked
-
-    name = "bbtest_egress"
+def _master_db(name: str) -> str:
     with psycopg.connect(DSN, autocommit=True) as c:
         c.execute(f"DROP DATABASE IF EXISTS {name} WITH (FORCE)")
         c.execute(f"CREATE DATABASE {name}")
     dsn = DSN.rsplit("/", 1)[0] + f"/{name}"
     db.migrate(dsn, "master")
-    transport = httpx.MockTransport(lambda r: httpx.Response(200, text="ok"))
-    sources = [{"id": "a", "export_grade": "pending"}, {"id": "d", "export_grade": "deny"}]
-    with Egress.for_master(dsn, sources, transport=transport) as eg:
-        assert eg.get("collect", "https://www.science.go.kr/x", fields={"title": ("a", "제목")}).status == 200
-        with pytest.raises(EgressBlocked):
-            eg.get("collect", "https://www.science.go.kr/x", fields={"title": ("d", "제목")})
-        with pytest.raises(EgressBlocked):
-            eg.get("collect", "https://www.science.go.kr/x", fields={"person_name": ("a", "홍길동")})
+    return dsn
+
+
+def test_refine_classifies_and_clears_ai_only_when_text_changes():
+    """refine: 원본 대회명 → kind·field·program. 제목·본문 그대로면 AI 칸 유지, 바뀌면 비움. reasons = AI 판정 사유."""
+    from psycopg.types.json import Jsonb
+
+    from bluebird import dedup, refine
+
+    dsn = _master_db("bbtest_refine")
+    spec = {"id": "kipris_idea_api", "url": "https://plus.kipris.or.kr/x", "record_kind": "contest_award"}
+    raw = {"ideaName": "접이식 우산 건조대", "ideaContent": "젖은 우산을 접어서 말린다", "contestName": "제40회 전국과학전람회",
+           "contestYear": "1994"}
     with psycopg.connect(dsn) as c:
-        rows = c.execute("SELECT decision, source_ids, http_status FROM egress_call ORDER BY id").fetchall()
-    assert rows == [("allowed", ["a"], 200), ("blocked", ["d"], None), ("blocked", ["a"], None)]
+        c.execute("INSERT INTO raw (source, key, payload, fetched) VALUES ('kipris_idea_api', '1', %s, now())",
+                  (Jsonb(raw),))
+    refine.refine(dsn=dsn, sources=[spec])
+    ai = "label = 'idea', item_type = 'product', goal = 'g', solution = 's', features = '{}', domain = '{생활}', verified = true"
+    with psycopg.connect(dsn) as c:
+        assert c.execute("SELECT kind, field, program, year FROM master").fetchone() == (
+            "공모전", "과학·발명", "전국과학전람회", 1994)
+        c.execute(f"UPDATE master SET {ai}")
+    refine.refine(dsn=dsn, sources=[spec])                                    # 같은 글 = 판정 유지
+    with psycopg.connect(dsn) as c:
+        assert c.execute("SELECT label, goal FROM master").fetchone() == ("idea", "g")
+        c.execute("UPDATE raw SET payload = payload || '{\"ideaContent\": \"젖은 우산을 바람으로 말린다\"}'")
+    refine.refine(dsn=dsn, sources=[spec])                                    # 본문 바뀜 = 다시 판정 대상
+    with psycopg.connect(dsn) as c:
+        assert c.execute("SELECT label, item_type, domain, verified FROM master").fetchone() == (None, None, None, None)
+        c.execute("UPDATE master SET label = 'complaint'")
+    dedup.mark(dsn=dsn)
+    with psycopg.connect(dsn) as c:
+        assert c.execute("SELECT exclude_reasons FROM master").fetchone()[0] == ["complaint"]
 
 
 def test_provenance_groups_by_platform_and_contest(tmp_path):
     """DATA.md: 수집처·대회·제도별 행 = master 중복 제외 실제 건수. KIPRIS = 행의 대회명으로 나눔."""
-    name = "bbtest_master"
-    with psycopg.connect(DSN, autocommit=True) as c:
-        c.execute(f"DROP DATABASE IF EXISTS {name} WITH (FORCE)")
-        c.execute(f"CREATE DATABASE {name}")
-    dsn = DSN.rsplit("/", 1)[0] + f"/{name}"
-    db.migrate(dsn, "master")
+    from bluebird.programs import program_of
+
+    dsn = _master_db("bbtest_master")
     with psycopg.connect(dsn) as c:
         c.execute("INSERT INTO raw (source, key, payload, fetched) VALUES"
                   " ('kipris_idea_api','1','{}','2026-10-14'), ('kipris_idea_api','2','{}','2026-10-14'),"
                   " ('kipris_idea_api','3','{}','2026-10-14'), ('seoul_budget_proposals','1','{}','2026-10-12'),"
                   " ('seoul_budget_proposals.detail','1','{}','2026-10-12'), ('seoul_budget_selected','1','{}','2026-10-12')")
-        c.execute("INSERT INTO master (api, key, title, body, contest, origin, url, year, fetched, award) VALUES"
-                  " ('kipris_idea_api','1','가','본문','제69회 전국과학전람회','O','u',2020,now(),'대상'),"
-                  " ('kipris_idea_api','2','가','본문','전국과학전람회','O','u',2021,now(),'대상'),"
-                  " ('kipris_idea_api','3','나',NULL,'2015 대한민국학생발명전시회','O','u',2015,now(),NULL),"
-                  " ('seoul_budget_proposals','1','다','본문',NULL,NULL,'u',2019,now(),NULL)")
-        c.execute("UPDATE master SET exclude_reasons = '{duplicate}', canonical_api = 'kipris_idea_api',"
-                  " canonical_key = '1' WHERE key = '2'")
+        rows = [("kipris_idea_api", "1", "가", "본문", "제69회 전국과학전람회", 2020, "대상"),
+                ("kipris_idea_api", "2", "가", "본문", "전국과학전람회", 2021, "대상"),
+                ("kipris_idea_api", "3", "나", None, "2015 대한민국학생발명전시회", 2015, None),
+                ("seoul_budget_proposals", "1", "다", "본문", None, 2019, None)]
+        kinds = {"kipris_idea_api": "contest_award", "seoul_budget_proposals": "public_proposal"}
+        c.cursor().executemany(
+            "INSERT INTO master (api, key, title, body, kind, field, program, url, year, award)"
+            " VALUES (%s,%s,%s,%s,%s,%s,%s,'u',%s,%s)",
+            [(a, k, t, b, *program_of(a, kinds[a], contest), y, w) for a, k, t, b, contest, y, w in rows])
+        c.execute("UPDATE master SET exclude_reasons = '{duplicate}' WHERE key = '2'")
     reg = tmp_path / "r.toml"
     entry = ('[[source]]\nid = "{id}"\nadapter = "awards_csv"\nfile = "x.csv"\nname = "{id}"\nlicense = "x"\n'
              'layer = 1\npublic_ok = true\nrecord_kind = "{kind}"\ntopic = "t"\nshare = true\ncollector = "{col}"\n'
@@ -747,10 +763,7 @@ def test_provenance_groups_by_platform_and_contest(tmp_path):
                                 url="https://plus.kipris.or.kr/x")
                    + entry.format(id="seoul_budget_proposals", kind="public_proposal", col="seoul_budget",
                                   url="https://data.seoul.go.kr/x"), encoding="utf-8")
-    from bluebird import master, programs
 
-    assert programs.classify(dsn=dsn, sources=master.registry([reg])) == {
-        "status": "ok", "rows": 4, "programs": 3, "removed_programs": 0, "unclassified_rows": 0}
     out = tmp_path / "DATA.md"
     assert export.provenance(dsn=dsn, configs=[reg], out=out) == {"path": str(out), "platforms": 2, "programs": 3,
                                                                   "rows": 3}

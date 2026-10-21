@@ -1,10 +1,10 @@
-"""master 중복 표시(행 삭제 없음). 규칙 = docs/DEDUP_PLAN.md, 사유 뜻 = exclusion_reason.
+"""master 중복 표시(행 삭제 없음). 규칙 = docs/DEDUP_PLAN.md, 사유 뜻 = master.exclude_reasons 칸 설명.
 
 - 같은 글: 제목+본문 완전 일치(공백 제거). 대구 참여예산 제외(본문 = 정형 문구) → 먼저 낸 것이 대표
 - 같은 장소: 제목+지번 완전 일치 → 나중 것이 대표
-- 같은 출품작(한 작품이 여러 출처에 실림): 대회명+제목(6자 이상)+수상 등급 일치, 연도 차 1 이내, 소스 다름
-  → 본문 긴 것 → 수상 있음 → 이른 연도
-- 순서 같은 글 → 같은 장소 → 같은 출품작. 뒤 단계는 앞 단계 대표끼리. 모든 중복 행은 최종 대표를 가리킴
+- 같은 출품작(한 작품이 여러 출처에 실림): 공모전 행만, 대회·제도명(master.program)+제목(6자 이상)+수상 등급 일치,
+  연도 차 1 이내, 소스 다름 → 본문 긴 것 → 수상 있음 → 이른 연도
+- 순서 같은 글 → 같은 장소 → 같은 출품작. 뒤 단계는 앞 단계 대표끼리
 """
 
 from __future__ import annotations
@@ -123,9 +123,9 @@ def plan(rows: Iterable[dict]) -> dict[Key, tuple[Key, str]]:
 
 
 def mark(*, dsn: str) -> dict:
-    """exclude_reasons 재계산: duplicate(위 규칙, canonical = 최종 대표) + 품질 사유(quality.refresh)."""
+    """exclude_reasons 재계산: duplicate(위 규칙) + 품질·AI 사유(quality.refresh)."""
     cases = lambda m: " ".join("WHEN %s THEN r.payload->>%s" for _ in m)
-    sql = (f"SELECT m.api, m.key, m.title, m.body, m.contest, m.year, m.award,"
+    sql = (f"SELECT m.api, m.key, m.title, m.body, CASE WHEN m.kind = '공모전' THEN m.program END, m.year, m.award,"
            f" CASE m.api {cases(DATE)} END, CASE m.api {cases(LOT)} END"
            " FROM master m JOIN raw r ON r.source = m.api AND r.key = m.key")
     params = [x for pair in (*DATE.items(), *LOT.items()) for x in pair]
@@ -133,16 +133,13 @@ def mark(*, dsn: str) -> dict:
     with db.connect(dsn) as conn:
         result = plan(dict(zip(cols, row, strict=True)) for row in conn.execute(sql, params))
         with conn.cursor() as cur:
-            cur.execute("UPDATE master SET exclude_reasons = array_remove(exclude_reasons, 'duplicate'),"
-                        " canonical_api = NULL, canonical_key = NULL"
-                        " WHERE 'duplicate' = ANY(exclude_reasons) OR canonical_api IS NOT NULL")
-            cur.execute("CREATE TEMP TABLE dup (api text, key text, capi text, ckey text,"
-                        " PRIMARY KEY (api, key)) ON COMMIT DROP")
+            cur.execute("UPDATE master SET exclude_reasons = array_remove(exclude_reasons, 'duplicate')"
+                        " WHERE 'duplicate' = ANY(exclude_reasons)")
+            cur.execute("CREATE TEMP TABLE dup (api text, key text, PRIMARY KEY (api, key)) ON COMMIT DROP")
             with cur.copy("COPY dup FROM STDIN") as cp:
-                for (api, key), ((capi, ckey), _rule) in result.items():
-                    cp.write_row((api, key, capi, ckey))
-            cur.execute("UPDATE master m SET exclude_reasons = m.exclude_reasons || '{duplicate}',"
-                        " canonical_api = d.capi, canonical_key = d.ckey"
+                for api, key in result:
+                    cp.write_row((api, key))
+            cur.execute("UPDATE master m SET exclude_reasons = m.exclude_reasons || '{duplicate}'"
                         " FROM dup d WHERE m.api = d.api AND m.key = d.key")
             quality_counts = quality.refresh(cur)
         conn.commit()

@@ -49,29 +49,20 @@ SELECT s.id, s.name, s.license, s.url, s.record_kind, s.exclude_reason,
 """
 
 
-MASTER_COLS = ("api", "key", "title", "body", "contest", "origin", "award", "url", "year", "fetched",
-               "keyword", "problem", "feature", "target", "domain", "exclude_reasons", "canonical_api", "canonical_key",
-               "kind", "field", "program", "title_len", "body_len", "flags", "idea_label")
+MASTER_COLS = ("api", "key", "title", "body", "kind", "field", "program", "award", "year", "url", "exclude_reasons",
+               "label", "item_type", "goal", "solution", "features", "domain", "evidence", "verified")
 
-# 목록(keyword·domain·exclude_reasons) = 쉼표 이음, fetched = KST 분 단위, kind·field·program = program 표,
-# title_len~idea_label = quality 표(flags = 표시만 하는 의심 칸 중 참인 것)
+# master 칸 순서 그대로. 목록(exclude_reasons·features·domain) = 쉼표 이음
 MASTER_SQL = """
-SELECT m.api, m.key, m.title, m.body, m.contest, m.origin, m.award, m.url, m.year,
-       to_char(m.fetched AT TIME ZONE 'Asia/Seoul', 'YYYY-MM-DD HH24:MI'),
-       array_to_string(m.keyword, ', '), m.problem, m.feature, m.target, array_to_string(m.domain, ', '),
-       array_to_string(m.exclude_reasons, ', '), m.canonical_api, m.canonical_key, p.kind, p.field, p.name,
-       q.title_len, q.body_len,
-       concat_ws(', ', CASE WHEN q.has_profanity THEN 'profanity' END, CASE WHEN q.has_repeat THEN 'repeat' END,
-                 CASE WHEN q.hangul_ratio < 0.3 THEN 'low_hangul' END),
-       q.idea_label
-  FROM master m LEFT JOIN program p ON p.id = m.program_id LEFT JOIN quality q USING (api, key)
- ORDER BY m.api, m.year NULLS LAST, m.key
+SELECT api, key, title, body, kind, field, program, award, year, url, array_to_string(exclude_reasons, ', '),
+       label, item_type, goal, solution, array_to_string(features, ', '), array_to_string(domain, ', '), evidence, verified
+  FROM master
+ ORDER BY api, year NULLS LAST, key
 """
 
-MASTER_WIDTHS = {"api": 24, "key": 18, "title": 40, "body": 60, "contest": 28, "origin": 7, "award": 12, "url": 30,
-                 "year": 7, "fetched": 17, "keyword": 24, "problem": 40, "feature": 40, "target": 16,
-                 "domain": 16, "exclude_reasons": 14, "canonical_api": 24, "canonical_key": 18,
-                 "kind": 10, "field": 14, "program": 28, "title_len": 8, "body_len": 8, "flags": 14, "idea_label": 10}
+MASTER_WIDTHS = {"api": 24, "key": 18, "title": 40, "body": 60, "kind": 10, "field": 14, "program": 28, "award": 12,
+                 "year": 7, "url": 30, "exclude_reasons": 14, "label": 10, "item_type": 10, "goal": 40, "solution": 40,
+                 "features": 30, "domain": 14, "evidence": 30, "verified": 8}
 XLSX_CELL_MAX = 32767  # 엑셀 칸 글자 수 한도
 
 
@@ -237,11 +228,10 @@ PLATFORM = {"www.data.go.kr": "공공데이터포털", "data.seoul.go.kr": "서�
 METHOD = {None: "파일", "data_go_csv": "파일", "science_archive": "크롤링", "kidp_awards": "크롤링"}   # 그 외 = API
 
 MASTER_GROUP_SQL = """
-SELECT m.api, p.kind, p.field, p.name, count(*) FILTER (WHERE u), count(*) FILTER (WHERE u AND coalesce(body, '') <> ''),
+SELECT api, kind, field, program, count(*) FILTER (WHERE u), count(*) FILTER (WHERE u AND coalesce(body, '') <> ''),
        count(*) FILTER (WHERE u AND award IS NOT NULL), min(year) FILTER (WHERE u), max(year) FILTER (WHERE u),
        count(*)
   FROM (SELECT *, NOT 'duplicate' = ANY(exclude_reasons) AS u FROM master) m
-  LEFT JOIN program p ON p.id = m.program_id
  GROUP BY 1, 2, 3, 4
 """
 
@@ -256,7 +246,7 @@ def _pick(f, a, b):
 
 
 def provenance(*, dsn: str, configs: list[Path], out: Path) -> dict:
-    """docs/DATA.md — 수집처 → 종류·분야 → 대회·제도별 행 수(중복 제외). 분류 = master.program_id(master classify)."""
+    """docs/DATA.md — 수집처 → 종류·분야 → 대회·제도별 행 수(중복 제외). 분류 = master.kind·field·program(refine)."""
     specs = {}
     for cfg in configs:
         for s in load_sources(cfg, Path("/nonexistent")):
@@ -341,7 +331,7 @@ def provenance(*, dsn: str, configs: list[Path], out: Path) -> dict:
         md += ["", "## 원본만(정제 0행)", ""] + [f"- `{s}` {n:,}행" for s, n in raw_only]
     md += ["", "## 조회", "",
            "- PostgreSQL `161.122.152.68:5432` · DB `parangsae` · 사용자 `aix`",
-           "- 표: `master`(정제) · `raw`(원본) · `exclusion_reason`(전처리 사유 뜻)", "",
-           "```sql", "SELECT * FROM master WHERE NOT 'duplicate' = ANY(exclude_reasons);", "```", ""]
+           "- 표: `master`(최종) · `raw`(원본) · `db_log`(작업 기록). 칸 설명 = DB 주석, 안내 = `docs/MASTER.md`", "",
+           "```sql", "SELECT * FROM master WHERE exclude_reasons = '{}' AND verified;   -- 쓸 행", "```", ""]
     out.write_text("\n".join(md), encoding="utf-8")
     return {"path": str(out), "platforms": len(platforms), "programs": len(prog), "rows": uniq}

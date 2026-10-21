@@ -61,6 +61,23 @@ def test_explicit_policy_rule_allows_pending_title_for_trace_only():
         assert eg.get("trace", "https://plus.kipris.or.kr/x", fields={"title": ("kipris", "제목")}).status == 200
 
 
+def test_master_egress_policy_from_registry_and_log_file(tmp_path):
+    """정제 DB 명령: 정책 = 레지스트리 export_grade, 기록 = 파일 1줄/호출(허용·차단 모두, 보낸 값 원문 없음)."""
+    sources = [{"id": "a", "export_grade": "pending"}, {"id": "d", "export_grade": "deny"}]
+    with Egress.for_master(sources, log_dir=tmp_path, proxy="", transport=httpx.MockTransport(_ok)) as eg:
+        assert eg.get("collect", "https://www.science.go.kr/x", fields={"title": ("a", "제목값")}).status == 200
+        with pytest.raises(EgressBlocked):
+            eg.get("collect", "https://www.science.go.kr/x", fields={"title": ("d", "제목값")})
+        with pytest.raises(EgressBlocked):
+            eg.get("collect", "https://www.science.go.kr/x", fields={"person_name": ("a", "홍길동")})
+    [log] = tmp_path.glob("egress-*.jsonl")
+    text = log.read_text(encoding="utf-8")
+    lines = [json.loads(x) for x in text.splitlines()]
+    assert [(x["decision"], x["source_ids"], x["http_status"]) for x in lines] == [
+        ("allowed", ["a"], 200), ("blocked", ["d"], None), ("blocked", ["a"], None)]
+    assert "제목값" not in text and "홍길동" not in text
+
+
 def test_host_outside_allowlist_blocked():
     rec = Rec()
     with _eg(_ok, rec) as eg, pytest.raises(EgressBlocked, match="allowlist"):

@@ -1,141 +1,134 @@
-# master 표 안내(공유용)
+# 정제 DB 안내 (`parangsae`)
 
-- 기준일: 2026-10-15 (상세 본문 수집 2026-10-15)
-- 파일: `master-<날짜>.xlsx` (시트 `master`, 141,827행 × 21열 = DB `master` 칸 + 대회·제도 이름 3칸)
-- DB 접속: PostgreSQL `161.122.152.68:5432` · DB `parangsae` · 사용자 `aix` · 접속 문자열 = `.env` `BB_DB_URL` · 표 `public.master`(정제본), `public.raw`(받은 그대로)
-- 만들기: `bluebird master xlsx --out .runtime/export/master-<날짜>.xlsx` (모든 칸 = 텍스트·숫자, 수식 없음)
-- 원본 DB: `parangsae` → `public.master`
-- 전처리 상세: `docs/PREPROCESS.md`
+- 기준일: 2026-10-21
+- 접속: PostgreSQL `161.122.152.68:5432` · DB `parangsae` · 사용자 `aix` · 접속 문자열 = `.env` `BB_DB_URL`
+- 엑셀: `bluebird master xlsx --out <파일>` → 시트 `master` 1개, 141,827행 × 19열(= DB `master` 칸 그대로)
+- 정리 경위: `docs/SLIM_PLAN.md` (표 8개 + 뷰 5개 → 표 3개, 마이그레이션 `master/0014`)
 
-## 1. 한눈에 보기
+## 1. 구조
 
-- 공모전 출품작·시민제안 71개 소스 → 표 1개로 통합
-- 1행 = 아이디어(제안·출품작) 1건
-- 원본 필드(제목·본문 등) + LLM 생성 필드(키워드·문제·기능·대상·분야)
+```
+parangsae                 데이터베이스
+├ public                  스키마(표를 묶는 폴더). 기본
+│ ├ master                표: 최종. 1행 = 아이디어 1건       ← 이것만 보면 됨
+│ ├ raw                   표: 받은 원본 그대로(master의 근거)
+│ └ db_log                표: 누가·어디서·무슨 DB 작업을 했는지(추가만)
+└ migrations              스키마
+  └ applied               표: 적용된 구조 변경 목록(프로그램이 씀)
+```
 
-| 구분 | 값 |
-|---|---:|
-| 전체 행 | 141,827 |
-| 소스 | 71 |
-| 본문 있음 | 133,384 (94%) |
-| 연도 범위 | 1957 ~ 2026 |
+- 표 = 데이터가 행으로 저장되는 곳. 칸(열) = 표의 세로줄
+- 뷰 = 이름 붙여 저장한 조회문(데이터 없음). 지금은 없음
+- 모든 표·칸에 설명(COMMENT): `[출처] 설명. 만든 곳: 명령(파일)`. DBeaver = 표·칸 선택 → 속성, psql = `\d+ master`. 덤프에 같이 실림
+  - 출처: `[원본]` 받은 값 · `[정제]` 규칙으로 다듬은 값 · `[계산]` 규칙으로 계산 · `[AI판정]`·`[LLM]` AI가 만든 값 · `[기록]` 작업 기록
 
-## 2. 필드 설명
+## 2. 자주 쓰는 SQL
 
-| 필드 | 이름 | 출처 | 형식 | 설명 | 예 |
-|---|---|---|---|---|---|
-| `api` | 수집 소스 | 원본 | 텍스트 | 데이터 출처 id | `seoul_budget_proposals` |
-| `key` | 원본 키 | 원본 | 텍스트 | 소스 안 레코드 번호. `api` + `key` = 행 고유값 | `1AB-2501-0000064` |
-| `title` | 제목 | 원본(정제) | 텍스트 | 아이디어 제목. 글머리·접수번호 제거 | 교차로 통행 개선 |
-| `body` | 본문 | 원본(정제) | 텍스트 | 아이디어 내용. 섹션 라벨 `[제안취지]` 등 유지, 줄바꿈 → 공백 | [제안내용] 현 1차로는 … |
-| `contest` | 공모전명 | 원본 또는 LLM | 텍스트 | 공모전·대회·제도명. 빈 값 있음 | 전국과학전람회 |
-| `origin` | 공모전명 출처 | 표시 | `O` / `X` | `O` 원본 값, `X` LLM 값, 빈칸 = 공모전명 없음 | O |
-| `award` | 수상 등급 | 원본 | 텍스트 | 원본 행의 수상 필드 값 그대로(23개 소스). 등급외·선정·기타 등 원본 표기 유지. 수상 필드 없는 소스 = 빈칸 | 장려상 |
-| `url` | 링크 | 원본 | URL | 상세 페이지 또는 데이터 출처 페이지 | https://www.data.go.kr/… |
-| `year` | 연도 | 원본 | 숫자 | 제안·출품·수상 연도(수집 시점 아님) | 2025 |
-| `fetched` | 수집 시각 | 원본 | 날짜시각 | 우리가 데이터를 받은 시각(KST) | 2026-10-14 15:39 |
-| `keyword` | 키워드 | LLM | 쉼표 목록 | 대표 키워드 2~3개 | 교통, 교차로, 좌회전 |
-| `problem` | 문제 | LLM | 텍스트 | 해결하려는 문제 한 문장. 근거 없으면 빈칸 | 좌회전 차로가 1개뿐이라 … |
-| `feature` | 기능·방법 | LLM | 텍스트 | 제안의 핵심 기능·방법 한 문장. 근거 없으면 빈칸 | 2차선까지 좌회전 동시 신호 … |
-| `target` | 대상 | LLM | 텍스트 | 주 수혜·사용 대상. 근거 없으면 빈칸 | 운전자 |
-| `domain` | 분야 | LLM | 쉼표 목록 | 고정 11개 중 1개 이상 | 교통, 안전 |
-| `exclude_reasons` | 전처리 사유 | 계산 | 코드 목록 | 전처리에서 걸린 사유(`exclusion_reason` 표, 아래 목록). 빈 목록 = 해당 없음. 행 삭제 없음 | duplicate |
-| `canonical_api` · `canonical_key` | 대표 행 | 계산 | 텍스트 | 중복일 때 대표 행의 `api`·`key`. 규칙 = `docs/DEDUP_PLAN.md` | kipris_idea_api · h:360c… |
-| `program_id` (엑셀: `kind`·`field`·`program`) | 대회·제도 | 계산 | `program` 표 | 종류(공모전·시민 제안·직원 제안) · 분야 · 대회·제도 이름. 규칙 = `pipeline/bluebird/programs.py` | 공모전 · 과학·발명 · 전국과학전람회 |
+```sql
+-- 쓸 행(제외 사유 없음 + AI 근거 확인): 114,781행
+SELECT * FROM master WHERE exclude_reasons = '{}' AND verified;
 
-- `domain` 값: 행정, 복지, 교통, 환경, 경제, 교육, 안전, 문화, 보건, 과학기술, 기타
-- LLM: OpenAI `gpt-4.1-mini`, 입력 = 제목·본문(앞 2,500자)·소스 정보
+-- 유형별: product(발명·제품) · research(탐구) · policy(정책·시민 제안)
+SELECT * FROM master WHERE exclude_reasons = '{}' AND verified AND item_type = 'research';
+
+-- 제외 사유별 행 수
+SELECT r, count(*) FROM master, unnest(exclude_reasons) r GROUP BY 1 ORDER BY 2 DESC;
+
+-- 원본 보기(행별 원본 대회명 등)
+SELECT m.title, r.payload FROM master m JOIN raw r ON r.source = m.api AND r.key = m.key LIMIT 10;
+```
+
+## 3. `master` 칸
+
+| 칸 | 뜻 | 출처 | 예 |
+|---|---|---|---|
+| `api` | 수집 소스 id | 원본 | `seoul_budget_proposals` |
+| `key` | 소스 안 레코드 번호. `api` + `key` = 행 고유값 | 원본 | `1AB-2501-0000064` |
+| `title` | 제목. 글머리·접수번호 제거, 연락처·이름 가림 | 정제 | 우리 모두 함께해요!!! |
+| `body` | 본문. 섹션 라벨 `[제안취지]` 등 유지, 상세 페이지 본문 이어 붙임 | 정제 | [제안내용] 현 1차로는 … |
+| `kind` | 종류: 공모전 · 시민 제안 · 직원 제안 | 계산 | 시민 제안 |
+| `field` | 분야(과학·발명, 주민참여예산 등) | 계산 | 주민참여예산 |
+| `program` | 대회·제도명 86개. 과학·발명 4개 소스 = 원본 행 대회명(회차·연도 제거) | 계산 | 서울시 시민참여예산 |
+| `award` | 수상 등급. 원본 표기 그대로(23개 소스), 없으면 빈칸 | 원본 | 장려상 |
+| `year` | 제안·출품·수상 연도(수집 시점 아님) | 원본 | 2025 |
+| `url` | 상세 페이지, 없으면 데이터 출처 페이지 | 원본 | https://www.data.go.kr/… |
+| `exclude_reasons` | 제외 사유 코드(4장). 빈 값 = 쓸 행. 행은 지우지 않음 | 계산 | `{duplicate}` |
+| `label` | AI 판정: `idea` · `idea_thin`(빈약) · `complaint`(불만뿐) · `abusive`(욕설 중심) · `off_topic`(광고·무의미). 빈칸 = 판정 안 함(이미 제외된 행) | AI판정 | idea |
+| `item_type` | 유형: `product`(발명·제품·디자인·서비스) · `research`(탐구) · `policy`(정책·시민 제안) | LLM | policy |
+| `goal` | 목표 한 문장. 탐구 = 알아내려는 것 | LLM | 지역 복지 네트워크를 다져 구민 복지 증진 |
+| `solution` | 해결책 한 문장. 탐구 = 탐구 방법과 알아낸 결과 | LLM | 동대문구 시범 후 25개 자치구로 확대 |
+| `features` | 핵심 기능 0~3개. 탐구 = 만든 장치·앱 있을 때만 | LLM | 민·관 협력, 협의체 운영 |
+| `domain` | 분야 1~2개: 행정·복지·교통·환경·경제·교육·안전·문화·보건·과학기술·생활·기타 | LLM | 복지, 행정 |
+| `evidence` | 해결책의 근거 원문 구절(그대로 복사) | LLM | 동대문구를 시범지역으로 … |
+| `verified` | `evidence`가 제목·본문에 실제로 있음(공백 무시). 거짓 = 지어낸 값 의심 | 계산 | true |
+
+- `item_type`~`verified` = `label`이 `idea`인 행에만(DB가 강제)
+- AI: OpenAI `gpt-4.1-mini`, 지시문 `extract-v2`(`pipeline/bluebird/extract.py`), 입력 = 제목·본문 앞 2,500자·소스 정보·대회명
 - 개인정보: 전화 → `[전화]`, 이메일 → `[이메일]`, 지정 성명·팀명 → `[이름]`
-- 중복 제외 조회: `WHERE NOT 'duplicate' = ANY(exclude_reasons)` (1,671행 제외 → 140,156행). 사유 없는 행 = `exclude_reasons = '{}'` (132,122행)
 
-### 전처리 사유 코드 (중복 제외 행 기준 건수)
+## 4. 제외 사유 코드
 
 | 코드 | 조건 | 행 |
 |---|---|---:|
-| `duplicate` | 같은 글·같은 장소·같은 출품작의 대표 아닌 행 (`docs/DEDUP_PLAN.md`) | 1,671(전체) |
-| `no_body` | 본문 내용 0자 (비었거나 `[라벨]`·공백·기호뿐) | 7,859 |
+| `duplicate` | 같은 글(제목+본문 일치) · 같은 장소(대구, 제목+지번) · 같은 출품작(공모전, 대회·제도명+제목+수상 등급, 연도 ±1, 출처 다름)의 대표 아닌 행. `docs/DEDUP_PLAN.md` | 1,672 |
+| `no_body` | 본문 내용 0자(비었거나 `[라벨]`·공백·기호뿐) | 8,452 |
 | `attachment_only` | 본문 = 첨부·별첨·붙임 참조 문구뿐 | 75 |
 | `title_repeat` | 본문 = 제목 반복뿐 | 70 |
-| `short_title_body` | 제목 내용 5자 이하 **and** 본문 내용 10자 이하 | 31 |
-| `idea_thin` · `complaint` · `abusive` · `off_topic` | AI 판정(`quality.idea_label`): 빈약 · 불만뿐 · 욕설 중심 · 광고·무의미 | 판정 전 |
+| `short_title_body` | 제목 내용 5자 이하 **and** 본문 내용 10자 이하 | 32 |
+| `idea_thin` | AI: 아이디어는 있으나 목표·방법을 뽑기에 너무 짧음 | 7,030 |
+| `complaint` | AI: 제안 없이 불만·항의만 | 4,647 |
+| `off_topic` | AI: 광고·홍보·의미 없는 글 | 158 |
+| `abusive` | AI: 욕설·비방 중심 | 100 |
 
-- 내용 글자 수 = `[라벨]`·공백·기호를 뺀 글자 수
+- 한 행에 여러 사유 가능. 내용 글자 수 = `[라벨]`·공백·기호를 뺀 글자 수
+- 쓸 행 114,781 = 사유 없음 120,187 중 근거 확인(`verified`)된 행. 근거 확인 안 된 5,406행 = 쓸 행에서 빠짐
 
-### `quality` 표 (master 1행 = 1행, `bluebird master reasons`가 매번 재계산)
+## 5. 현황
 
-| 칸 | 뜻 | 제외 조건 |
-|---|---|---|
-| `title_len` · `body_len` | 제목·본문 내용 글자 수 | `short_title_body`·`no_body`에 사용 |
-| `attachment_only` · `title_repeat` | 위 사유와 같음 | 예 |
-| `hangul_ratio` | 본문 내용 중 한글 비율 | 아니오(표시만) |
-| `has_profanity` · `has_repeat` | 욕설 단어 · ㅋㅋㅋㅋ/!!!! 반복 | 아니오(표시만: 단어 규칙 오탐 많음 → AI 판정 참고용) |
-| `idea_label` · `idea_reason` · `idea_model` · `idea_at` | AI 판정 결과(재계산 때 유지) | `idea` 아니면 그 값이 사유 |
-
-- 엑셀: `title_len`·`body_len`·`flags`(profanity·repeat·low_hangul)·`idea_label`
-
-### DB 안 설명·조회용 뷰 (`master/0011`)
-
-- 모든 표·칸에 `COMMENT` = `[출처] 설명. 만든 곳: 명령(파일)`. 출처: `[원본]` · `[정제]` · `[LLM]` · `[계산]` · `[AI판정]` · `[기록]` · `[기준표]`. DBeaver 속성·`\d+`에서 보임, 덤프에 같이 실림
-- 조회용 뷰(저장된 쿼리, 데이터 아님): `v_usable`(쓸 행) · `v_reason_counts`(사유별 건수) · `v_excluded`(제외 행 + 근거 칸) · `v_flagged`(쓸 행 중 의심 표시)
-- 설명 빠진 표·칸 = 테스트 실패(`test_master_db_every_table_column_view_has_provenance_comment`)
-
-### 가공 아이디어 `idea_fields` (`master/0012`, `bluebird master extract`)
-
-- 대상: 쓸 행(`exclude_reasons = '{}'`) 중 AI 판정 전. LLM 1회 호출 = 판정(`quality.idea_label`) + 가공. 다음에 `master reasons` → 판정이 `idea` 아닌 행 = 제외 사유
-- 칸: `item_type`(product 발명·제품·디자인·서비스 / research 탐구 / policy 정책·시민 제안) · `goal` · `solution` · `features`(0~3) · `domain`(1~2: 기존 11개 + `생활`) · `evidence`(근거 원문 구절) · `verified`
-- 탐구형: goal = 알아내려는 것, solution = 탐구 방법과 결과, features = 만든 장치·앱 있을 때만
-- `verified` = evidence가 제목·본문에 실제로 있음(공백 무시). 거짓 = 지어낸 값 의심 → `v_ideas`에서 빠짐
-- 최종 사용: `SELECT * FROM v_ideas;` (유형으로 거르기: `WHERE item_type IN (...)`)
-- 옛 LLM 칸(`master.problem`·`feature`·`domain` 등)은 비교용으로 남김
-
-## 3. 필드별 채움 현황
-
-| 필드 | 채워진 행 | 비율 |
+| 구분 | 전체 | 쓸 행 |
 |---|---:|---:|
-| `title` | 141,827 | 100% |
-| `body` | 133,384 | 94% |
-| `contest` | 107,230 | 76% |
-| `award` | 52,956 | 37% |
-| `url` | 141,827 | 100% |
-| `year` | 141,390 | 99.7% |
-| `keyword` | 141,827 | 100% |
-| `problem` | 97,665 | 69% |
-| `feature` | 112,456 | 79% |
-| `target` | 111,109 | 78% |
-| `domain` | 141,827 | 100% |
+| 시민 제안 | 86,051 | 68,780 |
+| 공모전 | 55,552 | 45,933 |
+| 직원 제안 | 224 | 68 |
+| **합계** | **141,827** | **114,781** |
 
-## 4. 주요 소스
+| 유형(쓸 행) | 행 |
+|---|---:|
+| policy | 67,324 |
+| product | 30,664 |
+| research | 16,793 |
 
-| 소스 | 내용 | 행 | 본문 있음 |
-|---|---|---:|---:|
-| `kipris_idea_api` | KIPRIS 학생 발명·과학 아이디어 | 38,563 | 38,563 |
-| `seoul_budget_proposals` | 서울 시민참여예산 제안 | 28,811 | 28,811 |
-| `seoul_free_suggestions` | 상상대로 서울 자유제안 | 20,138 | 20,137 |
-| `acrc_open_proposals` | 국민신문고 공개제안 | 8,996 | 8,519 |
-| `daegu_budget_project_proposals` | 대구 주민참여예산 제안 | 7,706 | 7,704 |
-| `gwangju_budget_proposals` | 광주 주민참여예산 | 5,986 | 5,986 |
-| `gyeonggi_budget_proposals` | 경기 주민참여예산 | 4,135 | 4,126 |
-| `science_invention_archive_2015_onward` | 학생과학발명품경진대회 출품작 | 3,300 | 3,296 |
-| `science_exhibition_archive_2015_onward` | 전국과학전람회 출품작 | 3,267 | 3,266 |
-| `ulsan_budget_proposals` | 울산 주민참여예산 | 3,046 | 2,734 |
-| 나머지 61개 | 지자체 참여예산·공공기관 공모전 등 | 17,879 | – |
+| 분야(쓸 행, 1행 최대 2개) | 행 |
+|---|---:|
+| 생활 | 41,051 |
+| 과학기술 | 24,605 |
+| 안전 | 23,230 |
+| 복지 | 21,189 |
+| 환경 | 18,660 |
+| 행정 | 15,416 |
+| 문화 | 14,604 |
+| 교육 | 14,307 |
+| 교통 | 12,549 |
+| 경제 | 8,400 |
+| 보건 | 7,992 |
+| 기타 | 840 |
 
-## 5. 문제점과 계획
+- 소스 71개, 연도 1957~2026, 본문 있음 133,384행(94%). 소스·대회별 건수 = `docs/DATA.md`
 
-| # | 문제 | 현황 | 계획 | 상태 |
-|---|---|---|---|---|
-| 1 | 공모전명 빈 값 | 34,597행(24%) 빈칸. 원본·소스 정보 모두 대회명 없음. 대부분 시민제안·참여예산(국민신문고 8,535, 대구 7,706, 광주 5,913, 울산 3,026) | 당분간 유지. `origin`으로 원본·LLM 구분 | 보류 |
-| 2 | 중복 | 완전 일치 3기준(제목+본문 · 제목+지번 · 같은 출품작) → 1,671행 `duplicate` 표시. 상세 `docs/DEDUP_PLAN.md` | 본문 일부 수정·제목만 바꾼 재제출 = 2단계(표본 표시 대기) | 1단계 완료 |
-| 3 | 본문 없음 | 원본 사이트 상세 크롤링으로 19,978행 확보. 남은 7,850행(중복 제외) = `no_body` 표시 | 남은 소스 = 원본에 공개 본문 없음(창업경진 예선 1,938·거제 1,199·KAIA 550·세종 448·제주 440 등). 국민신문고 477 = API 키 필요 | 1단계 완료 |
-| 4 | 국민신문고 성격 | 제안 외 민원·항의 글 섞임 | 소스 전체 제외 검토 | 보류 |
-| 5 | LLM 결과 품질 | 새 본문 19,329행이 제목만 보고 채운 값. 본문 2,500자 초과 2,713행 앞부분만 반영 | 대상 34,461행 재생성(`docs/PREPROCESS_PLAN.md` 4장) | API 키 대기 |
-| 6 | 연도 없음 | 431행(중복 제외). 전남 우수제안·6차산업 247행 채움 | 남은 소스 = 원본에 날짜 칸 없음 | 완료 |
-| 7 | 웹 크롤링 의존 | 상세 페이지 수집 소스: 서울 자유제안·디자인진흥원 3·과학관 아카이브 2·광주·경기·울산·유성 참여예산. 페이지 구조 바뀌면 깨짐 | API·파일 대체 수단 확인 | 보류 |
-| 8 | 본문 속 이름 | 일반 문장 속 이름 미가림 | 추가 가림 안 함. 필요 시 LLM으로 처리 | 보류 |
+## 6. 만드는 순서
 
-- 짧은 제목(5자 이하 3,406행): 제외하지 않음("우유병"처럼 의미 있는 경우 있음)
+| 단계 | 명령 | 바뀌는 곳 |
+|---|---|---|
+| 원본 받기 | `bluebird master files` · `api` · `detail` | `raw` |
+| 정제·분류 | `bluebird master refine` | `master` 기본 칸 + `kind`·`field`·`program`. 제목·본문이 바뀐 행 = AI 칸 비움 |
+| 제외 사유 | `bluebird master reasons` | `exclude_reasons` |
+| AI 판정·가공 | `bluebird master extract` (쓸 행 중 판정 전만) | `label`~`verified` |
+| 제외 사유(AI 반영) | `bluebird master reasons` | `exclude_reasons` |
 
-## 6. DB 작업 기록(`db_log`)
+- 외부 호출(크롤링·AI) 기록 = 실행한 PC의 `.runtime/egress-YYYY-MM.jsonl`(git 제외, DB 아님). 보낸 값 원문 없음(칸 이름·sha256만)
+- 남은 문제: 국민신문고 상세 본문 477행(API 키 필요), 재제출 중복 2단계(사람 표시 대기), 본문 속 일반 이름 미가림
+
+## 7. DB 작업 기록(`db_log`)
 
 DB를 쓰는 쪽끼리(로컬·서버, git 공유 여부 무관) 무엇을 했는지 확인하는 표. 덤프에 같이 실려 간다. **추가만**(수정·삭제·TRUNCATE = DB가 거부). 같은 규칙이 DB 주석(`COMMENT ON TABLE db_log`)에도 있어 git 없는 쪽도 본다.
 
@@ -143,7 +136,7 @@ DB를 쓰는 쪽끼리(로컬·서버, git 공유 여부 무관) 무엇을 했�
 |---|---|---|
 | `at` | 작업 시각 | 기본 = 기록 시각. 지난 일을 나중에 적을 때만 지정 + note에 `(시각 추정: <근거>)` |
 | `place` | 어디서 | 소문자·숫자·`-_` (`local`, `server`). 기계마다 고정 = `.env` `BB_LOG_PLACE` |
-| `action` | 작업 | `dump` · `restore` · `drop` · `note` = 직접. `migrate` · `files` · `api` · `detail` · `refine` · `fill` · `reasons` · `classify` = 자동 |
+| `action` | 작업 | `dump` · `restore` · `drop` · `note` = 직접. `migrate` · `files` · `api` · `detail` · `refine` · `reasons` · `fill`(= `extract`, note 앞에 `extract <지시문 버전> <모델>`) = 자동 |
 | `note` | 내용 | 아래 형식, 한 줄, 빈 값 불가 |
 | `master` · `raw` | 기록 시점 행 수 | 자동 |
 | `file` · `sha256` | 덤프 파일 | `dump` = 파일 이름 필수(sha256 비움). `restore` = 둘 다 필수 |

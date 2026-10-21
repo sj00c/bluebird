@@ -3,9 +3,9 @@
 - 소스별 추출: title·body·contest·url·year. 등록 매핑([source.columns]) 소스 = 매핑 그대로, 나머지 = 아래 고정 추출기
 - 글머리 정리: 섹션 라벨([제안취지] 등) 유지. 글머리 기호·깨진 문자(사설 영역)·줄 앞뒤 짝 없는 따옴표·제목 앞 접수번호 제거, 공백 하나로
 - 개인정보: 전화·이메일·'제안자 홍길동' 고정 치환, 매핑된 성명·팀명 → [이름]
-- contest = 원본 행에 있을 때만(레지스트리 기본값으로 채우지 않음)
+- contest = 원본 행에 있을 때만(레지스트리 기본값으로 채우지 않음). master에는 저장 안 함 → kind·field·program 계산에만(programs.py)
 - url = 행 URL, 없으면 레지스트리 출처 URL
-- 재실행: 기본 컬럼만 갱신(LLM 컬럼 유지), raw에서 빠진 행 삭제
+- 재실행: 기본 칸만 갱신, raw에서 빠진 행 삭제. 제목·본문이 바뀐 행 = AI 칸(label~verified) 비움 → 다음 extract가 다시 판정
 """
 
 from __future__ import annotations
@@ -15,7 +15,7 @@ import re
 from collections.abc import Callable
 from urllib.parse import urlsplit
 
-from . import db
+from . import db, programs
 from .anonymize import MASK, mask_contacts, mask_team
 from .collect_kipris import LINK_HOSTS
 from .collect_proposals import _ACRC_SECTIONS, _SEOUL_SECTIONS
@@ -316,6 +316,10 @@ def extractor(spec: dict) -> Extract:
     raise ValueError(f"source {spec['id']}: no extractor")
 
 
+AI_COLS = ("label", "item_type", "goal", "solution", "features", "domain", "evidence", "verified")
+_TEXT_CHANGED = "master.title IS DISTINCT FROM EXCLUDED.title OR master.body IS DISTINCT FROM EXCLUDED.body"
+
+
 def refine(*, dsn: str, sources: list[dict], only: str | None = None) -> list[dict]:
     specs = {s["id"]: s for s in sources}
     results = []
@@ -328,10 +332,11 @@ def refine(*, dsn: str, sources: list[dict], only: str | None = None) -> list[di
                 results.append({"source": source, "status": "error", "error": "not in registry"})
                 continue
             extract = extractor(specs[source])
+            kind = specs[source].get("record_kind")
             rows, dropped = [], 0
             # 상세 페이지 본문(master.load_detail) = 목록 본문 뒤에 이어 붙임
-            for key, payload, fetched, detail in conn.execute(
-                    "SELECT r.key, r.payload, r.fetched, d.payload->>'body' FROM raw r"
+            for key, payload, detail in conn.execute(
+                    "SELECT r.key, r.payload, d.payload->>'body' FROM raw r"
                     " LEFT JOIN raw d ON d.source = r.source || '.detail' AND d.key = r.key"
                     " WHERE r.source = %s", (source,)):
                 f = extract(payload)
@@ -341,21 +346,20 @@ def refine(*, dsn: str, sources: list[dict], only: str | None = None) -> list[di
                 if extra := _mask(clean(detail)):
                     body = " ".join(x for x in (f["body"], extra) if x)
                     f["body"] = body if body != f["title"] else None
-                rows.append((source, key, f["title"], f["body"], f["contest"], f["contest"], award(source, payload),
-                             f["url"], f["year"], fetched))
+                rows.append((source, key, f["title"], f["body"], *programs.program_of(source, kind, f["contest"]),
+                             award(source, payload), f["url"], f["year"]))
             with conn.cursor() as cur:
                 cur.executemany(
-                    # contest: 원본 값 있으면 O, 없으면 LLM 값(X) 유지
-                    "INSERT INTO master (api, key, title, body, contest, origin, award, url, year, fetched)"
-                    " VALUES (%s, %s, %s, %s, %s, CASE WHEN %s::text IS NOT NULL THEN 'O' END, %s, %s, %s, %s)"
+                    "INSERT INTO master (api, key, title, body, kind, field, program, award, url, year)"
+                    " VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)"
                     " ON CONFLICT (api, key) DO UPDATE SET title = EXCLUDED.title, body = EXCLUDED.body,"
-                    " contest = coalesce(EXCLUDED.contest, CASE WHEN master.origin = 'X' THEN master.contest END),"
-                    " origin = CASE WHEN EXCLUDED.contest IS NOT NULL THEN 'O' WHEN master.origin = 'X' THEN 'X' END,"
-                    " award = EXCLUDED.award, url = EXCLUDED.url, year = EXCLUDED.year, fetched = EXCLUDED.fetched,"
-                    # 본문 없는 행 = 근거 없음 → LLM 문제·기능·대상 비움
-                    " problem = CASE WHEN EXCLUDED.body IS NULL THEN NULL ELSE master.problem END,"
-                    " feature = CASE WHEN EXCLUDED.body IS NULL THEN NULL ELSE master.feature END,"
-                    " target = CASE WHEN EXCLUDED.body IS NULL THEN NULL ELSE master.target END",
+                    " kind = EXCLUDED.kind, field = EXCLUDED.field, program = EXCLUDED.program,"
+                    " award = EXCLUDED.award, url = EXCLUDED.url, year = EXCLUDED.year, "
+                    + ", ".join(f"{c} = CASE WHEN {_TEXT_CHANGED} THEN NULL ELSE master.{c} END" for c in AI_COLS)
+                    # 안 바뀐 행 = 쓰지 않음(전체 재기록 = 큰 WAL)
+                    + " WHERE (master.title, master.body, master.kind, master.field, master.program, master.award,"
+                    " master.url, master.year) IS DISTINCT FROM (EXCLUDED.title, EXCLUDED.body, EXCLUDED.kind,"
+                    " EXCLUDED.field, EXCLUDED.program, EXCLUDED.award, EXCLUDED.url, EXCLUDED.year)",
                     rows)
                 cur.execute("CREATE TEMP TABLE IF NOT EXISTS keep (key text PRIMARY KEY) ON COMMIT DELETE ROWS")
                 cur.executemany("INSERT INTO keep VALUES (%s)", [(r[1],) for r in rows])
@@ -363,5 +367,5 @@ def refine(*, dsn: str, sources: list[dict], only: str | None = None) -> list[di
                                       " (SELECT 1 FROM keep k WHERE k.key = m.key)", (source,)).rowcount
             conn.commit()
             results.append({"source": source, "status": "ok", "rows": len(rows), "dropped": dropped,
-                            "removed": removed})
+                            "removed": removed, "unclassified": sum(programs.UNCLASSIFIED in r[4:6] for r in rows)})
     return results

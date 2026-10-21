@@ -1,15 +1,13 @@
-"""대회·제도 분류: master 행 → program(종류 · 분야 · 대회·제도). master.program_id = 결과. 매번 전체 재계산.
+"""대회·제도 분류 규칙: 행 → (종류, 분야, 대회·제도). master.kind·field·program = refine이 이 규칙으로 채움.
 
 - 종류 = 레지스트리 record_kind(공모전·시민 제안·직원 제안)
-- 분야·대회·제도 = PROGRAM(소스 단위). BY_CONTEST 소스 = 행의 대회명(회차·연도·공백 제거)으로 나눔, 비면 PROGRAM 이름
+- 분야·대회·제도 = PROGRAM(소스 단위). BY_CONTEST 소스 = 원본 행 대회명(회차·연도·공백 제거)으로 나눔, 비면 PROGRAM 이름
 - 매핑 없는 소스 = 분야 '미분류', 이름 = 소스 id
 """
 
 from __future__ import annotations
 
 import re
-
-from . import db
 
 KIND = {"contest_award": "공모전", "contest_submission": "공모전", "public_proposal": "시민 제안",
         "improvement_proposal": "직원 제안"}
@@ -101,25 +99,3 @@ def program_of(api: str, record_kind: str | None, contest: str | None) -> tuple[
         name = c
     return KIND.get(record_kind, UNCLASSIFIED), field, name
 
-
-def classify(*, dsn: str, sources: list[dict]) -> dict:
-    kinds = {s["id"]: s.get("record_kind") for s in sources}
-    with db.connect(dsn) as conn:
-        rows = [(api, key, program_of(api, kinds.get(api), contest))
-                for api, key, contest in conn.execute("SELECT api, key, contest FROM master")]
-        with conn.cursor() as cur:
-            cur.executemany("INSERT INTO program (kind, field, name) VALUES (%s, %s, %s) ON CONFLICT DO NOTHING",
-                            sorted({p for _a, _k, p in rows}))
-            ids = {(k, f, n): i for i, k, f, n in cur.execute("SELECT id, kind, field, name FROM program")}
-            cur.execute("CREATE TEMP TABLE pgm (api text, key text, pid int, PRIMARY KEY (api, key)) ON COMMIT DROP")
-            with cur.copy("COPY pgm FROM STDIN") as cp:
-                for api, key, p in rows:
-                    cp.write_row((api, key, ids[p]))
-            cur.execute("UPDATE master m SET program_id = p.pid FROM pgm p"
-                        " WHERE m.api = p.api AND m.key = p.key AND m.program_id IS DISTINCT FROM p.pid")
-            removed = cur.execute("DELETE FROM program p WHERE NOT EXISTS"
-                                  " (SELECT 1 FROM master m WHERE m.program_id = p.id)").rowcount
-        conn.commit()
-    used = {p for _a, _k, p in rows}
-    return {"status": "ok", "rows": len(rows), "programs": len(used), "removed_programs": removed,
-            "unclassified_rows": sum(UNCLASSIFIED in p[:2] for _a, _k, p in rows)}

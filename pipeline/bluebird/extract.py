@@ -1,10 +1,10 @@
-"""아이디어 판정 + 가공(LLM 1회): quality.idea_label + idea_fields(목표·해결책·핵심기능·도메인).
+"""아이디어 판정 + 가공(LLM 1회) → master.label + item_type·goal·solution·features·domain·evidence·verified.
 
-- 대상: 쓸 행(exclude_reasons = '{}') 중 판정 전(quality.idea_label NULL)
-- 소스 단위 10행 묶음 1회 호출. 내용 = egress fields(반출 검사·감사), 지시문 = 코드 고정
+- 대상: 쓸 행(exclude_reasons = '{}') 중 판정 전(label NULL)
+- 소스 단위 10행 묶음 1회 호출. 내용 = egress fields(반출 검사·기록), 지시문 = 코드 고정
 - 본문 [라벨]은 힌트(목표 쪽·해결책 쪽)로만. 출력은 쓸 수 있게 다시 쓴 문장
 - 검증: evidence가 제목·본문에 그대로 있어야 verified. idea 아닌 행 = 판정만 저장
-- 다음 단계: bluebird master reasons (idea_label → exclude_reasons)
+- 다음 단계: bluebird master reasons (label → exclude_reasons)
 """
 
 from __future__ import annotations
@@ -54,11 +54,12 @@ def _text(value) -> str | None:
     return " ".join(value.split()) or None if isinstance(value, str) else None
 
 
-def parse(items: list[dict], rows: list[tuple], model: str) -> tuple[list[tuple], list[tuple]]:
-    """응답 → (quality 판정 행, idea_fields 행). 형식 어긋난 항목 = 버림(다음 실행에서 다시)."""
+def parse(items: list[dict], rows: list[tuple]) -> list[tuple]:
+    """응답 → master UPDATE 값(label, item_type, goal, solution, features, domain, evidence, verified, api, key).
+    형식 어긋난 항목 = 버림(다음 실행에서 다시)."""
     by_id = {str(i.get("id")): i for i in items if isinstance(i, dict)}
-    labels, fields = [], []
-    for n, (api, key, title, body, _contest) in enumerate(rows):
+    out = []
+    for n, (api, key, title, body, _program) in enumerate(rows):
         item = by_id.get(str(n))
         label, kind = (item or {}).get("label"), (item or {}).get("type")
         kind = PRODUCT_WORDS.get(kind, kind)
@@ -66,17 +67,17 @@ def parse(items: list[dict], rows: list[tuple], model: str) -> tuple[list[tuple]
             label, kind = "idea", label
         if label not in LABELS:
             continue
-        if label == "idea" and kind not in TYPES:
-            continue   # 유형 없는 idea = 형식 오류 → 다음 실행에서 다시
-        labels.append((label, model, api, key))
         if label != "idea":
+            out.append((label, None, None, None, None, None, None, None, api, key))
             continue
+        if kind not in TYPES:
+            continue   # 유형 없는 idea = 형식 오류 → 다음 실행에서 다시
         domain = [d for d in dict.fromkeys(item.get("domain") or []) if d in DOMAINS][:2] or ["기타"]
         evidence = _text(item.get("evidence"))
-        fields.append((api, key, kind, _text(item.get("goal")), _text(item.get("solution")),
-                       [f for f in (_text(x) for x in item.get("features") or []) if f][:3], domain, evidence,
-                       bool(evidence) and _norm(evidence) in _norm(f"{title} {body}"), model, PROMPT_VERSION))
-    return labels, fields
+        out.append((label, kind, _text(item.get("goal")), _text(item.get("solution")),
+                    [f for f in (_text(x) for x in item.get("features") or []) if f][:3], domain, evidence,
+                    bool(evidence) and _norm(evidence) in _norm(f"{title} {body}"), api, key))
+    return out
 
 
 def _context(spec: dict) -> str:
@@ -112,12 +113,10 @@ def extract(*, dsn: str, egress: Egress, sources: list[dict], only: str | None =
     specs = {s["id"]: s for s in sources}
     with db.connect(dsn) as conn:
         todo = conn.execute(
-            "SELECT api, key, title, body, contest FROM ("
-            " SELECT m.api, m.key, m.title, m.body, coalesce(pg.name, m.contest) contest,"
-            "  row_number() OVER (PARTITION BY m.api ORDER BY md5(m.key)) rn"
-            " FROM master m JOIN quality q USING (api, key) LEFT JOIN program pg ON pg.id = m.program_id"
-            " WHERE m.exclude_reasons = '{}' AND q.idea_label IS NULL"
-            " AND (%(only)s::text IS NULL OR m.api = %(only)s)) t"
+            "SELECT api, key, title, body, program FROM ("
+            " SELECT api, key, title, body, program, row_number() OVER (PARTITION BY api ORDER BY md5(key)) rn"
+            " FROM master WHERE exclude_reasons = '{}' AND label IS NULL"
+            " AND (%(only)s::text IS NULL OR api = %(only)s)) t"
             " WHERE %(sample)s::int IS NULL OR rn <= %(sample)s ORDER BY api, rn",
             {"only": only, "sample": sample}).fetchall()
     jobs: list[tuple[str, list[tuple]]] = []
@@ -129,25 +128,19 @@ def extract(*, dsn: str, egress: Egress, sources: list[dict], only: str | None =
 
     def run(job):
         source, rows = job
-        return parse(_call(egress, p, source, specs.get(source, {}), rows), rows, p.model)
+        return parse(_call(egress, p, source, specs.get(source, {}), rows), rows)
 
     done: dict[str, dict[str, int]] = {}
     with db.connect(dsn) as conn, ThreadPoolExecutor(workers) as pool:
-        for n, ((source, _rows), (labels, fields)) in enumerate(zip(jobs, pool.map(run, jobs), strict=True), 1):
-            with conn.cursor() as cur:
-                cur.executemany("INSERT INTO idea_fields (api, key, item_type, goal, solution, features, domain,"
-                                " evidence, verified, model, prompt_version) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)"
-                                " ON CONFLICT (api, key) DO UPDATE SET item_type = EXCLUDED.item_type,"
-                                " goal = EXCLUDED.goal, solution = EXCLUDED.solution, features = EXCLUDED.features,"
-                                " domain = EXCLUDED.domain, evidence = EXCLUDED.evidence, verified = EXCLUDED.verified,"
-                                " model = EXCLUDED.model, prompt_version = EXCLUDED.prompt_version, at = now()", fields)
-                cur.executemany("UPDATE quality SET idea_label = %s, idea_model = %s, idea_at = now()"
-                                " WHERE api = %s AND key = %s", labels)
+        for n, ((source, rows), parsed) in enumerate(zip(jobs, pool.map(run, jobs), strict=True), 1):
+            conn.cursor().executemany(
+                "UPDATE master SET label = %s, item_type = %s, goal = %s, solution = %s, features = %s, domain = %s,"
+                " evidence = %s, verified = %s WHERE api = %s AND key = %s", parsed)
             stat = done.setdefault(source, {"rows": 0, "judged": 0, "idea": 0, "verified": 0})
-            stat["rows"] += len(_rows)
-            stat["judged"] += len(labels)
-            stat["idea"] += len(fields)
-            stat["verified"] += sum(f[8] for f in fields)
+            stat["rows"] += len(rows)
+            stat["judged"] += len(parsed)
+            stat["idea"] += sum(r[0] == "idea" for r in parsed)
+            stat["verified"] += sum(bool(r[7]) for r in parsed)
             if n % 20 == 0:
                 conn.commit()
         conn.commit()

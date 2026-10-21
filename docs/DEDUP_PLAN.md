@@ -8,30 +8,28 @@
 |---|---|---|---:|
 | 같은 글 | 제목 + 본문 완전 일치(공백만 제거). 대구 참여예산 제외 | 먼저 낸 것 | 337 |
 | 같은 장소 | 제목 + 지번 완전 일치 | 나중 것 | 75 |
-| 같은 출품작 | 대회명 + 제목 + 수상 등급 일치, 연도 차 1년 이내, 출처 다름 (한 작품이 여러 출처에 실린 것) | 본문 긴 것 | 1,149 |
-| 합계 | | | 1,561 |
+| 같은 출품작 | 공모전 행만. 대회·제도명(`master.program`) + 제목(6자 이상) + 수상 등급 일치, 연도 차 1년 이내, 출처 다름 (한 작품이 여러 출처에 실린 것) | 본문 긴 것 | 1,150 |
+| 합계 | | | 1,672 (2026-10-21) |
 
 - 제목 정규화 = 글자·숫자만 소문자, 대회명 = 회차·연도·공백 제거
+- 대회명 = `program`(2026-10-21부터, 옛 `contest` 칸 삭제). 옛 AI가 채운 대회명 대신 정리된 이름 → 결과 1,149 → 1,150(과학관 아카이브 대회명 없던 1행 추가). 시민 제안은 제외(대구 제안·선정 목록 199행이 묶이는 것 방지)
 - 지번 = 원본 `사업 지번주소`(현재 대구 참여예산만 있음). 대구는 본문이 정형 문구 → 같은 글 대신 같은 장소로 판단
 - 먼저/나중 = 원본 날짜 칸(서울 `WRITE_DT`·`REG_DATE`·`RDATE`, 국민신문고 `regDate`, KIPRIS `openingDate`, 세종 `등록일시`, 울산 `등록일`), 없으면 `year`. 동률 = `api` → `key`
-- 순서: 같은 글 → 같은 장소 → 같은 출품작. 뒤 단계는 앞 단계 대표끼리. 중복 행은 최종 대표를 가리킴
+- 순서: 같은 글 → 같은 장소 → 같은 출품작. 뒤 단계는 앞 단계 대표끼리
 
 ## 2. 저장 (PostgreSQL)
 
 | 객체 | 내용 |
 |---|---|
-| `master.exclude_reasons` | text[]. 전처리 사유 코드. `{}` = 해당 없음 |
-| `master.canonical_api` · `canonical_key` | 중복일 때 대표 행. `master(api, key)` 참조 |
-| `exclusion_reason` | 사유 코드 뜻·규칙 (`duplicate`) |
+| `master.exclude_reasons` | text[]. 사유 코드(뜻 = 칸 설명). `duplicate` = 대표 아닌 행 |
 
-- 행 삭제 없음. 계산 = `bluebird master reasons` (refine 다음, 매번 전체 재계산. `no_body` 사유도 같이 계산)
-- 마이그레이션 `master/0004_exclusion.sql`·`0005`·`0007`, 코드 `pipeline/bluebird/dedup.py`
+- 행 삭제 없음. 계산 = `bluebird master reasons` (refine·extract 다음, 매번 전체 재계산. 본문 규칙·AI 판정 사유도 같이)
+- 대표 행을 가리키던 `canonical_api`·`canonical_key`·`exclusion_reason` 표 = 0014에서 삭제(`docs/SLIM_PLAN.md`)
+- 코드 `pipeline/bluebird/dedup.py`
 
 ```sql
-SELECT * FROM master WHERE exclude_reasons = '{}';                  -- 전처리 통과
+SELECT * FROM master WHERE exclude_reasons = '{}';                  -- 사유 없음
 SELECT * FROM master WHERE NOT 'duplicate' = ANY(exclude_reasons);  -- 중복만 제외
-SELECT m.title, c.title AS 대표 FROM master m
-  JOIN master c ON (c.api, c.key) = (m.canonical_api, m.canonical_key);
 ```
 
 ## 3. 검증 결과

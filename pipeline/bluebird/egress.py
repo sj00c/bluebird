@@ -3,25 +3,31 @@
 - HTTP 클라이언트: 이 모듈 단일 소유(trust_env=False, 프록시 = BLUEBIRD_EGRESS_PROXY 지정 시만). 타 모듈 직접 네트워크 금지. urllib.parse 등 순수 URL 처리는 외부 호출 아님
 - 요청 본문: 이 모듈이 생성. 호출자 = "소스·필드" 전달 → 반출 정책(source.export_grade + core.export_policy) 검사 → 직렬화. LLM도 SDK 없이 REST
 - 전송 본문 sha256: 요청 훅에서 재계산, 사전값 불일치 시 차단
-- 허용·차단 모두 core.egress_call 1행
+- 허용·차단 모두 기록 1건: 앱 = core.egress_call 1행, 정제 DB 명령 = 실행한 PC의 .runtime/egress-YYYY-MM.jsonl 1줄
 - fields = 아이디어·원천 내용(반출 검사 대상) / params = 페이지·날짜·키 등 비내용(기록만). params에 아이디어 내용 금지
 """
 
 from __future__ import annotations
 
+import dataclasses
 import hashlib
 import http.cookiejar
 import json
 import os
 import ssl
+import threading
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
+from datetime import UTC, datetime
 from io import BytesIO
+from pathlib import Path
 from urllib.parse import urlsplit
 
 import httpx
 
 from . import db
+
+RUNTIME_DIR = Path(__file__).resolve().parents[2] / ".runtime"   # git 제외(실행 중 생성물)
 
 PURPOSES = ("collect", "signal", "trace", "llm", "source_check")
 
@@ -119,11 +125,11 @@ class Call:
     tokens_out: int | None = None
 
 
-def db_recorder(dsn: str, table: str = "core.egress_call") -> Callable[[Call], int]:
+def db_recorder(dsn: str) -> Callable[[Call], int]:
     def record(c: Call) -> int:
         with db.connect(dsn) as conn:
             rid = conn.execute(
-                f"""INSERT INTO {table} (purpose, dest_host, path_template, source_ids, fields_sent,
+                """INSERT INTO core.egress_call (purpose, dest_host, path_template, source_ids, fields_sent,
                      payload_sha256, bytes_out, bytes_in, http_status, decision, reason, tokens_in, tokens_out)
                    VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) RETURNING id""",
                 (c.purpose, c.dest_host, c.path_template, c.source_ids, c.fields_sent, c.payload_sha256,
@@ -131,6 +137,21 @@ def db_recorder(dsn: str, table: str = "core.egress_call") -> Callable[[Call], i
             ).fetchone()[0]
             conn.commit()
         return rid
+
+    return record
+
+
+def file_recorder(directory: Path) -> Callable[[Call], None]:
+    """호출 1건 = JSON 1줄, 월별 파일(egress-YYYY-MM.jsonl). 보낸 내용 원문 없음(칸 이름·sha256만)."""
+    lock = threading.Lock()
+
+    def record(c: Call) -> None:
+        now = datetime.now(UTC)
+        line = json.dumps({"at": now.isoformat(timespec="seconds"), **dataclasses.asdict(c)}, ensure_ascii=False)
+        with lock:
+            directory.mkdir(parents=True, exist_ok=True)
+            with (directory / f"egress-{now:%Y-%m}.jsonl").open("a", encoding="utf-8") as f:
+                f.write(line + "\n")
 
     return record
 
@@ -182,11 +203,11 @@ class Egress:
         return cls(policy=policy, recorder=db_recorder(dsn), **kw)
 
     @classmethod
-    def for_master(cls, dsn: str, sources: list[dict] = (), **kw) -> Egress:
-        """정제 DB 전용(core 없음): 정책 = 레지스트리 export_grade(칸 규칙 없음 → DEFAULT_EXPORTABLE·NEVER_EXPORT),
-        기록 = 정제 DB egress_call."""
+    def for_master(cls, sources: list[dict] = (), log_dir: Path = RUNTIME_DIR, **kw) -> Egress:
+        """정제 DB 명령 전용(core·DB 기록 없음): 정책 = 레지스트리 export_grade(칸 규칙 없음 →
+        DEFAULT_EXPORTABLE·NEVER_EXPORT), 기록 = log_dir 파일."""
         grades = {s["id"]: s.get("export_grade", "pending") for s in sources}
-        return cls(policy=Policy(grades), recorder=db_recorder(dsn, "egress_call"), **kw)
+        return cls(policy=Policy(grades), recorder=file_recorder(log_dir), **kw)
 
     def close(self) -> None:
         self._client.close()

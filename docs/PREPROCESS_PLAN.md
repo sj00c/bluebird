@@ -10,13 +10,14 @@
 | 1 | 본문 확보(크롤링) | 19,978행 본문 생김 | 완료 (국민신문고 477 = API 키 대기) |
 | 2 | 본문 없음 표시 | `no_body` 8,443행(중복 제외 7,850) | 완료 |
 | 3 | 중복 2단계(재제출) | 표본 140쌍 파일 생성 | 사람 표시 대기 |
-| 4 | LLM 칸 재생성·검수 | 대상 34,461행 산정 | API 키 대기 |
+| 4 | AI 판정·가공(`extract`, 옛 LLM 칸 대체) | 132,122행 판정, idea 120,187 중 근거 확인 114,781 | 완료 (2026-10-20) |
 | 5 | 연도 보완 | 247행 채움, 남은 431행 = 원본 날짜 칸 없음 | 완료 |
-| 6 | 대회·제도 분류 DB화 | `program` 86개, `master.program_id` 141,827행 | 완료 |
+| 6 | 대회·제도 분류 | 86개, master `kind`·`field`·`program` | 완료 |
 | 7 | 글자 정리 + 근거 없는 LLM 칸 비움 | 본문 11,394행·제목 59행 정리, LLM 칸 1,482행 비움 (아래 7장) | 완료 |
-| 8 | 행 품질 측정·확실한 제외(`quality` 표) | 사유 추가: no_body +9 · attachment_only 75 · title_repeat 70 · short_title_body 31(중복 제외). 사유 없는 행 132,306 → 132,122 | 완료 (AI `idea_label` 판정 = API 키 대기) |
+| 8 | 확실한 제외 사유 | 사유 추가: no_body +9 · attachment_only 75 · title_repeat 70 · short_title_body 31(중복 제외). 사유 없는 행 132,306 → 132,122 | 완료 |
+| 9 | DB 정리(master 하나로) | 표 8개 + 뷰 5개 → `raw`·`master`·`db_log` (`docs/SLIM_PLAN.md`) | 완료 (2026-10-21) |
 
-실행 순서(재실행 시 그대로): `master detail` → `master refine` → `master reasons` → `master classify` → `export provenance`(DATA.md)
+실행 순서(재실행 시 그대로): `master detail` → `master refine` → `master reasons` → `master extract` → `master reasons` → `export provenance`(DATA.md)
 
 ## 1. 본문 확보
 
@@ -46,19 +47,10 @@
   - 유사도(본문 3-gram Jaccard) 0.3~1.0, 0.1 간격 7구간 × 20쌍 = 140쌍, 시드 20261015
 - 다음: `판정` 칸에 같음/다름 표시 → 오분류 최소 유사도 = 기준선 → 대표 = 나중 것
 
-## 4. LLM 칸 재생성
+## 4. AI 판정·가공
 
-| 대상 | 행(중복 제외) |
-|---|---:|
-| 새 본문(제목만 보고 채운 값) | 19,329 |
-| 본문 없음 + problem / feature / target 채워짐 | 405 / 1,155 / 1,149 |
-| 본문 2,500자 초과 | 2,713 |
-| `domain` = `기타`만 | 12,540 |
-| 합계(겹침 제외) | 34,461 |
-
-- 필요: `OPENAI_API_KEY`(또는 `ANTHROPIC_API_KEY`). core 불필요(호출 기록 = 정제 DB `egress_call`)
-- 방법: 대상 행 `keyword = NULL` → `bluebird master fill`(keyword 빈 행만 다시 채움). 2,500자 초과는 `fill` 입력 길이 결정 필요
-- 검수: 소스별 무작위 표본 사람 표시 → 필드별 정확도. 목표값·표본 수 결정 필요
+- 옛 LLM 칸(`keyword`·`problem`·`feature`·`target`·옛 `domain`) 재생성 대신 `bluebird master extract`로 대체(판정 + 목표·해결책·기능·분야·근거). 옛 칸은 0014에서 삭제
+- 결과·규칙 = `docs/PREPROCESS.md` 10장, 칸 = `docs/MASTER.md` 3장
 
 ## 5. 연도 보완
 
@@ -67,9 +59,7 @@
 
 ## 6. 대회·제도 분류
 
-- `program(id, kind, field, name)` 86개 + `master.program_id` (`master/0006`, `bluebird master classify`)
-- 규칙: `pipeline/bluebird/programs.py`. 과학·발명 4개 소스 = 행 대회명 기준. 미분류 0행
-- 엑셀(`master xlsx`): `kind`·`field`·`program` 칸
+- 규칙: `pipeline/bluebird/programs.py`, `refine`이 원본 행 대회명으로 master `kind`·`field`·`program` 채움(옛 `program` 표·`classify` 명령 = 0014에서 삭제). 과학·발명 4개 소스 = 행 대회명 기준. 미분류 0행
 
 ## 보류
 
