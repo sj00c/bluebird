@@ -173,7 +173,7 @@ flowchart LR
 - 위치 = 서버 `161.122.152.68:5432` DB `parangsae`, 사용자 `aix`. 접속 = `.env` `BB_DB_URL`(필수). 표 = `public` 스키마. `core`와 완전히 독립(읽지도 쓰지도 않음): 데이터 = 전부 `raw`에서, 외부 호출 정책 = 레지스트리 `export_grade`, 호출 기록 = 실행한 PC `.runtime/egress-YYYY-MM.jsonl`(`Egress.for_master`)
 - 표 3개(마이그레이션 `master/0001~0014`, 0014 = 정리 `docs/SLIM_PLAN.md`): `raw`·`master`·`db_log`, 뷰 없음. 모든 표·칸 설명 = `COMMENT`. 칸 안내 = `docs/MASTER.md`
   - `raw(source, key, payload jsonb, fetched)`: 받은 그대로. 파일 = 행(원본 헤더 → 값), API = 응답 레코드 전체
-  - `master(api, key, title, body, kind, field, program, award, year, url, exclude_reasons, label, item_type, goal, solution, features, domain, evidence, verified)`: 최종. 쓸 행 = `exclude_reasons = '{}' AND verified`
+  - `master(api, key, title, body, kind, field, program, award, year, url, exclude_reasons, label, item_type, goal, solution, features, domain, evidence, verified)`: 최종. 사용 대상 = `exclude_reasons = '{}'`(근거 확인 안 된 AI 가공 = `unverified` 사유, 0015)
 - 적재: `bluebird master files`(수집해 둔 CSV·xlsx, 소스 단위 교체), `bluebird master api`(API 재수집, 1,000건마다 커밋, 국민신문고 = 일 한도 안에서 이어 받음)
 - 정제: `bluebird master refine`(`bluebird.refine`). raw → master 기본 칸. 소스별 추출(등록 매핑 또는 고정 추출기) + 글머리 정리(섹션 라벨 유지, 기호·깨진 문자·짝 없는 따옴표·제목 접수번호 제거, 공백 하나) + 연락처·성명 마스킹(`[전화]`·`[이메일]`·`[이름]`) + 대회·제도 분류(`bluebird.programs`, 원본 행 대회명). 재실행 = 제목·본문 바뀐 행만 AI 칸 비움. `seoul_budget_selected` = 접수 건의 선정 정보 → master 행 없음
 - 상세 본문: `bluebird master detail`. 목록에 본문 없는 소스 = 공식 상세 페이지 본문 영역만(쿠키 없이) → raw `<소스>.detail`, refine이 본문에 붙임

@@ -18,7 +18,8 @@ def test_rule_reasons(title, body, codes):
     assert reasons(title, body) == codes
 
 
-def test_ai_label_is_reason_unless_idea_or_no_body():
+def test_ai_label_and_unverified_are_reasons_unless_no_body():
     body = "세금 너무 많다 국민연금 개편이 필요하다"
-    assert reasons("세금", body, "complaint") == ["complaint"] and reasons("세금", body, "idea") == []
+    assert reasons("세금", body, "complaint") == ["complaint"] and reasons("세금", body, "idea", True) == []
+    assert reasons("세금", body, "idea", False) == ["unverified"]
     assert reasons("세금", None, "complaint") == ["no_body"]

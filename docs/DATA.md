@@ -173,5 +173,5 @@
 - 표: `master`(최종) · `raw`(원본) · `db_log`(작업 기록). 칸 설명 = DB 주석, 안내 = `docs/MASTER.md`
 
 ```sql
-SELECT * FROM master WHERE exclude_reasons = '{}' AND verified;   -- 쓸 행
+SELECT * FROM master WHERE exclude_reasons = '{}';   -- 사용 대상
 ```

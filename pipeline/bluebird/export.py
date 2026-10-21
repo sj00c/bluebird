@@ -332,6 +332,6 @@ def provenance(*, dsn: str, configs: list[Path], out: Path) -> dict:
     md += ["", "## 조회", "",
            "- PostgreSQL `161.122.152.68:5432` · DB `parangsae` · 사용자 `aix`",
            "- 표: `master`(최종) · `raw`(원본) · `db_log`(작업 기록). 칸 설명 = DB 주석, 안내 = `docs/MASTER.md`", "",
-           "```sql", "SELECT * FROM master WHERE exclude_reasons = '{}' AND verified;   -- 쓸 행", "```", ""]
+           "```sql", "SELECT * FROM master WHERE exclude_reasons = '{}';   -- 사용 대상", "```", ""]
     out.write_text("\n".join(md), encoding="utf-8")
     return {"path": str(out), "platforms": len(platforms), "programs": len(prog), "rows": uniq}

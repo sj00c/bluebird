@@ -25,11 +25,11 @@ parangsae                 데이터베이스
 ## 2. 자주 쓰는 SQL
 
 ```sql
--- 쓸 행(제외 사유 없음 + AI 근거 확인): 114,781행
-SELECT * FROM master WHERE exclude_reasons = '{}' AND verified;
+-- 사용 대상(제외 사유 없음): 114,781행
+SELECT * FROM master WHERE exclude_reasons = '{}';
 
 -- 유형별: product(발명·제품) · research(탐구) · policy(정책·시민 제안)
-SELECT * FROM master WHERE exclude_reasons = '{}' AND verified AND item_type = 'research';
+SELECT * FROM master WHERE exclude_reasons = '{}' AND item_type = 'research';
 
 -- 제외 사유별 행 수
 SELECT r, count(*) FROM master, unnest(exclude_reasons) r GROUP BY 1 ORDER BY 2 DESC;
@@ -52,7 +52,7 @@ SELECT m.title, r.payload FROM master m JOIN raw r ON r.source = m.api AND r.key
 | `award` | 수상 등급. 원본 표기 그대로(23개 소스), 없으면 빈칸 | 원본 | 장려상 |
 | `year` | 제안·출품·수상 연도(수집 시점 아님) | 원본 | 2025 |
 | `url` | 상세 페이지, 없으면 데이터 출처 페이지 | 원본 | https://www.data.go.kr/… |
-| `exclude_reasons` | 제외 사유 코드(4장). 빈 값 = 쓸 행. 행은 지우지 않음 | 계산 | `{duplicate}` |
+| `exclude_reasons` | 제외 사유 코드(4장). 빈 값 = 사용 대상. 행은 지우지 않음 | 계산 | `{duplicate}` |
 | `label` | AI 판정: `idea` · `idea_thin`(빈약) · `complaint`(불만뿐) · `abusive`(욕설 중심) · `off_topic`(광고·무의미). 빈칸 = 판정 안 함(이미 제외된 행) | AI판정 | idea |
 | `item_type` | 유형: `product`(발명·제품·디자인·서비스) · `research`(탐구) · `policy`(정책·시민 제안) | LLM | policy |
 | `goal` | 목표 한 문장. 탐구 = 알아내려는 것 | LLM | 지역 복지 네트워크를 다져 구민 복지 증진 |
@@ -79,26 +79,27 @@ SELECT m.title, r.payload FROM master m JOIN raw r ON r.source = m.api AND r.key
 | `complaint` | AI: 제안 없이 불만·항의만 | 4,647 |
 | `off_topic` | AI: 광고·홍보·의미 없는 글 | 158 |
 | `abusive` | AI: 욕설·비방 중심 | 100 |
+| `unverified` | AI 판정은 idea지만 근거 구절이 원문에 없음 | 5,406 |
 
 - 한 행에 여러 사유 가능. 내용 글자 수 = `[라벨]`·공백·기호를 뺀 글자 수
-- 쓸 행 114,781 = 사유 없음 120,187 중 근거 확인(`verified`)된 행. 근거 확인 안 된 5,406행 = 쓸 행에서 빠짐
+- 사용 대상 114,781 = `exclude_reasons`가 빈 행
 
 ## 5. 현황
 
-| 구분 | 전체 | 쓸 행 |
+| 구분 | 전체 | 사용 대상 |
 |---|---:|---:|
 | 시민 제안 | 86,051 | 68,780 |
 | 공모전 | 55,552 | 45,933 |
 | 직원 제안 | 224 | 68 |
 | **합계** | **141,827** | **114,781** |
 
-| 유형(쓸 행) | 행 |
+| 유형(사용 대상) | 행 |
 |---|---:|
 | policy | 67,324 |
 | product | 30,664 |
 | research | 16,793 |
 
-| 분야(쓸 행, 1행 최대 2개) | 행 |
+| 분야(사용 대상, 1행 최대 2개) | 행 |
 |---|---:|
 | 생활 | 41,051 |
 | 과학기술 | 24,605 |
@@ -122,7 +123,7 @@ SELECT m.title, r.payload FROM master m JOIN raw r ON r.source = m.api AND r.key
 | 원본 받기 | `bluebird master files` · `api` · `detail` | `raw` |
 | 정제·분류 | `bluebird master refine` | `master` 기본 칸 + `kind`·`field`·`program`. 제목·본문이 바뀐 행 = AI 칸 비움 |
 | 제외 사유 | `bluebird master reasons` | `exclude_reasons` |
-| AI 판정·가공 | `bluebird master extract` (쓸 행 중 판정 전만) | `label`~`verified` |
+| AI 판정·가공 | `bluebird master extract` (사유 없는 행 중 판정 전만) | `label`~`verified` |
 | 제외 사유(AI 반영) | `bluebird master reasons` | `exclude_reasons` |
 
 - 외부 호출(크롤링·AI) 기록 = 실행한 PC의 `.runtime/egress-YYYY-MM.jsonl`(git 제외, DB 아님). 보낸 값 원문 없음(칸 이름·sha256만)
