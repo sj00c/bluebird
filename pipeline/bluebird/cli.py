@@ -77,6 +77,9 @@ def main(argv: list[str] | None = None) -> int:
     x = mss.add_parser("xlsx", help="master 표 전체 → 엑셀 1파일(시트 master, 필드 = docs/MASTER.md)")
     x.add_argument("--dsn", default=_env("BB_MASTER_DSN"))
     x.add_argument("--out", type=Path, required=True)
+    x = mss.add_parser("final", help="사용 대상(exclude_reasons 빈 행)만 → final-<날짜>.xlsx + .json")
+    x.add_argument("--dsn", default=_env("BB_MASTER_DSN"))
+    x.add_argument("--out", type=Path, help="저장 폴더. 기본 .runtime/export")
     x = mss.add_parser("reasons", help="제외 사유(중복·본문 규칙·AI 판정) 재계산, 행 삭제 없음. refine·extract 다음")
     x.add_argument("--dsn", default=_env("BB_MASTER_DSN"))
     x = mss.add_parser("log", help="DB 작업 기록(db_log). --note 없으면 최근 기록 보기. master 명령·migrate는 자동 기록. "
@@ -231,6 +234,11 @@ def main(argv: list[str] | None = None) -> int:
             return 0
         if a.master_cmd == "xlsx":
             print("[export]", export.master_xlsx(dsn=a.dsn, out=a.out))
+            return 0
+        if a.master_cmd == "final":
+            from .egress import RUNTIME_DIR
+
+            print("[export]", export.final(dsn=a.dsn, out_dir=a.out or RUNTIME_DIR / "export"))
             return 0
         if a.master_cmd == "reasons":
             from . import dedup

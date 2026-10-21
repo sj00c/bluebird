@@ -2,12 +2,14 @@
 
 - xlsx: 아이디어 전체 + 선별 재료 → 엑셀 1파일. share 열(가능/보류) = 레지스트리 share → core.source.share_ok
 - master_xlsx: 정제 DB master 표 → 엑셀 1파일(시트 master)
+- final: 사용 대상(exclude_reasons = '{}')만 → 엑셀 + JSON. 제외 판단용 칸(exclude_reasons·label·verified) 뺌
 - provenance: docs/DATA.md 소스 표. 원천 = 정제 DB(master·raw) + 레지스트리(TOML)
 - 읽기 전용. 공개 승인·깔때기 무관, core 전체
 """
 from __future__ import annotations
 
 import datetime as dt
+import json
 from collections import defaultdict
 from pathlib import Path
 from urllib.parse import urlsplit
@@ -64,12 +66,13 @@ MASTER_WIDTHS = {"api": 24, "key": 18, "title": 40, "body": 60, "kind": 10, "fie
                  "year": 7, "url": 30, "exclude_reasons": 14, "label": 10, "item_type": 10, "goal": 40, "solution": 40,
                  "features": 30, "domain": 14, "evidence": 30, "verified": 8}
 XLSX_CELL_MAX = 32767  # 엑셀 칸 글자 수 한도
+_XML_NONCHAR = str.maketrans("", "", "\ufffe\uffff")   # 원본 본문에 섞인 비문자. openpyxl 검사 밖 → 파일 깨짐
 
 
 def _text_cell(ws, value):
     """문자열은 항상 텍스트 칸. '='로 시작하는 본문이 수식으로 저장되면 엑셀이 '복구' 경고를 띄운다."""
     if isinstance(value, str):
-        value = ILLEGAL_CHARACTERS_RE.sub("", value)[:XLSX_CELL_MAX]
+        value = ILLEGAL_CHARACTERS_RE.sub("", value).translate(_XML_NONCHAR)[:XLSX_CELL_MAX]
     cell = WriteOnlyCell(ws, value=value)
     if isinstance(value, str):
         cell.data_type = "s"
@@ -96,6 +99,41 @@ def master_xlsx(*, dsn: str, out: Path) -> dict:
     wb.save(tmp)
     tmp.replace(out)
     return {"path": str(out), "rows": n, "cols": len(MASTER_COLS)}
+
+
+FINAL_COLS = ("api", "key", "title", "body", "kind", "field", "program", "award", "year", "url",
+              "item_type", "goal", "solution", "features", "domain", "evidence")
+FINAL_SQL = f"SELECT {', '.join(FINAL_COLS)} FROM master WHERE exclude_reasons = '{{}}' ORDER BY api, year NULLS LAST, key"
+
+
+def final(*, dsn: str, out_dir: Path) -> dict:
+    """사용 대상 → final-<날짜>.xlsx(목록 칸 = 쉼표 이음) + final-<날짜>.json(배열, 목록 칸 = 배열)."""
+    out_dir.mkdir(parents=True, exist_ok=True)
+    stem = out_dir / f"final-{dt.datetime.now(dt.timezone(dt.timedelta(hours=9))):%Y-%m-%d}"
+    wb = Workbook(write_only=True)
+    ws = wb.create_sheet("final")
+    for idx, name in enumerate(FINAL_COLS, start=1):
+        ws.column_dimensions[get_column_letter(idx)].width = MASTER_WIDTHS[name]
+    ws.freeze_panes = "A2"
+    ws.append(list(FINAL_COLS))
+    json_tmp = stem.with_suffix(".tmp.json")
+    n = 0
+    with db.connect(dsn) as conn, conn.cursor(name="final") as cur, json_tmp.open("w", encoding="utf-8") as js:
+        cur.itersize = 5000
+        cur.execute(FINAL_SQL)
+        js.write("[\n")
+        for row in cur:
+            ws.append([_text_cell(ws, ", ".join(v) if isinstance(v, list) else v) for v in row])
+            js.write((",\n" if n else "") + json.dumps(dict(zip(FINAL_COLS, row, strict=True)), ensure_ascii=False))
+            n += 1
+        js.write("\n]\n")
+    xlsx_tmp = stem.with_suffix(".tmp.xlsx")
+    wb.save(xlsx_tmp)
+    xlsx_tmp.replace(stem.with_suffix(".xlsx"))
+    json_tmp.replace(stem.with_suffix(".json"))
+    return {"xlsx": str(stem.with_suffix(".xlsx")), "json": str(stem.with_suffix(".json")), "rows": n,
+            "cols": len(FINAL_COLS)}
+
 
 
 def _autosize(ws, widths: dict[str, int]):

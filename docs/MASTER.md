@@ -4,6 +4,7 @@
 - 접속: PostgreSQL `161.122.152.68:5432` · DB `parangsae` · 사용자 `aix` · 접속 문자열 = `.env` `BB_DB_URL`
 - 엑셀: `bluebird master xlsx --out <파일>` → 시트 `master` 1개, 141,827행 × 19열(= DB `master` 칸 그대로)
 - 정리 경위: `docs/SLIM_PLAN.md` (표 8개 + 뷰 5개 → 표 3개, 마이그레이션 `master/0014`)
+- 최종 파일: `bluebird master final` → `.runtime/export/final-<날짜>.xlsx` + `.json`. 사용 대상(`exclude_reasons` 빈 행)만, 16칸(제외 판단용 `exclude_reasons`·`label`·`verified` 뺌)
 
 ## 1. 구조
 
