@@ -41,6 +41,8 @@ ALLOWED_HOSTS = (
     "idea.seoul.go.kr",
     # 참여예산 원본 사이트 상세 본문(master detail)
     "yesan.gwangju.go.kr", "www.gg.go.kr", "www.ulsan.go.kr", "www.yuseong.go.kr",
+    # 최근 문제·바뀐 것 자료(docs/DEMAND_PLAN.md 6-1): 국회 의안·입법예고, 정부 입법예고·행정예고
+    "open.assembly.go.kr", "www.lawmaking.go.kr", "opinion.lawmaking.go.kr",
 )
 # 과거 허용했다가 뺀 호스트. 새 호출 = 차단. 당시 허용 감사 행은 G10 반출 통제에서 위반으로 세지 않음
 RETIRED_HOSTS = ("openapi.naver.com",)   # 2026-10-12 NAVER 검색 API → API HUB(naverapihub.apigw.ntruss.com)

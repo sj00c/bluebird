@@ -121,11 +121,13 @@
 | `OPENAI_API_KEY` 또는 `ANTHROPIC_API_KEY` | 카드 요약(P1), 근거 제한 원인 제안(P2), 시의성 제안(P3) | 각 사이트 |
 | `NAVER_CLIENT_ID` / `NAVER_CLIENT_SECRET` | 사업화 흔적: 후속 보도 | NAVER API HUB(네이버클라우드 NCP 콘솔, 결제 수단 등록 필요) |
 | `KIPRIS_PLUS_KEY` | 공모전 아이디어DB 수집(전수 387회 호출, 키 호출 한도 없음), 사업화 흔적 후보: 특허·실용신안 검색 | plus.kipris.or.kr |
-| `DATA_GO_KR_KEY` | K-Startup 공고 수집, 국민신문고 공개제안 수집(15059423), 권익위 공모제안 연결 점검 | data.go.kr (키 1개 공용, 서비스별 활용신청) |
+| `DATA_GO_KR_KEY` | K-Startup 공고 수집, 국민신문고 공개제안 수집(15059423), 권익위 공모제안 연결 점검. 최근 문제 자료: 정책뉴스(15095335), 과기정통부·중기부·재정경제부 보도자료(15074632·15113299·15162042), 중기부 지원사업 공고(15157820) | data.go.kr (키 1개 공용, 서비스별 활용신청) |
 | `SEOUL_OPENAPI_KEY` | 서울 시민참여예산·법령제도개선 제안·자유제안 수집 | data.seoul.go.kr 일반 인증키 |
 | `GG_OPENAPI_KEY` | 경기 주민참여예산 제안사업 수집 | data.gg.go.kr OpenAPI |
-| `BIZINFO_KEY` | 기업마당 API 연결 점검; 전체 공고 수집 미구현 | bizinfo.go.kr (선택) |
-| `LAW_OC` | 법령 (비우면 시험 계정) | open.law.go.kr (선택) |
+| `BIZINFO_KEY` | 기업마당 API 연결 점검; 전체 공고 수집 미구현. 같은 공고는 `DATA_GO_KR_KEY`(15157820)로 받을 수 있음 | bizinfo.go.kr (선택) |
+| `LAW_OC` | 법령·조례·행정규칙 (비우면 시험 계정) | open.law.go.kr (선택) |
+| `ASSEMBLY_KEY` | 국회 발의법률안·입법예고·법률안 제안이유 | open.assembly.go.kr |
+| `LAWMAKING_OC` | 정부 입법예고·행정예고 (가입 아이디 @ 앞부분, 신청 때 서버 IP 등록) | opinion.lawmaking.go.kr 정보공개 신청 |
 
 자동 제안: 비용·검토 범위 제한, 명시적 실행. 기본 1건, 최대 20건, `--idea <ID>`로 1건 지정 가능.
 

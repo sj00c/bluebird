@@ -45,7 +45,7 @@ flowchart LR
 | 주기 | 매일 1회. 지난 실행 이후 바뀐 것만 받음 |
 | 저장 | `law` 표에 추가만(이력 보존). 같은 법령의 다음 개정 = 새 행 |
 | 범위 | 전체 목록은 받되, 개정 이유 본문은 도메인 관련 소관 기관 것부터 |
-| 필요 | 법령 OC 코드(`.env` `LAW_OC`, 지금 비어 있음 = 시험 계정) |
+| 필요 | 법령 OC 코드(`.env` `LAW_OC`, 2026-10-22 발급·호출 확인) |
 
 ## 5. 지침 md
 
@@ -79,7 +79,27 @@ flowchart LR
 공통 출처: 국회 법률안 제안 이유, 입법예고·행정예고 개정 이유, 정책브리핑 정책뉴스
 
 - 일반 뉴스: 이용 조건이 확인된 출처만 보조로. 포털 뉴스 크롤링 안 함
-- 출처가 실제로 몇 건, 어떤 형식으로 오는지는 키 발급 후 시험해서 이 표에 기록
+- 출처가 실제로 몇 건, 어떤 형식으로 오는지는 키 발급 후 시험해서 아래 표에 기록
+
+### 6-1. API 확보 현황 (2026-10-22 시험)
+
+| 출처 | API | `.env` | 상태 | 시험 결과 |
+|---|---|---|---|---|
+| 정책브리핑 정책뉴스 (data.go.kr 15095335) | `apis.data.go.kr/1371000/policyNewsService2/policyNewsList2` | `DATA_GO_KR_KEY` | 승인 | `startDate`·`endDate` 필수. 10/15~17 3일 49건, 본문 포함, 부처명(`MinisterCode`) 있음 |
+| 과기정통부 보도자료 (15074632) | `apis.data.go.kr/1721000/msitpressreleaseinfo/pressReleaseList` | `DATA_GO_KR_KEY` | 승인 | 전체 17,634건 |
+| 중기부 보도자료 (15113299) | `apis.data.go.kr/1421000/mssPressService_v2/getPressList_v2` | `DATA_GO_KR_KEY` | 승인 | 전체 9,988건 |
+| 재정경제부 보도자료 (15162042) | `apis.data.go.kr/1053000/brief/list` | `DATA_GO_KR_KEY` | 승인 | 키 통과. 검색 시작·종료일 필수, 건수 미확인 |
+| 중기부 지원사업 공고 (15157820, 기업마당 공고) | `apis.data.go.kr/1421000/bizinfo/pblancBsnsService` | `DATA_GO_KR_KEY` | 승인 | 공고 수신 확인. 기업마당 키(`BIZINFO_KEY`) 대신 사용 |
+| 국가법령정보 (법령·조례·행정규칙) | `www.law.go.kr/DRF/lawSearch.do` (`target=law`·`ordin`·`admrul`) | `LAW_OC` | 발급 | 세 종류 모두 수신 확인 |
+| 국회 발의법률안 | `open.assembly.go.kr/portal/openapi/nzmimeepazxkubdpn` | `ASSEMBLY_KEY` | 발급 | 22대 20,024건 |
+| 국회 진행중 입법예고 | `open.assembly.go.kr/portal/openapi/nknalejkafmvgzmpt` | `ASSEMBLY_KEY` | 발급 | 97건 |
+| 정부 입법예고·행정예고 (국민참여입법센터) | `www.lawmaking.go.kr/rest/ogLmPp` 등 | `LAWMAKING_OC` (예정) | **승인 대기** | 2026-10-22 신청. 승인 전 401. 등록 IP 161.122.152.70(이 PC)·161.122.152.68(서버). OC = 가입 아이디 @ 앞부분 |
+
+- 부처별 보도자료 API 없음: 복지부·국토부·행안부·소방청·환경부·교육부·질병청은 data.go.kr에 보도자료 API가 없음 → 정책뉴스를 부처명으로 나눠 사용
+- 정책뉴스 3일 표본에 있던 부처: 복지부·국토부·행안부·교육부·기후에너지환경부 등. 소방청·질병청은 표본에 없음 → 기간을 늘려 확인 필요
+- 정책브리핑 보도자료(`1371000/pressReleaseService`)·구 정책뉴스(`policyNewsService`) = 폐기됨
+- 국회·법제처 API는 data.go.kr에 링크만 있음(LINK 유형) → 각 사이트 키 필요
+- 국회 법률안 제안이유 상세(`법률안 제안이유 및 주요내용`) API는 같은 `ASSEMBLY_KEY`로 사용 가능, 호출 시험은 아직
 
 ## 7. 처리 단계
 
@@ -118,14 +138,16 @@ flowchart LR
 
 | 항목 | 누가 |
 |---|---|
-| 법령 OC 코드 | 신청 필요 |
-| 공공데이터포털 키(`DATA_GO_KR_KEY`): 보도자료·정책뉴스·공고 API | 신청 필요 |
-| 국회 Open API 키 | 신청 필요 |
+| 법령 OC 코드 | 완료 (`LAW_OC`) |
+| 공공데이터포털 키(`DATA_GO_KR_KEY`): 보도자료·정책뉴스·공고 API | 완료 (5개 승인, 6-1) |
+| 국회 Open API 키 | 완료 (`ASSEMBLY_KEY`) |
+| 국민참여입법센터 OC: 정부 입법예고·행정예고 | 승인 대기 (2026-10-23 오전 확인 예정) |
 | 68 서버 PostgreSQL 이미지 교체(서버 반영 때) | 서버 관리자 |
 
 ## 11. 정할 것
 
 - 생활 도메인 자료 출처
+- 소방청·질병청 자료: 정책뉴스만으로 충분한지 (6-1)
 - 일반 뉴스 사용 여부와 출처
 - 사람 확인 통과 기준(8장 [확정 필요])
 - 결과 형식(xlsx·json 칸)
