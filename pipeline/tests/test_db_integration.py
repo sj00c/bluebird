@@ -673,8 +673,8 @@ def test_export_xlsx_marks_share_from_source_flag(fresh, tmp_path):
     assert by_source["s"][hdr.index("canonical_id")] is None                                   # 묶음 없음 = 빈 값
 
 
-def test_master_db_is_three_tables_all_with_provenance_comment():
-    """정제 DB = raw·master·db_log(+ migrations.applied)만, 뷰 없음. 표·칸 전부 설명(COMMENT) '[출처] …'."""
+def test_master_db_tables_all_with_provenance_comment():
+    """정제 DB = public(raw·master·db_log) + law(law·doc) + migrations.applied, 뷰 없음. 표·칸 전부 설명 '[출처] …'."""
     name = "bbtest_comments"
     with psycopg.connect(DSN, autocommit=True) as c:
         c.execute(f"DROP DATABASE IF EXISTS {name} WITH (FORCE)")
@@ -684,12 +684,13 @@ def test_master_db_is_three_tables_all_with_provenance_comment():
     with psycopg.connect(dsn) as c:
         rel = c.execute("""SELECT n.nspname || '.' || c.relname, obj_description(c.oid, 'pg_class')
                              FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
-                            WHERE n.nspname IN ('public', 'migrations') AND c.relkind IN ('r', 'v')""").fetchall()
+                            WHERE n.nspname IN ('public', 'migrations', 'law') AND c.relkind IN ('r', 'v')""").fetchall()
         col = c.execute("""SELECT n.nspname || '.' || c.relname || '.' || a.attname, col_description(c.oid, a.attnum)
                              FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
                              JOIN pg_attribute a ON a.attrelid = c.oid AND a.attnum > 0 AND NOT a.attisdropped
-                            WHERE n.nspname IN ('public', 'migrations') AND c.relkind = 'r'""").fetchall()
-    assert {r for r, _ in rel} == {"public.master", "public.raw", "public.db_log", "migrations.applied"}
+                            WHERE n.nspname IN ('public', 'migrations', 'law') AND c.relkind = 'r'""").fetchall()
+    assert {r for r, _ in rel} == {"public.master", "public.raw", "public.db_log", "law.law", "law.doc",
+                                   "migrations.applied"}
     missing = [n for n, d in rel + col if not (d and d.startswith("["))]
     assert missing == []
 
