@@ -70,6 +70,11 @@ def main(argv: list[str] | None = None) -> int:
     x.add_argument("--only")
     x.add_argument("--sample", type=int, help="소스별 N행만(시험)")
     x.add_argument("--workers", type=int, default=8)
+    x = mss.add_parser("embed", help="사용 대상 → embedding_input(목표+해결책+기능) + 벡터. 글이 바뀐 행만. extract·reasons 다음")
+    x.add_argument("--dsn", default=_env("BB_MASTER_DSN"))
+    x.add_argument("--config", type=Path, action="append", required=True, help="레지스트리 TOML, 반복")
+    x.add_argument("--only")
+    x.add_argument("--workers", type=int, default=8)
     x = mss.add_parser("refine", help="raw → master 정제(글머리 정리·마스킹·대회·제도 분류). 제목·본문 바뀐 행 = AI 칸 비움")
     x.add_argument("--dsn", default=_env("BB_MASTER_DSN"))
     x.add_argument("--config", type=Path, action="append", required=True, help="레지스트리 TOML, 반복")
@@ -263,6 +268,12 @@ def main(argv: list[str] | None = None) -> int:
             with Egress.for_master(sources, timeout=180.0) as eg:
                 results = extract.extract(dsn=a.dsn, egress=eg, sources=sources, only=a.only, sample=a.sample,
                                           workers=a.workers)
+        elif a.master_cmd == "embed":
+            from . import embed
+
+            prefix = f"embed {embed.MODEL} "
+            with Egress.for_master(sources, timeout=180.0) as eg:
+                results = embed.embed(dsn=a.dsn, egress=eg, only=a.only, workers=a.workers)
         elif a.master_cmd == "refine":
             from . import refine
 
@@ -273,8 +284,8 @@ def main(argv: list[str] | None = None) -> int:
                                           acrc_budget=a.acrc_budget)
         for result in results:
             print(funnel.dumps(result))
-        # db_log 작업 목록(0009)에 extract 없음 → LLM 단계 = fill로 기록, 내용 앞에 명령·지시문 버전·모델
-        dblog.write(dsn=a.dsn, action="fill" if a.master_cmd == "extract" else a.master_cmd,
+        # db_log 작업 목록(0009)에 extract·embed 없음 → LLM 단계 = fill로 기록, 내용 앞에 명령·버전·모델
+        dblog.write(dsn=a.dsn, action="fill" if a.master_cmd in ("extract", "embed") else a.master_cmd,
                     note=prefix + _log_note(a, results))
         return 1 if any(r["status"] != "ok" for r in results) else 0
     elif a.cmd == "ingest":

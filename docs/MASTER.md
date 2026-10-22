@@ -62,6 +62,8 @@ SELECT m.title, r.payload FROM master m JOIN raw r ON r.source = m.api AND r.key
 | `domain` | 분야 1~2개: 행정·복지·교통·환경·경제·교육·안전·문화·보건·과학기술·생활·기타 | LLM | 복지, 행정 |
 | `evidence` | 해결책의 근거 원문 구절(그대로 복사) | LLM | 동대문구를 시범지역으로 … |
 | `verified` | `evidence`가 제목·본문에 실제로 있음(공백 무시). 거짓 = 지어낸 값 의심 | 계산 | true |
+| `embedding_input` | 벡터에 넣은 글 = 목표(끝 상투어 제거) + 해결책 + 핵심 기능. 사용 대상만 | 계산 | 시설공단의 비효율과 부패. 모든 서울시 시설공단을 통합하여 … |
+| `embedding` | `embedding_input`의 벡터(OpenAI `text-embedding-3-small`, 1536차원 halfvec, 코사인 색인). 비슷한 아이디어·문제 찾기용 | LLM | – |
 
 - `item_type`~`verified` = `label`이 `idea`인 행에만(DB가 강제)
 - AI: OpenAI `gpt-4.1-mini`, 지시문 `extract-v2`(`pipeline/bluebird/extract.py`), 입력 = 제목·본문 앞 2,500자·소스 정보·대회명
@@ -126,6 +128,7 @@ SELECT m.title, r.payload FROM master m JOIN raw r ON r.source = m.api AND r.key
 | 제외 사유 | `bluebird master reasons` | `exclude_reasons` |
 | AI 판정·가공 | `bluebird master extract` (사유 없는 행 중 판정 전만) | `label`~`verified` |
 | 제외 사유(AI 반영) | `bluebird master reasons` | `exclude_reasons` |
+| 벡터 | `bluebird master embed` (사용 대상 중 글이 바뀐 행만) | `embedding_input`·`embedding` |
 
 - 외부 호출(크롤링·AI) 기록 = 실행한 PC의 `.runtime/egress-YYYY-MM.jsonl`(git 제외, DB 아님). 보낸 값 원문 없음(칸 이름·sha256만)
 - 남은 문제: 국민신문고 상세 본문 477행(API 키 필요), 재제출 중복 2단계(사람 표시 대기), 본문 속 일반 이름 미가림

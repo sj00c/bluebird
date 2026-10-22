@@ -717,18 +717,20 @@ def test_refine_classifies_and_clears_ai_only_when_text_changes():
         c.execute("INSERT INTO raw (source, key, payload, fetched) VALUES ('kipris_idea_api', '1', %s, now())",
                   (Jsonb(raw),))
     refine.refine(dsn=dsn, sources=[spec])
-    ai = "label = 'idea', item_type = 'product', goal = 'g', solution = 's', features = '{}', domain = '{생활}', verified = true"
+    ai = ("label = 'idea', item_type = 'product', goal = 'g', solution = 's', features = '{}', domain = '{생활}',"
+          " verified = true, embedding_input = 'g. s'")
     with psycopg.connect(dsn) as c:
         assert c.execute("SELECT kind, field, program, year FROM master").fetchone() == (
             "공모전", "과학·발명", "전국과학전람회", 1994)
         c.execute(f"UPDATE master SET {ai}")
     refine.refine(dsn=dsn, sources=[spec])                                    # 같은 글 = 판정 유지
     with psycopg.connect(dsn) as c:
-        assert c.execute("SELECT label, goal FROM master").fetchone() == ("idea", "g")
+        assert c.execute("SELECT label, goal, embedding_input FROM master").fetchone() == ("idea", "g", "g. s")
         c.execute("UPDATE raw SET payload = payload || '{\"ideaContent\": \"젖은 우산을 바람으로 말린다\"}'")
     refine.refine(dsn=dsn, sources=[spec])                                    # 본문 바뀜 = 다시 판정 대상
     with psycopg.connect(dsn) as c:
-        assert c.execute("SELECT label, item_type, domain, verified FROM master").fetchone() == (None, None, None, None)
+        assert c.execute("SELECT label, item_type, domain, verified, embedding_input FROM master").fetchone() == (
+            None, None, None, None, None)
         c.execute("UPDATE master SET label = 'complaint'")
     dedup.mark(dsn=dsn)
     with psycopg.connect(dsn) as c:

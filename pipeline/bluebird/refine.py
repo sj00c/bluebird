@@ -316,7 +316,9 @@ def extractor(spec: dict) -> Extract:
     raise ValueError(f"source {spec['id']}: no extractor")
 
 
-AI_COLS = ("label", "item_type", "goal", "solution", "features", "domain", "evidence", "verified")
+# 제목·본문이 바뀌면 비우는 칸: AI 판정·가공 + 벡터(목표가 다시 만들어지므로)
+AI_COLS = ("label", "item_type", "goal", "solution", "features", "domain", "evidence", "verified",
+           "embedding_input", "embedding")
 _TEXT_CHANGED = "master.title IS DISTINCT FROM EXCLUDED.title OR master.body IS DISTINCT FROM EXCLUDED.body"
 
 

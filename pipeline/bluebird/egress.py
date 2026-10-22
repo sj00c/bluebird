@@ -49,6 +49,7 @@ RETIRED_HOSTS = ("openapi.naver.com",)   # 2026-10-12 NAVER 검색 API → API H
 DEFAULT_EXPORTABLE = frozenset({
     "title", "body", "problem", "solution", "used_data", "missing_data", "category", "year", "domain",
     "dataset_title", "dataset_description", "announcement_title", "announcement_summary", "law_title", "change_title",
+    "embedding_input",   # LLM이 만든 목표·해결책·기능을 이은 글(master.embedding_input)
 })
 # 어떤 정책으로도 나갈 수 없는 필드.
 NEVER_EXPORT = frozenset({"team", "person_name", "contact", "review_note"})
@@ -57,6 +58,7 @@ LLM_ENDPOINTS = {
     "openai": ("https://api.openai.com/v1/chat/completions", "OPENAI_API_KEY"),
     "anthropic": ("https://api.anthropic.com/v1/messages", "ANTHROPIC_API_KEY"),
 }
+EMBED_URL = "https://api.openai.com/v1/embeddings"
 
 
 class EgressError(Exception):
@@ -359,3 +361,17 @@ class Egress:
         text = (data["choices"][0]["message"]["content"] if provider == "openai"
                 else "".join(b.get("text", "") for b in data["content"]))
         return text, resp
+
+    def embed(self, *, model: str, source: str, texts: list[str], dimensions: int | None = None) -> list[list[float]]:
+        """OpenAI 임베딩. 내용 = 칸 embedding_input(반출 검사·기록). 반환 순서 = 입력 순서."""
+        key = os.environ.get(LLM_ENDPOINTS["openai"][1])
+        if not key:
+            raise KeyMissing(f"{LLM_ENDPOINTS['openai'][1]} not set")
+        payload = {"model": model, "input": texts} | ({"dimensions": dimensions} if dimensions else {})
+        resp = self._send("llm", "POST", EMBED_URL, path_template=urlsplit(EMBED_URL).path,
+                          fields={"embedding_input": (source, texts)}, params=None,
+                          body=json.dumps(payload, ensure_ascii=False, separators=(",", ":")).encode(),
+                          headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"})
+        if resp.status >= 400:
+            raise EgressBlocked(f"openai embeddings HTTP {resp.status}")
+        return [d["embedding"] for d in sorted(resp.json()["data"], key=lambda d: d["index"])]
