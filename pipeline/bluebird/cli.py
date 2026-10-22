@@ -10,8 +10,9 @@ from __future__ import annotations
 import argparse
 import os
 import sys
-from datetime import date
+from datetime import date, datetime
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 from . import announce, cards, coding, db, enrichment, export, funnel, ingest, kpi, sources_check
 from .signals import catalog
@@ -75,6 +76,12 @@ def main(argv: list[str] | None = None) -> int:
     x.add_argument("--config", type=Path, action="append", required=True, help="레지스트리 TOML, 반복")
     x.add_argument("--only")
     x.add_argument("--workers", type=int, default=8)
+    x = mss.add_parser("law", help="국가법령정보 → external.law(법령·자치법규가 바뀐 기록). 시행일 범위. 법령 개정 이유 포함")
+    x.add_argument("--dsn", default=_env("BB_MASTER_DSN"))
+    x.add_argument("--since", type=date.fromisoformat, required=True, help="시행일 시작 YYYY-MM-DD")
+    x.add_argument("--until", type=date.fromisoformat, help="시행일 끝(기본 오늘, 한국 시간)")
+    x.add_argument("--kind", action="append", choices=("법령", "자치법규"), help="반복. 기본 둘 다")
+    x.add_argument("--workers", type=int, default=4)
     x = mss.add_parser("refine", help="raw → master 정제(글머리 정리·마스킹·대회·제도 분류). 제목·본문 바뀐 행 = AI 칸 비움")
     x.add_argument("--dsn", default=_env("BB_MASTER_DSN"))
     x.add_argument("--config", type=Path, action="append", required=True, help="레지스트리 TOML, 반복")
@@ -244,6 +251,17 @@ def main(argv: list[str] | None = None) -> int:
             from .egress import RUNTIME_DIR
 
             print("[export]", export.final(dsn=a.dsn, out_dir=a.out or RUNTIME_DIR / "export"))
+            return 0
+        if a.master_cmd == "law":
+            from . import laws
+
+            with Egress.for_master(timeout=60.0) as eg:
+                a.until = a.until or datetime.now(ZoneInfo("Asia/Seoul")).date()
+                results = laws.collect(dsn=a.dsn, egress=eg, since=a.since, until=a.until,
+                                       kinds=tuple(a.kind or laws.KINDS), workers=a.workers)
+            for result in results:
+                print(funnel.dumps(result))
+            dblog.write(dsn=a.dsn, action="api", note=f"law {a.since}~{a.until} " + _log_note(a, results))
             return 0
         if a.master_cmd == "reasons":
             from . import dedup

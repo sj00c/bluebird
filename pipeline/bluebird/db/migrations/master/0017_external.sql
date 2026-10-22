@@ -3,32 +3,34 @@ CREATE SCHEMA external;
 COMMENT ON SCHEMA external IS '[원본] 바깥 공식 자료: 법령이 바뀐 기록(external.law) + 정책뉴스·보도자료·국회 법률안(external.doc). 만든 곳: docs/DEMAND_PLAN.md';
 
 CREATE TABLE external.law (
-    kind      text NOT NULL CHECK (kind IN ('law', 'ordin', 'admrul')),
+    kind      text NOT NULL CHECK (kind IN ('법령', '자치법규', '행정규칙')),
     id        text NOT NULL,
     name      text NOT NULL,
-    type      text,
+    form      text,
+    change    text,
     org       text,
     announced date,
     effective date,
     reason    text,
     summary   text,
-    embedding halfvec(1536),
     url       text,
+    embedding halfvec(1536),
     fetched   timestamptz NOT NULL DEFAULT now(),
     PRIMARY KEY (kind, id)
 );
-COMMENT ON TABLE external.law IS '[원본] 법령·조례·행정규칙이 바뀐 기록. 1행 = 공포 1건(같은 법령의 다음 개정 = 새 행, 추가만). 출처 = 국가법령정보 공동활용 Open API';
-COMMENT ON COLUMN external.law.kind IS '[원본] 종류: law(법률·시행령·시행규칙) · ordin(자치법규·조례) · admrul(행정규칙·고시·훈령)';
-COMMENT ON COLUMN external.law.id IS '[원본] 공포 단위 id(법령일련번호·자치법규일련번호·행정규칙일련번호)';
+COMMENT ON TABLE external.law IS '[원본] 법령·자치법규·행정규칙이 바뀐 기록을 한 표에. 1행 = 공포 1건(같은 법령의 다음 개정 = 새 행). 출처 = 국가법령정보 공동활용 Open API. 만든 곳: bluebird master law(laws.py)';
+COMMENT ON COLUMN external.law.kind IS '[원본] 종류: 법령(법률·대통령령·총리령·부령) · 자치법규(조례·규칙) · 행정규칙(고시·훈령·예규)';
+COMMENT ON COLUMN external.law.id IS '[원본] 공포 단위 번호(법령일련번호·자치법규일련번호·행정규칙일련번호)';
 COMMENT ON COLUMN external.law.name IS '[원본] 법령명';
-COMMENT ON COLUMN external.law.type IS '[원본] 제정·일부개정·전부개정·폐지 등';
-COMMENT ON COLUMN external.law.org IS '[원본] 소관 기관(부처·지자체)';
+COMMENT ON COLUMN external.law.form IS '[원본] 형식: 법률·대통령령·부령·조례·규칙·고시 등';
+COMMENT ON COLUMN external.law.change IS '[원본] 제정·일부개정·전부개정·타법개정·폐지 등';
+COMMENT ON COLUMN external.law.org IS '[원본] 소관 부처 또는 지자체';
 COMMENT ON COLUMN external.law.announced IS '[원본] 공포일';
-COMMENT ON COLUMN external.law.effective IS '[원본] 시행일. 바뀐 날짜 기준';
-COMMENT ON COLUMN external.law.reason IS '[원본] 제정·개정 이유 원문';
+COMMENT ON COLUMN external.law.effective IS '[원본] 시행일. "바뀐 날짜" 기준';
+COMMENT ON COLUMN external.law.reason IS '[원본] 제정·개정 이유 원문(법령의 제정·일부개정·전부개정만. 타법개정·자치법규 = NULL)';
 COMMENT ON COLUMN external.law.summary IS '[LLM] 무엇이 바뀌어 무엇이 가능해졌나 한 문장(개정 이유 기준)';
+COMMENT ON COLUMN external.law.url IS '[원본] 국가법령정보센터 공개 링크(인증 코드 없음)';
 COMMENT ON COLUMN external.law.embedding IS '[LLM] summary 벡터(text-embedding-3-small, 1536 halfvec)';
-COMMENT ON COLUMN external.law.url IS '[원본] 국가법령정보센터 링크(인증 코드 제거)';
 COMMENT ON COLUMN external.law.fetched IS '[원본] 받은 시각';
 
 CREATE TABLE external.doc (
