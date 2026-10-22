@@ -64,7 +64,7 @@ SELECT api, key, title, body, kind, field, program, award, year, url, array_to_s
 
 MASTER_WIDTHS = {"api": 24, "key": 18, "title": 40, "body": 60, "kind": 10, "field": 14, "program": 28, "award": 12,
                  "year": 7, "url": 30, "exclude_reasons": 14, "label": 10, "item_type": 10, "goal": 40, "solution": 40,
-                 "features": 30, "domain": 14, "evidence": 30, "verified": 8}
+                 "features": 30, "domain": 14, "evidence": 30, "verified": 8, "embedding_input": 60}
 XLSX_CELL_MAX = 32767  # 엑셀 칸 글자 수 한도
 _XML_NONCHAR = str.maketrans("", "", "\ufffe\uffff")   # 원본 본문에 섞인 비문자. openpyxl 검사 밖 → 파일 깨짐
 
@@ -80,17 +80,23 @@ def _text_cell(ws, value):
 
 
 def master_xlsx(*, dsn: str, out: Path) -> dict:
-    """master 표 전체 → 시트 'master' 1개(MASTER_COLS). docs/MASTER.md = 필드 설명."""
+    """master 표 전체 → 시트 'master' 1개(MASTER_COLS + 벡터 글 embedding_input이 있는 DB면 그 칸).
+    벡터 값(embedding)은 1행 1,536개 숫자라 엑셀에 안 넣음. docs/MASTER.md = 필드 설명."""
+    with db.connect(dsn) as conn:
+        has_vec = conn.execute("SELECT 1 FROM information_schema.columns WHERE table_schema = 'public'"
+                               " AND table_name = 'master' AND column_name = 'embedding_input'").fetchone()
+    cols = MASTER_COLS + (("embedding_input",) if has_vec else ())
+    sql = MASTER_SQL.replace("evidence, verified\n", "evidence, verified" + (", embedding_input\n" if has_vec else "\n"))
     wb = Workbook(write_only=True)
     ws = wb.create_sheet("master")
-    for idx, name in enumerate(MASTER_COLS, start=1):
+    for idx, name in enumerate(cols, start=1):
         ws.column_dimensions[get_column_letter(idx)].width = MASTER_WIDTHS[name]
     ws.freeze_panes = "A2"
-    ws.append(list(MASTER_COLS))
+    ws.append(list(cols))
     n = 0
     with db.connect(dsn) as conn, conn.cursor(name="master_xlsx") as cur:
         cur.itersize = 5000
-        cur.execute(MASTER_SQL)
+        cur.execute(sql)
         for row in cur:
             ws.append([_text_cell(ws, v) for v in row])
             n += 1
@@ -98,7 +104,7 @@ def master_xlsx(*, dsn: str, out: Path) -> dict:
     tmp = out.with_suffix(".tmp.xlsx")
     wb.save(tmp)
     tmp.replace(out)
-    return {"path": str(out), "rows": n, "cols": len(MASTER_COLS)}
+    return {"path": str(out), "rows": n, "cols": len(cols)}
 
 
 FINAL_COLS = ("api", "key", "title", "body", "kind", "field", "program", "award", "year", "url",
