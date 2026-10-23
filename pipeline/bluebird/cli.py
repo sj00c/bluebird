@@ -87,7 +87,13 @@ def main(argv: list[str] | None = None) -> int:
     x.add_argument("--kind", action="append", help="종류(예: 공모전, 시민 제안), 반복")
     x.add_argument("--domain", action="append", help="분야, 반복(하나라도 겹치면)")
     x.add_argument("--item-type", action="append", help="유형(policy·product·research), 반복")
+    x.add_argument("--awarded", action="store_true", help="수상 내역 있는 행만")
     x.add_argument("--no-rerank", action="store_true", help="LLM 재정렬 없이 혼합 순위 그대로")
+    x = mss.add_parser("serve", help="검색 HTTP API(GET /search, /healthz). 읽기 전용, 데모 UI 연결용. 같은 방식 = search")
+    x.add_argument("--dsn", default=_env("BB_MASTER_DSN"))
+    x.add_argument("--config", type=Path, action="append", required=True, help="레지스트리 TOML, 반복")
+    x.add_argument("--host", default="127.0.0.1")
+    x.add_argument("--port", type=int, default=8100)
     x = mss.add_parser("law", help="국가법령정보 → external.law(법령·자치법규가 바뀐 기록). 시행일 범위. 법령 개정 이유 포함")
     x.add_argument("--dsn", default=_env("BB_MASTER_DSN"))
     x.add_argument("--since", type=date.fromisoformat, required=True, help="시행일 시작 YYYY-MM-DD")
@@ -303,13 +309,21 @@ def main(argv: list[str] | None = None) -> int:
             from . import search
 
             flt = search.Filter(a.year_min, a.year_max, tuple(a.kind or ()), tuple(a.domain or ()),
-                                tuple(a.item_type or ()))
+                                tuple(a.item_type or ()), a.awarded)
             with db.connect(a.dsn) as conn, \
                     Egress.for_master([*master.registry(a.config), search.QUERY_SOURCE], timeout=120.0) as eg:
                 rows = search.search(conn, eg, search.Index.load(conn, flt), a.query, flt=flt, top=a.top,
                                      use_rerank=not a.no_rerank)
             for r in rows:
                 print(f"{r['rank']:>2}. {r['year']} {r['kind']} | {r['goal']} | {r['api']}/{r['key']}")
+            return 0
+        if a.master_cmd == "serve":
+            import uvicorn
+
+            from . import search_api
+
+            uvicorn.run(search_api.create_app(dsn=a.dsn, sources=master.registry(a.config)), host=a.host, port=a.port,
+                        server_header=False)
             return 0
         sources = master.registry(a.config)
         prefix = ""

@@ -60,6 +60,21 @@ GraphDB·GraphRAG는 쓰지 않는다. 한 단계 유사 검색이라 일반 RAG
 
 서버 반영 = pgvector 이미지 교체 뒤 0016~0019 한꺼번에(사용자 확인 후).
 
+### 검색 API(데모 UI 연결용)
+
+`bluebird master serve --dsn … --config …` → `http://127.0.0.1:8100`. 읽기 전용, 인증 없음(로컬에서만 열림).
+
+| 요청 | 뜻 |
+|---|---|
+| `GET /search?q=문장` | 필수. 2~300자 |
+| `top` | 개수(기본 10, 최대 20) |
+| `rerank` | `false` = AI 재정렬 없이 혼합 순위 |
+| `year_min`·`year_max`·`kind`·`domain`·`item_type` | 범위(반복 가능) |
+| `awarded` | `true` = 수상 내역 있는 행만 |
+
+응답 = `{query, method, items}`. 항목 = `rank, api, key, year, kind, program, award, title, goal, solution, features, text, domain, item_type, url, similarity`.
+`similarity` = 질문과의 벡터 코사인 유사도(참고 값, 순서 기준 아님). BM25 색인 = 범위별로 첫 요청에 만들고(전체 약 7초) 이후 질문당 약 2~5초. DB 글이 바뀌면 서버 재시작.
+
 ## 4. 다음
 
 - `external.doc`에서 문제 문장 뽑기 → 이 검색으로 `ideas` 채우기

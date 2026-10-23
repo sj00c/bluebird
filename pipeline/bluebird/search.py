@@ -57,6 +57,7 @@ class Filter:
     kinds: tuple[str, ...] = ()
     domains: tuple[str, ...] = ()
     item_types: tuple[str, ...] = ()
+    awarded: bool = False   # 수상 내역 있는 행만
 
     def sql(self) -> tuple[str, dict]:
         where, args = [], {}
@@ -73,6 +74,8 @@ class Filter:
         if self.domains:
             where.append("domain && %(domains)s::text[]")
             args["domains"] = list(self.domains)
+        if self.awarded:
+            where.append("NULLIF(BTRIM(award), '') IS NOT NULL")
         return "".join(" AND " + w for w in where), args
 
 
@@ -150,15 +153,18 @@ def rerank(eg: Egress, query: tuple[str, str], cands: list[dict], top: int = TOP
 
 def search(conn, eg: Egress, index: Index, query: str, *, source: str = QUERY_SOURCE["id"], flt: Filter = ALL,
            top: int = TOP, use_rerank: bool = True) -> list[dict]:
-    """질문 문장 → 결과 행(순위·아이디어 정보). 재정렬 끄면 RRF 상위 top개."""
+    """질문 문장 → 결과 행(순위·아이디어 정보). 재정렬 끄면 RRF 상위 top개.
+    similarity = 질문과 아이디어 벡터의 코사인 유사도(순위 기준 아님, 참고 값)."""
     vector = eg.embed(model=embed.MODEL, source=source, texts=[query])[0]
     keys = fuse(index.search(tokens(query)), vector_search(conn, vector, flt), CANDIDATES if use_rerank else top)
     if not keys:
         return []
-    rows = conn.execute("SELECT api, key, year, kind, program, title, goal, embedding_input AS text, url FROM master"
-                        " WHERE (api, key) IN (SELECT * FROM unnest(%s::text[], %s::text[]))",
-                        ([a for a, _ in keys], [k for _, k in keys])).fetchall()
-    cols = ("api", "key", "year", "kind", "program", "title", "goal", "text", "url")
+    cols = ("api", "key", "year", "kind", "program", "award", "title", "goal", "solution", "features", "text", "domain",
+            "item_type", "url", "similarity")
+    rows = conn.execute("SELECT api, key, year, kind, program, award, title, goal, solution, features, embedding_input,"
+                        " domain, item_type, url, round((1 - (embedding <=> %s::halfvec))::numeric, 3)::float"
+                        " FROM master WHERE (api, key) IN (SELECT * FROM unnest(%s::text[], %s::text[]))",
+                        (str(vector), [a for a, _ in keys], [k for _, k in keys])).fetchall()
     by_key = {(r[0], r[1]): dict(zip(cols, r, strict=True)) for r in rows}
     cands = [by_key[k] for k in keys if k in by_key]
     order = rerank(eg, (source, query), cands, top) if use_rerank else range(len(cands))
