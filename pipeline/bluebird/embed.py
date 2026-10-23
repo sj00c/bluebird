@@ -1,9 +1,10 @@
-"""사용 대상 아이디어 → master.embedding_input(벡터에 넣는 글) + master.embedding(벡터).
+"""사용 대상 아이디어 → master.embedding_input(벡터에 넣는 글) + master.embedding(벡터) + master.search_tokens(BM25 토큰).
 
 - 글 = 목표(끝 상투어 제거) + 해결책 + 핵심 기능, ". "로 이음. 분야·유형·근거·제목·본문 안 넣음
   (시험 2026-10-22: 목표만보다 상위 10개 중 같은 문제 34.4% → 38.0%, docs/DEMAND_PLAN.md)
 - 상투어 제거 = 벡터용만(DB 목표 값은 그대로). 떼고 4자 미만이면 안 뗌
-- 대상 = exclude_reasons = '{}'. 제외된 행 = 두 칸 비움. 글이 바뀐 행만 다시 벡터화(재실행 안전)
+- 토큰 = 같은 글의 형태소(search.tokens, docs/SEARCH_PLAN.md). 외부 호출 없음
+- 대상 = exclude_reasons = '{}'. 제외된 행 = 세 칸 비움. 글이 바뀐 행만 다시 벡터화(재실행 안전)
 """
 
 from __future__ import annotations
@@ -12,7 +13,7 @@ import re
 import time
 from concurrent.futures import ThreadPoolExecutor
 
-from . import db
+from . import db, search
 from .egress import Egress, EgressBlocked, EgressTransportError
 
 MODEL = "text-embedding-3-small"
@@ -67,15 +68,22 @@ def _vectors(eg: Egress, source: str, texts: list[str]) -> list[list[float]]:
 
 def embed(*, dsn: str, egress: Egress, only: str | None = None, workers: int = 8) -> list[dict]:
     with db.connect(dsn) as conn:
-        cleared = conn.execute("UPDATE master SET embedding_input = NULL, embedding = NULL"
-                               " WHERE exclude_reasons <> '{}' AND (embedding_input IS NOT NULL OR embedding IS NOT NULL)"
-                               ).rowcount
-        rows = conn.execute("SELECT api, key, goal, solution, features, embedding_input, embedding IS NULL FROM master"
+        cleared = conn.execute("UPDATE master SET embedding_input = NULL, embedding = NULL, search_tokens = NULL"
+                               " WHERE exclude_reasons <> '{}' AND (embedding_input IS NOT NULL OR embedding IS NOT NULL"
+                               " OR search_tokens IS NOT NULL)").rowcount
+        rows = conn.execute("SELECT api, key, goal, solution, features, embedding_input, embedding IS NULL,"
+                            " search_tokens IS NULL FROM master"
                             " WHERE exclude_reasons = '{}' AND (%(only)s::text IS NULL OR api = %(only)s)"
                             " ORDER BY api, key", {"only": only}).fetchall()
         conn.commit()
-    todo = [(api, key, t) for api, key, g, s, f, old, missing in rows
-            if (t := text_of(g, s, f)) and (missing or t != old)]
+    todo, token_only = [], []
+    for api, key, g, s, f, old, no_vec, no_tok in rows:
+        if not (t := text_of(g, s, f)):
+            continue
+        if no_vec or t != old:
+            todo.append((api, key, t))
+        elif no_tok:
+            token_only.append((search.tokens(t), api, key))
     jobs: list[list[tuple]] = []
     for row in todo:
         if jobs and jobs[-1][0][0] == row[0] and len(jobs[-1]) < BATCH:
@@ -85,16 +93,20 @@ def embed(*, dsn: str, egress: Egress, only: str | None = None, workers: int = 8
 
     def run(job: list[tuple]) -> list[tuple]:
         vecs = _vectors(egress, job[0][0], [t for _a, _k, t in job])
-        return [(t, str(v), a, k) for (a, k, t), v in zip(job, vecs, strict=True)]
+        return [(t, str(v), search.tokens(t), a, k) for (a, k, t), v in zip(job, vecs, strict=True)]
 
     done: dict[str, int] = {}
     with db.connect(dsn) as conn, ThreadPoolExecutor(workers) as pool:
+        conn.cursor().executemany("UPDATE master SET search_tokens = %s WHERE api = %s AND key = %s", token_only)
+        conn.commit()
         for n, out in enumerate(pool.map(run, jobs), 1):
-            conn.cursor().executemany("UPDATE master SET embedding_input = %s, embedding = %s::halfvec"
-                                      " WHERE api = %s AND key = %s", out)
-            done[out[0][2]] = done.get(out[0][2], 0) + len(out)
+            conn.cursor().executemany("UPDATE master SET embedding_input = %s, embedding = %s::halfvec,"
+                                      " search_tokens = %s WHERE api = %s AND key = %s", out)
+            done[out[0][3]] = done.get(out[0][3], 0) + len(out)
             if n % 20 == 0:
                 conn.commit()
         conn.commit()
-    return [{"source": s, "status": "ok", "embedded": v} for s, v in sorted(done.items())] or \
-        [{"status": "ok", "embedded": 0, "cleared": cleared}]
+    out = [{"source": s, "status": "ok", "embedded": v} for s, v in sorted(done.items())]
+    if token_only:
+        out.append({"status": "ok", "tokens_only": len(token_only)})
+    return out or [{"status": "ok", "embedded": 0, "cleared": cleared}]

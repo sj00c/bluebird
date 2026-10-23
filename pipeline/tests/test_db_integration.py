@@ -719,7 +719,7 @@ def test_refine_classifies_and_clears_ai_only_when_text_changes():
                   (Jsonb(raw),))
     refine.refine(dsn=dsn, sources=[spec])
     ai = ("label = 'idea', item_type = 'product', goal = 'g', solution = 's', features = '{}', domain = '{생활}',"
-          " verified = true, embedding_input = 'g. s'")
+          " verified = true, embedding_input = 'g. s', search_tokens = 'g s'")
     with psycopg.connect(dsn) as c:
         assert c.execute("SELECT kind, field, program, year FROM master").fetchone() == (
             "공모전", "과학·발명", "전국과학전람회", 1994)
@@ -730,12 +730,47 @@ def test_refine_classifies_and_clears_ai_only_when_text_changes():
         c.execute("UPDATE raw SET payload = payload || '{\"ideaContent\": \"젖은 우산을 바람으로 말린다\"}'")
     refine.refine(dsn=dsn, sources=[spec])                                    # 본문 바뀜 = 다시 판정 대상
     with psycopg.connect(dsn) as c:
-        assert c.execute("SELECT label, item_type, domain, verified, embedding_input FROM master").fetchone() == (
-            None, None, None, None, None)
+        assert c.execute("SELECT label, item_type, domain, verified, embedding_input, search_tokens FROM master"
+                         ).fetchone() == (None, None, None, None, None, None)
         c.execute("UPDATE master SET label = 'complaint'")
     dedup.mark(dsn=dsn)
     with psycopg.connect(dsn) as c:
         assert c.execute("SELECT exclude_reasons FROM master").fetchone()[0] == ["complaint"]
+
+
+def test_embed_fills_tokens_with_vectors_and_backfills_tokens_without_calling_out():
+    """embed: 글이 바뀐 행 = 벡터 + 검색 토큰. 벡터는 그대로이고 토큰만 빈 행 = 외부 호출 없이 토큰만."""
+    from psycopg.types.json import Jsonb
+
+    from bluebird import embed, refine, search
+
+    dsn = _master_db("bbtest_embed")
+    spec = {"id": "kipris_idea_api", "url": "https://plus.kipris.or.kr/x", "record_kind": "contest_award"}
+    with psycopg.connect(dsn) as c:
+        c.execute("INSERT INTO raw (source, key, payload, fetched) VALUES ('kipris_idea_api', '1', %s, now())",
+                  (Jsonb({"ideaName": "우산 건조대", "ideaContent": "젖은 우산을 말린다", "contestYear": "1994"}),))
+    refine.refine(dsn=dsn, sources=[spec])
+    with psycopg.connect(dsn) as c:
+        c.execute("UPDATE master SET label = 'idea', item_type = 'product', goal = '젖은 우산 보관 문제 해결',"
+                  " solution = '바람으로 우산을 말리는 건조대', features = '{}', domain = '{생활}', verified = true")
+
+    class Fake:
+        calls = 0
+
+        def embed(self, *, model, source, texts):
+            Fake.calls += 1
+            return [[0.1] * embed.DIM for _ in texts]
+
+    embed.embed(dsn=dsn, egress=Fake())
+    text = embed.text_of("젖은 우산 보관 문제 해결", "바람으로 우산을 말리는 건조대", [])
+    with psycopg.connect(dsn) as c:
+        assert c.execute("SELECT embedding_input, embedding IS NOT NULL, search_tokens FROM master").fetchone() == (
+            text, True, search.tokens(text))
+        c.execute("UPDATE master SET search_tokens = NULL")
+    assert embed.embed(dsn=dsn, egress=Fake()) == [{"status": "ok", "tokens_only": 1}]
+    assert Fake.calls == 1
+    with psycopg.connect(dsn) as c:
+        assert c.execute("SELECT search_tokens FROM master").fetchone()[0] == search.tokens(text)
 
 
 def test_provenance_groups_by_platform_and_contest(tmp_path):

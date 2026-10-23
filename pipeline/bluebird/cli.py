@@ -76,6 +76,18 @@ def main(argv: list[str] | None = None) -> int:
     x.add_argument("--config", type=Path, action="append", required=True, help="레지스트리 TOML, 반복")
     x.add_argument("--only")
     x.add_argument("--workers", type=int, default=8)
+    x = mss.add_parser("search", help="문제 문장 → 비슷한 과거 아이디어(BM25+벡터 혼합 → LLM 재정렬). 읽기 전용. "
+                                        "방식 = docs/SEARCH_PLAN.md. embed 다음")
+    x.add_argument("query", help="찾을 문제 문장")
+    x.add_argument("--dsn", default=_env("BB_MASTER_DSN"))
+    x.add_argument("--config", type=Path, action="append", required=True, help="레지스트리 TOML, 반복")
+    x.add_argument("--top", type=int, default=10)
+    x.add_argument("--year-min", type=int)
+    x.add_argument("--year-max", type=int)
+    x.add_argument("--kind", action="append", help="종류(예: 공모전, 시민 제안), 반복")
+    x.add_argument("--domain", action="append", help="분야, 반복(하나라도 겹치면)")
+    x.add_argument("--item-type", action="append", help="유형(policy·product·research), 반복")
+    x.add_argument("--no-rerank", action="store_true", help="LLM 재정렬 없이 혼합 순위 그대로")
     x = mss.add_parser("law", help="국가법령정보 → external.law(법령·자치법규가 바뀐 기록). 시행일 범위. 법령 개정 이유 포함")
     x.add_argument("--dsn", default=_env("BB_MASTER_DSN"))
     x.add_argument("--since", type=date.fromisoformat, required=True, help="시행일 시작 YYYY-MM-DD")
@@ -286,6 +298,18 @@ def main(argv: list[str] | None = None) -> int:
             result = dedup.mark(dsn=a.dsn)
             print(funnel.dumps(result))
             dblog.write(dsn=a.dsn, action="reasons", note=_log_note(a, result))
+            return 0
+        if a.master_cmd == "search":
+            from . import search
+
+            flt = search.Filter(a.year_min, a.year_max, tuple(a.kind or ()), tuple(a.domain or ()),
+                                tuple(a.item_type or ()))
+            with db.connect(a.dsn) as conn, \
+                    Egress.for_master([*master.registry(a.config), search.QUERY_SOURCE], timeout=120.0) as eg:
+                rows = search.search(conn, eg, search.Index.load(conn, flt), a.query, flt=flt, top=a.top,
+                                     use_rerank=not a.no_rerank)
+            for r in rows:
+                print(f"{r['rank']:>2}. {r['year']} {r['kind']} | {r['goal']} | {r['api']}/{r['key']}")
             return 0
         sources = master.registry(a.config)
         prefix = ""

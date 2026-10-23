@@ -109,7 +109,11 @@ class Policy:
         return f"{source_id}.{fname} not allowed for {purpose} (export_grade={grade})"
 
 
-Field = tuple[str, object]  # (source_id, value)
+Field = tuple[str | tuple[str, ...], object]  # (source_id 또는 여러 소스 내용을 한 칸에 모은 경우 source_id 묶음, value)
+
+
+def _field_sources(source: str | tuple[str, ...]) -> tuple[str, ...]:
+    return (source,) if isinstance(source, str) else tuple(source)
 
 
 @dataclass
@@ -232,9 +236,10 @@ class Egress:
     def _gate(self, purpose: str, fields: Mapping[str, Field]) -> tuple[list[str], list[str], str | None]:
         if purpose not in PURPOSES:
             raise ValueError(f"unknown purpose {purpose}")
-        sources = sorted({s for s, _ in fields.values()})
-        sent = sorted(f"{s}.{name}" for name, (s, _) in fields.items())
-        for name, (s, _) in fields.items():
+        pairs = [(s, name) for name, (src, _) in fields.items() for s in _field_sources(src)]
+        sources = sorted({s for s, _ in pairs})
+        sent = sorted({f"{s}.{name}" for s, name in pairs})
+        for s, name in pairs:
             reason = self._policy.check(s, name, purpose)
             if reason:
                 return sources, sent, reason

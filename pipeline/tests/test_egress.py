@@ -40,11 +40,21 @@ def test_open_source_title_allowed_and_recorded():
     assert (c.decision, c.fields_sent, c.source_ids, c.http_status) == ("allowed", ["open.title"], ["open"], 200)
 
 
+def test_field_with_several_sources_checks_and_records_each():
+    """여러 소스 내용을 한 칸에 모아 보낼 때(검색 재정렬 후보): 소스마다 검사, 기록 = 모든 소스."""
+    rec = Rec()
+    with _eg(_ok, rec) as eg:
+        eg.get("trace", "https://plus.kipris.or.kr/x", fields={"title": (("open", "kipris"), "x")})
+    c = rec.calls[-1]
+    assert (c.decision, c.source_ids, c.fields_sent) == ("allowed", ["kipris", "open"], ["kipris.title", "open.title"])
+
+
 @pytest.mark.parametrize("fields,purpose,why", [
     ({"body": ("kipris", "본문")}, "trace", "export_policy denies"),   # 명시 규칙 = 우선
     ({"dataset_url": ("kipris", "x")}, "llm", "export_grade=pending"),   # 기본 반출 필드 밖
     ({"title": ("secret", "x")}, "trace", "deny"),
     ({"team": ("open", "x")}, "trace", "never exported"),
+    ({"title": (("open", "secret"), "x")}, "trace", "deny"),           # 한 소스라도 막히면 전체 차단
     ({"title": ("nope", "x")}, "trace", "unknown source"),
 ])
 def test_blocked_fields_never_leave(fields, purpose, why):
