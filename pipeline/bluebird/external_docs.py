@@ -11,6 +11,7 @@ from __future__ import annotations
 import html
 import os
 import re
+import time
 import xml.etree.ElementTree as ET
 from concurrent.futures import ThreadPoolExecutor
 from datetime import date, datetime, timedelta
@@ -70,9 +71,14 @@ def news(*, dsn: str, egress: Egress, since: date, until: date, workers: int = 4
         d += timedelta(days=3)
 
     def one(span):
-        r = egress.get("collect", NEWS_API, params={"startDate": f"{span[0]:%Y%m%d}", "endDate": f"{span[1]:%Y%m%d}"},
-                       secret_params={"serviceKey": os.environ["DATA_GO_KR_KEY"]})
-        return news_rows(r.content)
+        # 초당 요청 제한(HTTP 429, 공공데이터포털) = 잠시 쉬고 다시
+        for wait in (1, 3, 10, 30, None):
+            r = egress.get("collect", NEWS_API,
+                           params={"startDate": f"{span[0]:%Y%m%d}", "endDate": f"{span[1]:%Y%m%d}"},
+                           secret_params={"serviceKey": os.environ["DATA_GO_KR_KEY"]})
+            if r.status != 429 or wait is None:
+                return news_rows(r.content)
+            time.sleep(wait)
     with ThreadPoolExecutor(workers) as pool:
         rows = {r[1]: r for chunk in pool.map(one, spans) for r in chunk if r[1]}
     _upsert(dsn, list(rows.values()))
