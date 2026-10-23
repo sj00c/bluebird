@@ -82,6 +82,12 @@ def main(argv: list[str] | None = None) -> int:
     x.add_argument("--until", type=date.fromisoformat, help="시행일 끝(기본 오늘, 한국 시간)")
     x.add_argument("--kind", action="append", choices=("법령", "자치법규"), help="반복. 기본 둘 다")
     x.add_argument("--workers", type=int, default=4)
+    x = mss.add_parser("doc", help="정책뉴스·국회 법률안(제안 이유) → external.doc. 날짜 범위")
+    x.add_argument("--dsn", default=_env("BB_MASTER_DSN"))
+    x.add_argument("--since", type=date.fromisoformat, required=True, help="시작 YYYY-MM-DD")
+    x.add_argument("--until", type=date.fromisoformat, help="끝(기본 오늘, 한국 시간)")
+    x.add_argument("--kind", action="append", choices=("정책뉴스", "법률안"), help="반복. 기본 둘 다")
+    x.add_argument("--workers", type=int, default=4)
     x = mss.add_parser("refine", help="raw → master 정제(글머리 정리·마스킹·대회·제도 분류). 제목·본문 바뀐 행 = AI 칸 비움")
     x.add_argument("--dsn", default=_env("BB_MASTER_DSN"))
     x.add_argument("--config", type=Path, action="append", required=True, help="레지스트리 TOML, 반복")
@@ -262,6 +268,17 @@ def main(argv: list[str] | None = None) -> int:
             for result in results:
                 print(funnel.dumps(result))
             dblog.write(dsn=a.dsn, action="api", note=f"law {a.since}~{a.until} " + _log_note(a, results))
+            return 0
+        if a.master_cmd == "doc":
+            from . import external_docs
+
+            with Egress.for_master(timeout=60.0) as eg:
+                a.until = a.until or datetime.now(ZoneInfo("Asia/Seoul")).date()
+                results = external_docs.collect(dsn=a.dsn, egress=eg, since=a.since, until=a.until,
+                                                kinds=tuple(a.kind or external_docs.SOURCE), workers=a.workers)
+            for result in results:
+                print(funnel.dumps(result))
+            dblog.write(dsn=a.dsn, action="api", note=f"doc {a.since}~{a.until} " + _log_note(a, results))
             return 0
         if a.master_cmd == "reasons":
             from . import dedup
