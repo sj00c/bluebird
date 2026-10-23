@@ -62,5 +62,16 @@ uv run bluebird master transfer verify  --dsn $S --dir $D   # 체크섬 4개 모
 
 ## 7. 리허설(로컬, 2026-10-23)
 
-서버 백업(`parangsae-before-0016.dump`)을 로컬 `parangsae_rehearsal`에 복원 → 4장 명령 그대로.
-결과는 아래 표(리허설 끝나면 채움).
+서버 백업(`parangsae-before-0016.dump`)을 로컬 `parangsae_rehearsal`에 복원 → 4장 명령 그대로. 두 번 실행, 같은 결과.
+
+| 단계 | 결과 | 걸린 시간 |
+|---|---|---|
+| check(전) | 막힘: pgvector 없음 + 0016~0019 없음 (서버와 같은 상황) | 몇 초 |
+| migrate | 0016~0019 적용 | 몇 초 |
+| check | ok | 몇 초 |
+| import | master 114,781 · external.law 66,121 · external.doc 21,455 · 원본 db_log 15줄 + restore 1줄 | 약 6.5분(392초, 대부분 HNSW 색인 갱신) |
+| verify | 체크섬 4개(바탕·master 검색 칸·law·doc) 모두 같음 | 몇 초 |
+| import 다시 | 막힘: external 두 표에 이미 행 있음(아무것도 안 바뀜) | 몇 초 |
+| 검색 비교 | `master search … --awarded --no-rerank` 상위 5개 = 로컬과 같음 | – |
+
+서버는 `maintenance_work_mem` 64MB·`shared_buffers` 128MB라 import가 이보다 오래 걸릴 수 있음 [추정]. 진행 중 master 행이 잠기므로 이관 중 다른 master 작업 금지.
