@@ -94,6 +94,12 @@ def main(argv: list[str] | None = None) -> int:
     x.add_argument("--config", type=Path, action="append", required=True, help="레지스트리 TOML, 반복")
     x.add_argument("--host", default="127.0.0.1")
     x.add_argument("--port", type=int, default=8100)
+    x = mss.add_parser("transfer", help="로컬에서 만든 검색 자료(master 검색 칸·external·db_log) → 다른 정제 DB. "
+                                          "절차 = docs/TRANSFER_PLAN.md")
+    x.add_argument("step", choices=("export", "check", "import", "verify"),
+                   help="export = 원본 → 폴더 / check = 대상 확인만 / import = 폴더 → 대상 / verify = 옮긴 뒤 체크섬 비교")
+    x.add_argument("--dsn", default=_env("BB_MASTER_DSN"), help="export = 원본, 나머지 = 대상")
+    x.add_argument("--dir", type=Path, required=True, help="파일 폴더(export = 빈 폴더)")
     x = mss.add_parser("law", help="국가법령정보 → external.law(법령·자치법규가 바뀐 기록). 시행일 범위. 법령 개정 이유 포함")
     x.add_argument("--dsn", default=_env("BB_MASTER_DSN"))
     x.add_argument("--since", type=date.fromisoformat, required=True, help="시행일 시작 YYYY-MM-DD")
@@ -261,6 +267,20 @@ def main(argv: list[str] | None = None) -> int:
                 for row in dblog.recent(dsn=a.dsn, limit=a.limit):
                     print(" | ".join("" if v is None else str(v) for v in row))
             return 0
+        if a.master_cmd == "transfer":
+            from . import transfer
+
+            if a.step == "export":
+                result = transfer.export(dsn=a.dsn, out=a.dir)
+            elif a.step == "check":
+                problems = transfer.check(dsn=a.dsn, src=a.dir)
+                result = {"status": "blocked" if problems else "ok", "problems": problems}
+            elif a.step == "import":
+                result = transfer.import_(dsn=a.dsn, src=a.dir)
+            else:
+                result = transfer.verify(dsn=a.dsn, src=a.dir)
+            print(funnel.dumps(result))
+            return 0 if result["status"] == "ok" else 1
         if a.master_cmd == "detail":
             with Egress.for_master(cookies=False) as eg:
                 results = master.load_detail(dsn=a.dsn, egress=eg, only=a.only, workers=a.workers)

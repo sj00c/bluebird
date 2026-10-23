@@ -773,6 +773,60 @@ def test_embed_fills_tokens_with_vectors_and_backfills_tokens_without_calling_ou
         assert c.execute("SELECT search_tokens FROM master").fetchone()[0] == search.tokens(text)
 
 
+def _idea_db(name: str, goal: str) -> str:
+    from psycopg.types.json import Jsonb
+
+    from bluebird import refine
+
+    dsn = _master_db(name)
+    with psycopg.connect(dsn) as c:
+        c.execute("INSERT INTO raw (source, key, payload, fetched) VALUES ('kipris_idea_api', '1', %s, now())",
+                  (Jsonb({"ideaName": "우산 건조대", "ideaContent": "젖은 우산을 말린다", "contestYear": "1994"}),))
+    refine.refine(dsn=dsn, sources=[{"id": "kipris_idea_api", "url": "https://plus.kipris.or.kr/x",
+                                     "record_kind": "contest_award"}])
+    with psycopg.connect(dsn) as c:
+        c.execute("UPDATE master SET label = 'idea', item_type = 'product', goal = %s, solution = 's',"
+                  " features = '{}', domain = '{생활}', verified = true", (goal,))
+    return dsn
+
+
+def test_transfer_moves_search_data_once_and_only_onto_same_base(tmp_path, monkeypatch):
+    """transfer: 원본 검색 칸·external·db_log → 바탕(master 19칸)이 같은 빈 대상. 두 번째·바탕 다름 = 막힘(안 바뀜)."""
+    from bluebird import transfer
+
+    monkeypatch.setenv("BB_LOG_PLACE", "server")
+    vec = "[" + ",".join(["0.25"] * 1536) + "]"
+    src = _idea_db("bbtest_tr_src", "우산 보관")
+    with psycopg.connect(src) as c:
+        c.execute("UPDATE master SET embedding_input = '우산 보관. s', embedding = %s::halfvec, search_tokens = '우산 보관'",
+                  (vec,))
+        c.execute("INSERT INTO external.law (kind, id, name, source, fetched) VALUES ('법령', '1', '도로교통법', 'x',"
+                  " '2026-10-22 10:00+09')")
+        c.execute("INSERT INTO external.doc (source, id, title) VALUES ('bill', '1', '법률안')")
+        c.execute("INSERT INTO db_log (place, action, note, master, raw) VALUES ('local', 'note', '원본 작업', 1, 1)")
+    out = tmp_path / "t"
+    assert transfer.export(dsn=src, out=out)["master"] == 1
+
+    dst = _idea_db("bbtest_tr_dst", "우산 보관")
+    assert transfer.import_(dsn=dst, src=out)["status"] == "ok"
+    assert transfer.verify(dsn=dst, src=out)["status"] == "ok"
+    with psycopg.connect(dst) as c:
+        assert c.execute("SELECT search_tokens, embedding::text = %s FROM master", (vec,)).fetchone() == ("우산 보관", True)
+        assert c.execute("SELECT count(*) FROM db_log WHERE note = '원본 작업'").fetchone()[0] == 1
+    again = transfer.import_(dsn=dst, src=out)
+    assert again["status"] == "blocked" and any("이미" in p for p in again["problems"])
+
+    other = _idea_db("bbtest_tr_other", "다른 목표")
+    blocked = transfer.import_(dsn=other, src=out)
+    assert blocked["status"] == "blocked" and any("19칸" in p for p in blocked["problems"])
+    with psycopg.connect(other) as c:
+        assert c.execute("SELECT count(*) FROM external.law").fetchone()[0] == 0
+        assert c.execute("SELECT search_tokens FROM master").fetchone()[0] is None
+    with psycopg.connect(dst) as c:   # restore 기록 = 옮긴 트랜잭션 안에서 1줄
+        assert c.execute("SELECT count(*) FROM db_log WHERE action = 'restore' AND place = 'server'"
+                         " AND note LIKE '검색 자료 옮김%'").fetchone()[0] == 1
+
+
 def test_provenance_groups_by_platform_and_contest(tmp_path):
     """DATA.md: 수집처·대회·제도별 행 = master 중복 제외 실제 건수. KIPRIS = 행의 대회명으로 나눔."""
     from bluebird.programs import program_of
