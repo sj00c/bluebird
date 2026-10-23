@@ -1,7 +1,8 @@
 """문제 문장 → 비슷한 과거 아이디어(master 사용 대상). 방식·값 근거 = docs/SEARCH_PLAN.md
 
 - 단어 검색 = BM25(search_tokens, 메모리 색인) / 벡터 검색 = embedding 코사인(pgvector)
-- 둘을 가중 RRF로 섞은 뒤 후보 CANDIDATES개를 LLM이 재정렬(관련 있는 것만, 최대 top개)
+- 둘을 가중 RRF로 섞은 순서대로 후보 CANDIDATES개씩 LLM이 재정렬(관련 있는 것만). 결과 목록 = 재정렬된 것을 이어 붙인 것
+- 쪽(page) 단위로 보여 줌. 필요한 만큼만 다음 후보 묶음을 재정렬(Ranking.page)
 - 질문 글은 egress로만 나감(벡터·재정렬). 사람이 친 글의 소스 = QUERY_SOURCE
 """
 
@@ -20,16 +21,16 @@ POS = frozenset({"NNG", "NNP", "XR", "SL", "SN"})
 K1, B = 2.0, 0.5            # BM25. 품사 3 × k1 5 × b 4 중 최고(시험 A), B 세트에서 확인
 DEPTH = 200                 # 단어·벡터 검색 각각 가져오는 수
 RRF_K, W_BM25 = 60, 0.6     # 가중 RRF. 우리 글은 LLM이 정리해 낱말이 통일됨 → BM25 쪽이 조금 더 무거움
-CANDIDATES = 50             # 재정렬 후보 수. 30·50·80 중 1등 정확도 최고
-TOP = 10
+CANDIDATES = 50             # 재정렬 한 번에 보는 후보 수. 30·50·80 중 1등 정확도 최고
+SIZE = 10                   # 한 쪽에 보여 줄 개수 기본값
 RERANK = llm.Provider("openai", "gpt-4.1-mini")
 QUERY_SOURCE = {"id": "query", "export_grade": "pending"}   # 사람이 친 검색 문장
 
 _RERANK_SYSTEM = "JSON 객체 하나만 출력한다."
 _RERANK_INSTRUCTION = (
     "<problem>은 최근 제기된 문제, <embedding_input>은 과거 아이디어 후보 목록(id, text)이다. "
-    "문제를 직접 다루는 아이디어가 앞에 오도록 관련 있는 후보만 골라 순서대로 최대 {top}개 id를 낸다. "
-    "관련 없으면 넣지 않는다.\n출력: {{\"ids\": [..]}}")
+    "관련 있는 후보만 모두 골라, 문제를 직접 다루는 아이디어가 앞에 오도록 순서대로 id를 낸다. "
+    "관련 없으면 넣지 않는다.\n출력: {\"ids\": [..]}")
 
 _kiwi = None
 _kiwi_lock = threading.Lock()
@@ -131,41 +132,76 @@ def vector_search(conn, vector: list[float], flt: Filter = ALL, n: int = DEPTH) 
     return [(a, k) for a, k in rows]
 
 
-def fuse(bm25: list, vector: list, n: int = CANDIDATES) -> list:
-    """가중 RRF. 같은 점수면 BM25 순위가 앞선 쪽."""
+def fuse(bm25: list, vector: list) -> list:
+    """가중 RRF로 섞은 전체 순서. 같은 점수면 BM25 순위가 앞선 쪽."""
     score: dict = {}
     for hits, weight in ((bm25, W_BM25), (vector, 1 - W_BM25)):
         for rank, key in enumerate(hits, 1):
             score[key] = score.get(key, 0.0) + weight / (RRF_K + rank)
-    return sorted(score, key=lambda k: -score[k])[:n]
+    return sorted(score, key=lambda k: -score[k])
 
 
-def rerank(eg: Egress, query: tuple[str, str], cands: list[dict], top: int = TOP) -> list[int]:
+def rerank(eg: Egress, query: tuple[str, str], cands: list[dict]) -> list[int]:
     """LLM이 고른 후보 번호(관련 있는 것만, 순서대로). query = (소스, 문장). cands = api·text 포함."""
     srcs = tuple(sorted({c["api"] for c in cands}))
-    data, _ = llm.ask_json(eg, RERANK, system=_RERANK_SYSTEM, instruction=_RERANK_INSTRUCTION.format(top=top),
+    data, _ = llm.ask_json(eg, RERANK, system=_RERANK_SYSTEM, instruction=_RERANK_INSTRUCTION,
                            fields={"problem": query,
                                    "embedding_input": (srcs, [{"id": i, "text": c["text"]} for i, c in enumerate(cands)])},
-                           max_tokens=200)
+                           max_tokens=400)
     picked = [int(x) for x in data.get("ids", []) if str(x).isdigit() and int(x) < len(cands)]
-    return list(dict.fromkeys(picked))[:top]
+    return list(dict.fromkeys(picked))
+
+
+_COLS = ("api", "key", "year", "kind", "program", "award", "title", "goal", "solution", "features", "text", "domain",
+         "item_type", "url", "similarity")
+
+
+class Ranking:
+    """한 질문의 결과 목록. 재정렬은 앞에서부터 필요한 만큼만(후보 CANDIDATES개씩), 한 번 정한 순서는 유지.
+    후보 묶음 하나에서 관련 있는 것이 0개면 그 뒤(섞은 순위가 더 낮은 후보)는 보지 않고 목록 끝.
+    similarity = 질문과 아이디어 벡터의 코사인 유사도(순서 기준 아님, 참고 값)."""
+
+    def __init__(self, conn, eg: Egress, index: Index, query: str, *, source: str = QUERY_SOURCE["id"],
+                 flt: Filter = ALL, use_rerank: bool = True):
+        self.eg, self.query, self.source = eg, query, source
+        vector = eg.embed(model=embed.MODEL, source=source, texts=[query])[0]
+        self.vector = str(vector)
+        self.fused = fuse(index.search(tokens(query)), vector_search(conn, vector, flt))
+        self.order: list[tuple[str, str]] = [] if use_rerank else list(self.fused)
+        self.done = not use_rerank
+        self.judged = 0
+        self.rows: dict[tuple[str, str], dict] = {}
+        self.lock = threading.Lock()
+
+    def _load(self, conn, keys: list[tuple[str, str]]) -> None:
+        need = [k for k in keys if k not in self.rows]
+        if not need:
+            return
+        rows = conn.execute("SELECT api, key, year, kind, program, award, title, goal, solution, features, embedding_input,"
+                            " domain, item_type, url, round((1 - (embedding <=> %s::halfvec))::numeric, 3)::float"
+                            " FROM master WHERE (api, key) IN (SELECT * FROM unnest(%s::text[], %s::text[]))",
+                            (self.vector, [a for a, _ in need], [k for _, k in need])).fetchall()
+        self.rows.update({(r[0], r[1]): dict(zip(_COLS, r, strict=True)) for r in rows})
+
+    def page(self, conn, page: int = 1, size: int = SIZE) -> tuple[list[dict], bool]:
+        """page쪽 결과(1부터)와 다음 쪽이 있는지. 다음 쪽 확인을 위해 한 개 더 채워 둠."""
+        end = page * size
+        with self.lock:
+            while len(self.order) <= end and not self.done:
+                window = self.fused[self.judged:self.judged + CANDIDATES]
+                self._load(conn, window)
+                cands = [self.rows[k] for k in window if k in self.rows]
+                picked = rerank(self.eg, (self.source, self.query), cands) if cands else []
+                self.judged += len(window)
+                self.order += [(cands[i]["api"], cands[i]["key"]) for i in picked]
+                self.done = not picked or self.judged >= len(self.fused)
+            keys = self.order[end - size:end]
+            self._load(conn, keys)
+        items = [{"rank": end - size + n, **self.rows[k]} for n, k in enumerate(keys, 1)]
+        return items, len(self.order) > end
 
 
 def search(conn, eg: Egress, index: Index, query: str, *, source: str = QUERY_SOURCE["id"], flt: Filter = ALL,
-           top: int = TOP, use_rerank: bool = True) -> list[dict]:
-    """질문 문장 → 결과 행(순위·아이디어 정보). 재정렬 끄면 RRF 상위 top개.
-    similarity = 질문과 아이디어 벡터의 코사인 유사도(순위 기준 아님, 참고 값)."""
-    vector = eg.embed(model=embed.MODEL, source=source, texts=[query])[0]
-    keys = fuse(index.search(tokens(query)), vector_search(conn, vector, flt), CANDIDATES if use_rerank else top)
-    if not keys:
-        return []
-    cols = ("api", "key", "year", "kind", "program", "award", "title", "goal", "solution", "features", "text", "domain",
-            "item_type", "url", "similarity")
-    rows = conn.execute("SELECT api, key, year, kind, program, award, title, goal, solution, features, embedding_input,"
-                        " domain, item_type, url, round((1 - (embedding <=> %s::halfvec))::numeric, 3)::float"
-                        " FROM master WHERE (api, key) IN (SELECT * FROM unnest(%s::text[], %s::text[]))",
-                        (str(vector), [a for a, _ in keys], [k for _, k in keys])).fetchall()
-    by_key = {(r[0], r[1]): dict(zip(cols, r, strict=True)) for r in rows}
-    cands = [by_key[k] for k in keys if k in by_key]
-    order = rerank(eg, (source, query), cands, top) if use_rerank else range(len(cands))
-    return [{"rank": n, **cands[i]} for n, i in enumerate(order, 1)]
+           top: int = SIZE, use_rerank: bool = True) -> list[dict]:
+    """첫 쪽 top개(CLI용)."""
+    return Ranking(conn, eg, index, query, source=source, flt=flt, use_rerank=use_rerank).page(conn, 1, top)[0]

@@ -11,7 +11,10 @@
 | 벡터 검색 | `embedding`(text-embedding-3-small) 코사인 | 각 200개 |
 | 섞기 | 가중 RRF: 점수 = Σ w / (k + 순위) | k 60, BM25 0.6 · 벡터 0.4 |
 | 범위(선택) | 연도·종류·분야·유형 필터. 사용자가 정할 때만 | – |
-| 재정렬 | gpt-4.1-mini가 후보 중 관련 있는 것만 순서대로 최대 10개 | 후보 50개 |
+| 재정렬 | 섞은 순서대로 후보 50개씩 gpt-4.1-mini가 관련 있는 것만 골라 순서를 정함. 결과 목록 = 묶음 결과를 이어 붙인 것. 쪽을 넘길 때 필요한 만큼만 다음 묶음 판정. 한 묶음에서 0개면 목록 끝 | 후보 50개 |
+
+점수로 자르지 않는다. 벡터 유사도는 판정(같은 문제·관련·무관) 사이 겹침이 커서(2026-10-23, 채점 7,381쌍: 중간값 0.514·0.473·0.425) 기준선으로 쓰지 않음. 보여 줄 개수 = 쪽 크기(size), 이전/다음 = page.
+2026-10-23 바뀜: 재정렬 지시문 "최대 10개" → "관련 있는 것 모두"(쪽 나눔 때문). 2장 재정렬 표는 바뀌기 전 값.
 
 GraphDB·GraphRAG는 쓰지 않는다. 한 단계 유사 검색이라 일반 RAG가 더 맞고(RAG vs GraphRAG, KDD 2026), 관계가 몇 개뿐이라 PostgreSQL로 충분하다.
 한국어 전용 모델(KURE 등)은 쓰지 않는다. 지금 구성으로 충분한 성능이 나왔다.
@@ -67,13 +70,14 @@ GraphDB·GraphRAG는 쓰지 않는다. 한 단계 유사 검색이라 일반 RAG
 | 요청 | 뜻 |
 |---|---|
 | `GET /search?q=문장` | 필수. 2~300자 |
-| `top` | 개수(기본 10, 최대 20) |
+| `page`·`size` | 쪽(1부터)·한 쪽 개수(기본 10, 최대 50) |
 | `rerank` | `false` = AI 재정렬 없이 혼합 순위 |
 | `year_min`·`year_max`·`kind`·`domain`·`item_type` | 범위(반복 가능) |
 | `awarded` | `true` = 수상 내역 있는 행만 |
 
-응답 = `{query, method, items}`. 항목 = `rank, api, key, year, kind, program, award, title, goal, solution, features, text, domain, item_type, url, similarity`.
-`similarity` = 질문과의 벡터 코사인 유사도(참고 값, 순서 기준 아님). BM25 색인 = 범위별로 첫 요청에 만들고(전체 약 7초) 이후 질문당 약 2~5초. DB 글이 바뀌면 서버 재시작.
+응답 = `{query, method, page, size, has_next, items}`. 항목 = `rank(전체 순위), api, key, year, kind, program, award, title, goal, solution, features, text, domain, item_type, url, similarity`.
+`similarity` = 질문과의 벡터 코사인 유사도(참고 값, 순서 기준 아님). BM25 색인 = 범위별로 첫 요청에 만들고(전체 약 7초) 이후 질문당 약 2~5초. 질문별 결과 목록은 최근 256개까지 기억(이전/다음에서 순서 유지, 재판정 없음). DB 글이 바뀌면 서버 재시작.
+시험(2026-10-23, 수상작만·10개씩): "강아지" 50건(5쪽), "반려동물" 80건 이상. 다음 묶음 판정이 필요한 쪽만 1~3초 더 걸림.
 
 ## 4. 다음
 
